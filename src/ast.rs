@@ -421,7 +421,7 @@ impl CallExpr {
 
     #[inline]
     pub fn args(&self) -> &[Expr] {
-        self.args.as_ref()
+        &self.args
     }
 
     #[inline]
@@ -2122,6 +2122,36 @@ impl Struct {
             close_curl,
         }
     }
+
+    #[inline]
+    pub fn struct_kw(&self) -> &Keyword {
+        &self.struct_kw
+    }
+
+    #[inline]
+    pub fn name(&self) -> &Ident {
+        &self.name
+    }
+
+    #[inline]
+    pub fn generic_args(&self) -> Option<&GenericStructArgs> {
+        self.generic_args.as_ref()
+    }
+
+    #[inline]
+    pub fn open_curl(&self) -> &Punct {
+        &self.open_curl
+    }
+
+    #[inline]
+    pub fn fields(&self) -> &[Field] {
+        &self.fields
+    }
+
+    #[inline]
+    pub fn close_curl(&self) -> &Punct {
+        &self.close_curl
+    }
 }
 
 impl Spanned for Struct {
@@ -3011,6 +3041,18 @@ pub enum Item {
     Const(Const),
     Module(Module),
     Func(Func),
+}
+
+impl Item {
+    pub fn name(&self) -> &Ident {
+        match self {
+            Self::Struct(struct_item) => struct_item.name(),
+            Self::Enum(enum_item) => enum_item.name(),
+            Self::Const(const_item) => const_item.name(),
+            Self::Module(module_item) => module_item.name(),
+            Self::Func(func_item) => func_item.name(),
+        }
+    }
 }
 
 impl Spanned for Item {
