@@ -1,8 +1,7 @@
 use crate::ast::*;
 use crate::ir::*;
-use crate::SharedString;
-use std::collections::HashMap;
-use std::collections::HashSet;
+use crate::{write_styled, writeln_styled, SharedString};
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug)]
 pub enum TypecheckError<'a> {
@@ -60,63 +59,6 @@ pub enum TypecheckError<'a> {
     },
     List(Vec<TypecheckError<'a>>),
 }
-
-impl std::fmt::Display for TypecheckError<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::DuplicateIdent { name } => {
-                writeln!(f, "Error: `{}` has already been defined.", name)
-            }
-            Self::InvalidConstExpr { expr } => {
-                writeln!(f, "Error: expression is not valid in a constant context.")
-            }
-            Self::InvalidConstPattern { pattern } => {
-                writeln!(f, "Error: pattern is not valid in a constant context.")
-            }
-            Self::NonExhaustiveMatch { match_expr } => {
-                writeln!(f, "Error: match expression is not exhaustive.")
-            }
-            Self::InvalidConstOp { op } => writeln!(
-                f,
-                "Error: the `{}` operator is not valid in a constant context.",
-                op
-            ),
-            Self::InvalidConstAssignTarget { target } => writeln!(
-                f,
-                "Error: target expression is not valid in a constant context."
-            ),
-            Self::MissingReturnValue { block } => writeln!(f, "Error: expected a return value."),
-            Self::UnexpectedReturnValue { value } => {
-                writeln!(f, "Error: a return value is not expected in this context.")
-            }
-            Self::UndefinedIdent { name } => writeln!(f, "Error: `{}` is not defined.", name),
-            Self::TargetNotAssignable { name } => writeln!(f, "Error: `{}` is constant.", name),
-            Self::ValueNotConst { name } => writeln!(f, "Error: `{}` is not constant.", name),
-            Self::InvalidValueIdent { name } => writeln!(f, "Error: `{}` is not a value.", name),
-            Self::InvalidFuncIdent { name } => writeln!(f, "Error: `{}` is not a function.", name),
-            Self::UnknownType { ty } => todo!(),
-            Self::InvalidType { ty } => todo!(),
-            Self::MissingElseBlock { if_expr } => todo!(),
-            Self::ArgumentCountMismatch {
-                call_expr,
-                arg_count,
-            } => todo!(),
-            Self::List(list) => {
-                for (i, err) in list.iter().enumerate() {
-                    if i == 0 {
-                        std::fmt::Display::fmt(err, f)?;
-                    } else {
-                        write!(f, "\n{}", err)?;
-                    }
-                }
-
-                Ok(())
-            }
-        }
-    }
-}
-
-impl std::error::Error for TypecheckError<'_> {}
 
 macro_rules! wrap_errors {
     ($value:expr, $errors:expr) => {
