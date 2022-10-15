@@ -8,8 +8,6 @@ fn clog2(bits) {
     log
 }
 
-const TEST = clog2(32);
-
 struct WritePort<ADDR_BITS, DATA_BITS> {
     clk: bit,
     en: bit,
@@ -166,4 +164,9 @@ mod Alu<BITS>(
             },
         };
     }
+}
+
+mod Top() {
+    let bram: Bram<20, 32>;
+    let alu: Alu<32>;
 }

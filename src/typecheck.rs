@@ -1,6 +1,6 @@
 use crate::ast::*;
 use crate::ir::*;
-use crate::{write_styled, writeln_styled, SharedString};
+use crate::SharedString;
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug)]
@@ -50,12 +50,6 @@ pub enum TypecheckError<'a> {
     ArgumentCountMismatch {
         call_expr: &'a CallExpr,
         arg_count: usize,
-    },
-    UnknownType {
-        ty: Type,
-    },
-    InvalidType {
-        ty: Type,
     },
     List(Vec<TypecheckError<'a>>),
 }
@@ -208,7 +202,7 @@ fn transform_const_bin_expr<'a>(
 
     match lhs {
         Ok(lhs) => match rhs {
-            Ok(rhs) => Ok(ConstBinaryExpr::new(lhs, rhs)),
+            Ok(rhs) => Ok(ConstBinaryExpr::new(lhs, rhs, expr.span())),
             Err(err) => Err(err),
         },
         Err(err1) => match rhs {
@@ -282,7 +276,7 @@ fn transform_const_if_expr<'a>(
 
     if let Some(condition) = condition && let Some(body) = body {
         wrap_errors!(
-            ConstIfExpr::new(condition, body, else_if_blocks, else_block),
+            ConstIfExpr::new(condition, body, else_if_blocks, else_block, expr.span()),
             errors
         )
     } else {
@@ -378,7 +372,7 @@ fn transform_const_match_expr<'a>(
     }
 
     if let Some(value) = value {
-        wrap_errors!(ConstMatchExpr::new(value, branches), errors)
+        wrap_errors!(ConstMatchExpr::new(value, branches, expr.span()), errors)
     } else {
         wrap_errors!(unreachable!(), errors)
     }
@@ -430,7 +424,7 @@ pub fn transform_const_expr<'a>(
             }
 
             wrap_errors!(
-                ConstExpr::Call(ConstCallExpr::new(expr.func().clone(), args)),
+                ConstExpr::Call(ConstCallExpr::new(expr.func().clone(), args, expr.span())),
                 errors
             )
         }
@@ -452,16 +446,14 @@ pub fn transform_const_expr<'a>(
         )?))),
         Expr::Index(_) => Err(TypecheckError::InvalidConstExpr { expr }),
         Expr::Pos(expr) => transform_const_expr(expr.inner(), scope, false),
-        Expr::Neg(expr) => Ok(ConstExpr::Neg(ConstUnaryExpr::new(transform_const_expr(
-            expr.inner(),
-            scope,
-            false,
-        )?))),
-        Expr::Not(expr) => Ok(ConstExpr::Not(ConstUnaryExpr::new(transform_const_expr(
-            expr.inner(),
-            scope,
-            false,
-        )?))),
+        Expr::Neg(expr) => Ok(ConstExpr::Neg(ConstUnaryExpr::new(
+            transform_const_expr(expr.inner(), scope, false)?,
+            expr.span(),
+        ))),
+        Expr::Not(expr) => Ok(ConstExpr::Not(ConstUnaryExpr::new(
+            transform_const_expr(expr.inner(), scope, false)?,
+            expr.span(),
+        ))),
         Expr::Cast(_) => Err(TypecheckError::InvalidConstExpr { expr }),
         Expr::Concat(_) => Err(TypecheckError::InvalidConstExpr { expr }),
         Expr::Lt(expr) => bin_expr!(expr, Lt),
@@ -505,7 +497,12 @@ fn transform_const_assignment<'a>(
                 if let Some(err1) = err1 {
                     Err(err1)
                 } else {
-                    Ok(ConstAssignment::new(target, assign.op().kind(), value))
+                    Ok(ConstAssignment::new(
+                        target,
+                        assign.op().kind(),
+                        value,
+                        assign.span(),
+                    ))
                 }
             }
             Err(err2) => {
@@ -654,7 +651,7 @@ fn transform_const_block<'a>(
         None
     };
 
-    wrap_errors!(ConstBlock::new(statements, result), errors)
+    wrap_errors!(ConstBlock::new(statements, result, block.span()), errors)
 }
 
 pub fn transform_const_func<'a>(
@@ -669,86 +666,3 @@ pub fn transform_const_func<'a>(
     let body = transform_const_block(func.body(), &mut inner_scope, true)?;
     Ok(ConstFunc::new(func.args().to_vec(), body))
 }
-
-//#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-//pub struct NamedTypeId {
-//    name: SharedString,
-//    generic_args: Vec<i64>,
-//}
-//
-//#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-//pub struct ArrayTypeId {
-//    item_id: Box<TypeId>,
-//    len: i64,
-//}
-//
-//#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-//pub enum TypeId {
-//    Void,
-//    Const,
-//    Named(NamedTypeId),
-//    Array(ArrayTypeId),
-//}
-
-//pub fn type_of(expr: &Expr, design: &mut Design) -> TypecheckResult<TypeId> {
-//    match expr {
-//        Expr::Literal(_) => Ok(TypeId::Const),
-//
-//        Expr::Path(_) => todo!(),
-//
-//        Expr::Paren(expr) => type_of(expr.inner(), design),
-//
-//
-//        Expr::Call(_) => todo!(),
-//
-//
-//
-//        Expr::Construct(expr) => design.register_type(expr.ty()),
-//
-//
-//
-//
-//        Expr::If(expr) => {
-//            let result_ty = if let Some(result) = expr.body().result() {
-//                type_of(result, design)?
-//            } else {
-//                TypeId::Void
-//            };
-//
-//            todo!()
-//        },
-//
-//
-//
-//
-//        Expr::Match(_) => todo!(),
-//        Expr::Block(_) => todo!(),
-//        Expr::Index(_) => todo!(),
-//        Expr::Pos(_) => todo!(),
-//        Expr::Neg(_) => todo!(),
-//        Expr::Not(_) => todo!(),
-//        Expr::Cast(_) => todo!(),
-//        Expr::Concat(_) => todo!(),
-//        Expr::Lt(_) => todo!(),
-//        Expr::Lte(_) => todo!(),
-//        Expr::Gt(_) => todo!(),
-//        Expr::Gte(_) => todo!(),
-//        Expr::Slt(_) => todo!(),
-//        Expr::Slte(_) => todo!(),
-//        Expr::Sgt(_) => todo!(),
-//        Expr::Sgte(_) => todo!(),
-//        Expr::Eq(_) => todo!(),
-//        Expr::Ne(_) => todo!(),
-//        Expr::Add(_) => todo!(),
-//        Expr::Sub(_) => todo!(),
-//        Expr::Mul(_) => todo!(),
-//        Expr::Div(_) => todo!(),
-//        Expr::Rem(_) => todo!(),
-//        Expr::And(_) => todo!(),
-//        Expr::Xor(_) => todo!(),
-//        Expr::Or(_) => todo!(),
-//        Expr::Shl(_) => todo!(),
-//        Expr::Lsr(_) => todo!(),
-//        Expr::Asr(_) => todo!(),
-//    }
-//}

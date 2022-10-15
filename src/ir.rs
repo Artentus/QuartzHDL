@@ -1,18 +1,22 @@
 #![allow(dead_code)]
 
 use crate::ast::*;
+use crate::default_spanned_impl;
+use crate::SharedString;
+use langbox::TextSpan;
 use std::ops::Range;
 
 #[derive(Debug, Clone)]
 pub struct ConstCallExpr {
     func: Ident,
     args: Vec<ConstExpr>,
+    span: TextSpan,
 }
 
 impl ConstCallExpr {
     #[inline]
-    pub fn new(func: Ident, args: Vec<ConstExpr>) -> Self {
-        Self { func, args }
+    pub fn new(func: Ident, args: Vec<ConstExpr>, span: TextSpan) -> Self {
+        Self { func, args, span }
     }
 
     #[inline]
@@ -26,16 +30,19 @@ impl ConstCallExpr {
     }
 }
 
+default_spanned_impl!(ConstCallExpr);
+
 #[derive(Debug, Clone)]
 pub struct ConstFieldAssign {
     field: Ident,
     value: ConstExpr,
+    span: TextSpan,
 }
 
 impl ConstFieldAssign {
     #[inline]
-    pub fn new(field: Ident, value: ConstExpr) -> Self {
-        Self { field, value }
+    pub fn new(field: Ident, value: ConstExpr, span: TextSpan) -> Self {
+        Self { field, value, span }
     }
 
     #[inline]
@@ -48,6 +55,8 @@ impl ConstFieldAssign {
         &self.value
     }
 }
+
+default_spanned_impl!(ConstFieldAssign);
 
 #[derive(Debug, Clone)]
 pub struct ConstElseIfBlock {
@@ -100,6 +109,7 @@ pub struct ConstIfExpr {
     body: Box<ConstBlock>,
     else_if_blocks: Vec<ConstElseIfBlock>,
     else_block: Option<ConstElseBlock>,
+    span: TextSpan,
 }
 
 impl ConstIfExpr {
@@ -109,12 +119,14 @@ impl ConstIfExpr {
         body: ConstBlock,
         else_if_blocks: Vec<ConstElseIfBlock>,
         else_block: Option<ConstElseBlock>,
+        span: TextSpan,
     ) -> Self {
         Self {
             condition: Box::new(condition),
             body: Box::new(body),
             else_if_blocks,
             else_block,
+            span,
         }
     }
 
@@ -138,6 +150,8 @@ impl ConstIfExpr {
         self.else_block.as_ref()
     }
 }
+
+default_spanned_impl!(ConstIfExpr);
 
 #[derive(Debug, Clone)]
 pub enum ConstMatchPattern {
@@ -181,14 +195,16 @@ impl ConstMatchBranch {
 pub struct ConstMatchExpr {
     value: Box<ConstExpr>,
     branches: Vec<ConstMatchBranch>,
+    span: TextSpan,
 }
 
 impl ConstMatchExpr {
     #[inline]
-    pub fn new(value: ConstExpr, branches: Vec<ConstMatchBranch>) -> Self {
+    pub fn new(value: ConstExpr, branches: Vec<ConstMatchBranch>, span: TextSpan) -> Self {
         Self {
             value: Box::new(value),
             branches,
+            span,
         }
     }
 
@@ -203,16 +219,20 @@ impl ConstMatchExpr {
     }
 }
 
+default_spanned_impl!(ConstMatchExpr);
+
 #[derive(Debug, Clone)]
 pub struct ConstUnaryExpr {
     inner: Box<ConstExpr>,
+    span: TextSpan,
 }
 
 impl ConstUnaryExpr {
     #[inline]
-    pub fn new(inner: ConstExpr) -> Self {
+    pub fn new(inner: ConstExpr, span: TextSpan) -> Self {
         Self {
             inner: Box::new(inner),
+            span,
         }
     }
 
@@ -222,18 +242,22 @@ impl ConstUnaryExpr {
     }
 }
 
+default_spanned_impl!(ConstUnaryExpr);
+
 #[derive(Debug, Clone)]
 pub struct ConstBinaryExpr {
     lhs: Box<ConstExpr>,
     rhs: Box<ConstExpr>,
+    span: TextSpan,
 }
 
 impl ConstBinaryExpr {
     #[inline]
-    pub fn new(lhs: ConstExpr, rhs: ConstExpr) -> Self {
+    pub fn new(lhs: ConstExpr, rhs: ConstExpr, span: TextSpan) -> Self {
         Self {
             lhs: Box::new(lhs),
             rhs: Box::new(rhs),
+            span,
         }
     }
 
@@ -247,6 +271,8 @@ impl ConstBinaryExpr {
         &self.rhs
     }
 }
+
+default_spanned_impl!(ConstBinaryExpr);
 
 #[derive(Debug, Clone)]
 pub enum ConstExpr {
@@ -309,15 +335,17 @@ pub struct ConstAssignment {
     target: Ident,
     kind: AssignKind,
     value: ConstExpr,
+    span: TextSpan,
 }
 
 impl ConstAssignment {
     #[inline]
-    pub fn new(target: Ident, kind: AssignKind, value: ConstExpr) -> Self {
+    pub fn new(target: Ident, kind: AssignKind, value: ConstExpr, span: TextSpan) -> Self {
         Self {
             target,
             kind,
             value,
+            span,
         }
     }
 
@@ -336,6 +364,8 @@ impl ConstAssignment {
         &self.value
     }
 }
+
+default_spanned_impl!(ConstAssignment);
 
 #[derive(Debug, Clone)]
 pub struct ConstWhileLoop {
@@ -409,12 +439,17 @@ pub enum ConstStatement {
 pub struct ConstBlock {
     statements: Vec<ConstStatement>,
     result: Option<ConstExpr>,
+    span: TextSpan,
 }
 
 impl ConstBlock {
     #[inline]
-    pub fn new(statements: Vec<ConstStatement>, result: Option<ConstExpr>) -> Self {
-        Self { statements, result }
+    pub fn new(statements: Vec<ConstStatement>, result: Option<ConstExpr>, span: TextSpan) -> Self {
+        Self {
+            statements,
+            result,
+            span,
+        }
     }
 
     #[inline]
@@ -427,6 +462,8 @@ impl ConstBlock {
         self.result.as_ref()
     }
 }
+
+default_spanned_impl!(ConstBlock);
 
 #[derive(Debug, Clone)]
 pub struct ConstFunc {
@@ -451,5 +488,92 @@ impl ConstFunc {
     #[inline]
     pub fn body(&self) -> &ConstBlock {
         &self.body
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolvedType {
+    Const,
+    BuiltinBits {
+        width: i64,
+    },
+    Named {
+        name: SharedString,
+        generic_args: Vec<i64>,
+    },
+    Array {
+        item_ty: Box<ResolvedType>,
+        len: i64,
+    },
+}
+
+impl std::fmt::Display for ResolvedType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Const => write!(f, "const int"),
+            Self::BuiltinBits { width } => {
+                if *width == 1 {
+                    write!(f, "bit")
+                } else {
+                    write!(f, "bits<{}>", width)
+                }
+            }
+            Self::Named { name, generic_args } => {
+                write!(f, "{}", name)?;
+
+                if generic_args.len() > 0 {
+                    write!(f, "<")?;
+                    for (i, arg) in generic_args.iter().copied().enumerate() {
+                        if i == 0 {
+                            write!(f, "{}", arg)?;
+                        } else {
+                            write!(f, ", {}", arg)?;
+                        }
+                    }
+                    write!(f, ">")?;
+                }
+
+                Ok(())
+            }
+            Self::Array { item_ty, len } => write!(f, "[{}; {}]", item_ty, len),
+        }
+    }
+}
+
+impl std::hash::Hash for ResolvedType {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        use std::hash::Hash;
+
+        Hash::hash(&core::mem::discriminant(self), state);
+
+        match self {
+            Self::Const => {}
+            Self::BuiltinBits { width } => {
+                Hash::hash(width, state);
+            }
+            Self::Named { name, generic_args } => {
+                Hash::hash(name, state);
+                Hash::hash(generic_args, state);
+            }
+            Self::Array { item_ty, len } => {
+                Hash::hash(len, state);
+                Hash::hash(item_ty, state);
+            }
+        }
+    }
+}
+
+// We use a 128 bit hash so we can safely ignore the possibility of a collision.
+// E.g. with 10^10 different types the chance of at least one collision is about 10^-18.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TypeId(u128);
+
+impl TypeId {
+    pub fn from_type(ty: &ResolvedType) -> Self {
+        use xxhash_rust::xxh3::Xxh3;
+
+        let mut hasher = Xxh3::new();
+        std::hash::Hash::hash(ty, &mut hasher);
+        Self(hasher.digest128())
     }
 }

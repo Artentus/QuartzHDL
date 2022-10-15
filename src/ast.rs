@@ -12,11 +12,12 @@ pub trait Spanned {
     fn span(&self) -> TextSpan;
 }
 
+#[macro_export]
 macro_rules! default_spanned_impl {
     ($t:ty) => {
-        impl Spanned for $t {
+        impl $crate::ast::Spanned for $t {
             #[inline]
-            fn span(&self) -> TextSpan {
+            fn span(&self) -> langbox::TextSpan {
                 self.span
             }
         }

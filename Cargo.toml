@@ -8,3 +8,4 @@ langbox = "0.1"
 phf = "0.11"
 phf_macros = "0.11"
 termcolor = "1.1"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
