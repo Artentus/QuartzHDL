@@ -2,6 +2,13 @@
 name = "quartz_hdl"
 version = "0.1.0"
 edition = "2021"
+authors = ["Mathis Rech"]
+license = "MIT"
+description = "QuartzHDL transpiler"
+
+[[bin]]
+name = "quartz"
+path = "src/main.rs"
 
 [dependencies]
 langbox = "0.1"
@@ -9,3 +16,4 @@ phf = "0.11"
 phf_macros = "0.11"
 termcolor = "1.1"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
+clap = { version = "4.0", features = ["derive"] }

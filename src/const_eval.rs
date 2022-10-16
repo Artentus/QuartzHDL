@@ -379,7 +379,7 @@ fn eval_block(
 ) -> ArithmeticResult<Option<i64>> {
     let mut scope = VarScope::new(parent_scope);
     for statement in block.statements().iter() {
-        eval_statement(statement, &mut scope, consts, funcs);
+        eval_statement(statement, &mut scope, consts, funcs)?;
     }
 
     if let Some(result) = block.result() {

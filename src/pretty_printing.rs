@@ -91,8 +91,11 @@ fn _write_error(
     stream: &mut StandardStreamLock,
     file_server: &FileServer,
 ) -> Result<()> {
-    write_styled!(stream, [Red; Bold], "Error")?;
-    write_styled!(stream, [White; Bold], ": {}", info.msg)?;
+    use std::io::Write;
+
+    writeln!(stream)?;
+    write_styled!(stream, [Red; Bold], "error")?;
+    writeln_styled!(stream, [White; Bold], ": {}", info.msg)?;
 
     let file = file_server.get_file(info.span.file_id()).unwrap();
 
@@ -209,11 +212,19 @@ fn _write_error(
         width = digit_count
     )?;
 
-    Ok(())
+    stream.reset()
 }
 
-impl crate::typecheck::TypecheckError<'_> {
-    pub fn write_colored(
+pub trait WriteColored {
+    fn write_colored(
+        &self,
+        stream: &mut termcolor::StandardStreamLock,
+        file_server: &langbox::FileServer,
+    ) -> Result<()>;
+}
+
+impl WriteColored for crate::typecheck::TypecheckError<'_> {
+    fn write_colored(
         &self,
         stream: &mut termcolor::StandardStreamLock,
         file_server: &langbox::FileServer,
@@ -300,8 +311,8 @@ impl crate::typecheck::TypecheckError<'_> {
     }
 }
 
-impl crate::const_eval::ArithmeticError {
-    pub fn write_colored(
+impl WriteColored for crate::const_eval::ArithmeticError {
+    fn write_colored(
         &self,
         stream: &mut termcolor::StandardStreamLock,
         file_server: &langbox::FileServer,
@@ -321,8 +332,8 @@ impl crate::const_eval::ArithmeticError {
     }
 }
 
-impl crate::parser::QuartzParserErrror {
-    pub fn write_colored(
+impl WriteColored for crate::parser::QuartzParserErrror {
+    fn write_colored(
         &self,
         stream: &mut termcolor::StandardStreamLock,
         file_server: &langbox::FileServer,
@@ -333,7 +344,11 @@ impl crate::parser::QuartzParserErrror {
 }
 
 pub fn write_error(msg: &str, stream: &mut StandardStreamLock) -> Result<()> {
-    write_styled!(stream, [Red; Bold], "Error")?;
-    write_styled!(stream, [White; Bold], ": {}", msg)?;
-    Ok(())
+    use std::io::Write;
+
+    writeln!(stream)?;
+    write_styled!(stream, [Red; Bold], "error")?;
+    writeln_styled!(stream, [White; Bold], ": {}", msg)?;
+
+    stream.reset()
 }
