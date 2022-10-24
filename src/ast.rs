@@ -1773,7 +1773,7 @@ default_display_impl!(Block);
 #[derive(Debug, Clone)]
 pub enum GenericTypeArg {
     Literal(Literal),
-    Path(Path),
+    Ident(Ident),
     Expr(Expr),
 }
 
@@ -1781,7 +1781,7 @@ impl Spanned for GenericTypeArg {
     fn span(&self) -> TextSpan {
         match self {
             Self::Literal(l) => l.span(),
-            Self::Path(path) => path.span(),
+            Self::Ident(i) => i.span(),
             Self::Expr(expr) => expr.span(),
         }
     }
@@ -1791,7 +1791,7 @@ impl DisplayScoped for GenericTypeArg {
     fn fmt(&self, f: &mut ScopedFormatter<'_, '_>) -> std::fmt::Result {
         match self {
             Self::Literal(l) => DisplayScoped::fmt(l, f),
-            Self::Path(path) => DisplayScoped::fmt(path, f),
+            Self::Ident(i) => DisplayScoped::fmt(i, f),
             Self::Expr(expr) => write!(f, "{{ {} }}", expr),
         }
     }
@@ -2805,6 +2805,17 @@ pub enum Member {
     Const(Const),
     Proc(ProcMember),
     Comb(CombMember),
+}
+
+impl Member {
+    pub fn name(&self) -> Option<&Ident> {
+        match self {
+            Self::Logic(member) => Some(member.name()),
+            Self::Const(member) => Some(member.name()),
+            Self::Proc(_) => None,
+            Self::Comb(_) => None,
+        }
+    }
 }
 
 impl Spanned for Member {

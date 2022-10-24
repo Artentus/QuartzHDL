@@ -14,13 +14,14 @@ use const_eval::{eval, VarScope};
 use langbox::*;
 use lexer::*;
 use pretty_printing::{write_error, WriteColored};
-use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::rc::Rc;
 use termcolor::StandardStream;
 use typecheck::*;
 
 type SharedString = Rc<str>;
+type HashMap<K, V> = std::collections::HashMap<K, V, xxhash_rust::xxh3::Xxh3Builder>;
+type HashSet<T> = std::collections::HashSet<T, xxhash_rust::xxh3::Xxh3Builder>;
 
 #[doc(hidden)]
 fn _write_errors<E: WriteColored>(
@@ -64,6 +65,32 @@ struct Args {
     inputs: Vec<PathBuf>,
 }
 
+fn tokenize(
+    file_server: &mut FileServer,
+    input_files: &[PathBuf],
+) -> std::io::Result<Vec<Token<QuartzToken>>> {
+    let mut files = HashSet::default();
+    for path in input_files.iter() {
+        let file = file_server.register_file(path)?;
+        files.insert(file);
+    }
+
+    let mut tokens = Vec::new();
+    for file in files.into_iter() {
+        let lexer = QuartzLexer::new(file, &file_server);
+
+        tokens.extend(lexer.filter(|t| {
+            if let QuartzToken::Comment(_) = &t.kind {
+                false
+            } else {
+                true
+            }
+        }));
+    }
+
+    Ok(tokens)
+}
+
 fn main() -> std::io::Result<()> {
     const DEFAULT_TOP_MODULE_NAME: &str = "Top";
     const DEFAULT_OUTPUT_FILE: &str = "out.v";
@@ -89,68 +116,49 @@ fn main() -> std::io::Result<()> {
     }
 
     let mut file_server = FileServer::new();
-    let mut files = HashSet::new();
-    for path in input_files.iter() {
-        let file = file_server.register_file(path)?;
-        files.insert(file);
-    }
+    let tokens = tokenize(&mut file_server, input_files)?;
 
-    let mut tokens = Vec::new();
-    for file in files.into_iter() {
-        let lexer = QuartzLexer::new(file, &file_server);
+    // TODO: split tokens into ranges containing one item each to accumulate more parse errors.
 
-        tokens.extend(lexer.filter(|t| {
-            if let QuartzToken::Comment(_) = &t.kind {
-                false
-            } else {
-                true
-            }
-        }));
-    }
-
-    match parser::design().run(TokenStream::new(&tokens)) {
+    match parser::parse(&tokens) {
         ParseResult::Match { value: design, .. } => {
             let mut errors = Vec::new();
 
-            if let Err(err) = check_for_duplicate_idents(design.iter()) {
+            if let Err(err) = check_for_duplicate_items(design.iter()) {
                 errors.push(err);
             }
 
-            let mut empty_global_scope = Scope::empty();
+            let mut global_scope = Scope::empty();
             for item in design.iter() {
                 match item {
-                    ast::Item::Const(const_item) => empty_global_scope.add_const(const_item.name()),
+                    ast::Item::Const(const_item) => global_scope.add_const(const_item.name()),
                     ast::Item::Func(func_item) => {
-                        empty_global_scope.add_func(func_item.name(), func_item.args().len())
+                        global_scope.add_func(func_item.name(), func_item.args().len())
                     }
                     _ => {}
                 }
             }
 
-            let mut consts = HashMap::new();
-            let mut funcs = HashMap::new();
+            let mut global_consts = HashMap::default();
+            let mut funcs = HashMap::default();
             for item in design.iter() {
                 match item {
                     ast::Item::Const(const_item) => {
-                        match transform_const_expr(
-                            const_item.value(),
-                            &mut empty_global_scope,
-                            false,
-                        ) {
+                        match transform_const_expr(const_item.value(), &mut global_scope, false) {
                             Ok(expr) => {
-                                if !consts.contains_key(const_item.name().as_ref())
+                                if !global_consts.contains_key(const_item.name().as_ref())
                                     && !funcs.contains_key(const_item.name().as_ref())
                                 {
-                                    consts.insert(const_item.name().as_string(), expr);
+                                    global_consts.insert(const_item.name().as_string(), expr);
                                 }
                             }
                             Err(err) => errors.push(err),
                         }
                     }
                     ast::Item::Func(func_item) => {
-                        match transform_const_func(func_item, &mut empty_global_scope) {
+                        match transform_const_func(func_item, &mut global_scope) {
                             Ok(func) => {
-                                if !consts.contains_key(func_item.name().as_ref())
+                                if !global_consts.contains_key(func_item.name().as_ref())
                                     && !funcs.contains_key(func_item.name().as_ref())
                                 {
                                     funcs.insert(func_item.name().as_string(), func);
@@ -166,11 +174,11 @@ fn main() -> std::io::Result<()> {
             abort_on_error!(errors, stderr, file_server);
 
             let mut errors = Vec::new();
-            let mut const_values = HashMap::new();
-            for (name, expr) in consts.iter() {
-                match eval(expr, &mut VarScope::empty(), &consts, &funcs) {
+            let mut global_const_values = HashMap::default();
+            for (name, expr) in global_consts.iter() {
+                match eval::<_, i64>(expr, &mut VarScope::empty(), &global_consts, None, &funcs) {
                     Ok(value) => {
-                        const_values.insert(SharedString::clone(name), value);
+                        global_const_values.insert(SharedString::clone(name), value);
                     }
                     Err(err) => errors.push(err),
                 }
@@ -178,25 +186,38 @@ fn main() -> std::io::Result<()> {
 
             abort_on_error!(errors, stderr, file_server);
 
-            let mut structs = HashMap::new();
-            let mut enums = HashMap::new();
-            let mut modules = HashMap::new();
-            for item in design.into_iter() {
-                match item {
-                    ast::Item::Struct(struct_item) => {
-                        structs.insert(struct_item.name().as_string(), struct_item);
+            let type_items = collect_type_items(design);
+            if let Some(top_item) = type_items.get(top_module_name) {
+                if let ir::TypeItem::Module(top_module) = top_item {
+                    if let Some(generic_args) = top_module.generic_args() && (generic_args.args().len() > 0) {
+                        let mut stderr = stderr.lock();
+                        return write_error("modules with generic arguments cannot be used as top module", &mut stderr);
                     }
-                    ast::Item::Enum(enum_item) => {
-                        enums.insert(enum_item.name().as_string(), enum_item);
-                    }
-                    ast::Item::Module(module_item) => {
-                        modules.insert(module_item.name().as_string(), module_item);
-                    }
-                    _ => {}
-                }
-            }
 
-            if let Some(top_module) = modules.get(top_module_name) {
+                    let result = resolve_types(
+                        top_module,
+                        &type_items,
+                        &global_scope,
+                        &global_const_values,
+                        &funcs,
+                    );
+
+                    match result {
+                        Ok(_) => {
+                            // TODO:
+                        }
+                        Err(err) => {
+                            let mut stderr = stderr.lock();
+                            err.write_colored(&mut stderr, &file_server)?;
+                        }
+                    }
+                } else {
+                    let mut stderr = stderr.lock();
+                    write_error(
+                        &format!("`{}` is not a module", top_module_name),
+                        &mut stderr,
+                    )?;
+                }
             } else {
                 let mut stderr = stderr.lock();
                 write_error(

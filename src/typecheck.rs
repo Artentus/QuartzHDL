@@ -1,7 +1,10 @@
+use std::collections::VecDeque;
+
 use crate::ast::*;
+use crate::const_eval::{eval, ArithmeticError, VarScope};
 use crate::ir::*;
-use crate::SharedString;
-use std::collections::{HashMap, HashSet};
+use crate::{HashMap, HashSet, SharedString};
+use topological_sort::TopologicalSort;
 
 #[derive(Debug)]
 pub enum TypecheckError<'a> {
@@ -51,19 +54,39 @@ pub enum TypecheckError<'a> {
         call_expr: &'a CallExpr,
         arg_count: usize,
     },
+    GenericCountMismatch {
+        ty: &'a NamedType,
+        arg_count: usize,
+    },
+    ArithmeticError(ArithmeticError),
     List(Vec<TypecheckError<'a>>),
+}
+
+impl TypecheckError<'_> {
+    fn new_list(list: Vec<Self>) -> Self {
+        debug_assert!(list.len() > 0);
+
+        if list.len() == 1 {
+            list.into_iter().next().unwrap()
+        } else {
+            Self::List(list)
+        }
+    }
+}
+
+impl From<ArithmeticError> for TypecheckError<'_> {
+    #[inline]
+    fn from(err: ArithmeticError) -> Self {
+        Self::ArithmeticError(err)
+    }
 }
 
 macro_rules! wrap_errors {
     ($value:expr, $errors:expr) => {
         if $errors.len() == 0 {
-            let _value = $value;
-            #[allow(unreachable_code)]
-            Ok(_value)
-        } else if $errors.len() == 1 {
-            Err($errors.into_iter().next().unwrap())
+            Ok($value)
         } else {
-            Err(TypecheckError::List($errors))
+            Err(TypecheckError::new_list($errors))
         }
     };
 }
@@ -81,18 +104,18 @@ impl<'p> Scope<'p> {
     pub fn empty() -> Self {
         Self {
             parent: None,
-            consts: HashSet::new(),
-            funcs: HashMap::new(),
-            vars: HashSet::new(),
+            consts: HashSet::default(),
+            funcs: HashMap::default(),
+            vars: HashSet::default(),
         }
     }
 
     pub fn new<'pp: 'p>(parent: &'p Scope<'pp>) -> Self {
         Self {
             parent: Some(parent),
-            consts: HashSet::new(),
-            funcs: HashMap::new(),
-            vars: HashSet::new(),
+            consts: HashSet::default(),
+            funcs: HashMap::default(),
+            vars: HashSet::default(),
         }
     }
 
@@ -174,13 +197,17 @@ impl<'p> Scope<'p> {
     }
 }
 
-pub fn check_for_duplicate_idents<'a>(
+pub fn check_for_duplicate_items<'a>(
     items: impl Iterator<Item = &'a Item>,
 ) -> TypecheckResult<'static, ()> {
     let mut errors = Vec::new();
-    let mut set = HashSet::new();
+    let mut set = HashSet::default();
 
-    for item in items.into_iter() {
+    // Primitive types
+    set.insert("bit".into());
+    set.insert("bits".into());
+
+    for item in items {
         if set.contains(item.name().as_ref()) {
             errors.push(TypecheckError::DuplicateIdent {
                 name: item.name().clone(),
@@ -280,7 +307,7 @@ fn transform_const_if_expr<'a>(
             errors
         )
     } else {
-        wrap_errors!(unreachable!(), errors)
+        Err(TypecheckError::new_list(errors))
     }
 }
 
@@ -374,7 +401,7 @@ fn transform_const_match_expr<'a>(
     if let Some(value) = value {
         wrap_errors!(ConstMatchExpr::new(value, branches, expr.span()), errors)
     } else {
-        wrap_errors!(unreachable!(), errors)
+        Err(TypecheckError::new_list(errors))
     }
 }
 
@@ -477,6 +504,20 @@ pub fn transform_const_expr<'a>(
         Expr::Shl(expr) => bin_expr!(expr, Shl),
         Expr::Lsr(expr) => bin_expr!(expr, Lsr),
         Expr::Asr(expr) => bin_expr!(expr, Asr),
+    }
+}
+
+pub fn transform_generic_arg<'a>(
+    arg: &'a GenericTypeArg,
+    scope: &mut Scope,
+) -> TypecheckResult<'a, ConstExpr> {
+    match arg {
+        GenericTypeArg::Literal(l) => Ok(ConstExpr::Literal(l.clone())),
+        GenericTypeArg::Ident(i) => {
+            scope.contains_var(i)?;
+            Ok(ConstExpr::Ident(i.clone()))
+        }
+        GenericTypeArg::Expr(expr) => transform_const_expr(expr, scope, false),
     }
 }
 
@@ -665,4 +706,380 @@ pub fn transform_const_func<'a>(
 
     let body = transform_const_block(func.body(), &mut inner_scope, true)?;
     Ok(ConstFunc::new(func.args().to_vec(), body))
+}
+
+pub fn collect_type_items(
+    items: impl IntoIterator<Item = Item>,
+) -> HashMap<SharedString, TypeItem> {
+    let mut type_items = HashMap::default();
+    for item in items.into_iter() {
+        match item {
+            Item::Struct(struct_item) => {
+                type_items.insert(
+                    struct_item.name().as_string(),
+                    TypeItem::Struct(struct_item),
+                );
+            }
+            Item::Enum(enum_item) => {
+                type_items.insert(enum_item.name().as_string(), TypeItem::Enum(enum_item));
+            }
+            Item::Module(module_item) => {
+                type_items.insert(
+                    module_item.name().as_string(),
+                    TypeItem::Module(module_item),
+                );
+            }
+            _ => {}
+        }
+    }
+    type_items
+}
+
+fn check_for_duplicate_members<'a>(
+    generic_args: Option<&'a GenericStructArgs>,
+    members: impl Iterator<Item = &'a Member>,
+) -> TypecheckResult<'static, ()> {
+    let mut errors = Vec::new();
+    let mut set = HashSet::default();
+
+    if let Some(generic_args) = generic_args {
+        for arg in generic_args.args().iter() {
+            if set.contains(arg.as_ref()) {
+                errors.push(TypecheckError::DuplicateIdent { name: arg.clone() })
+            } else {
+                set.insert(arg.as_string());
+            }
+        }
+    }
+
+    for member in members {
+        if let Some(name) = member.name() {
+            if set.contains(name.as_ref()) {
+                errors.push(TypecheckError::DuplicateIdent { name: name.clone() })
+            } else {
+                set.insert(name.as_string());
+            }
+        }
+    }
+
+    wrap_errors!((), errors)
+}
+
+fn resolve_type<'a>(
+    ty: &'a Type,
+    type_items: &HashMap<SharedString, TypeItem>,
+    scope: &mut Scope,
+    global_const_values: &HashMap<SharedString, i64>,
+    local_const_values: Option<&HashMap<SharedString, i64>>,
+    funcs: &HashMap<SharedString, ConstFunc>,
+    known_types: &mut HashMap<TypeId, ResolvedType>,
+    type_order: &mut TopologicalSort<TypeId>,
+    type_queue: &mut VecDeque<TypeId>,
+) -> TypecheckResult<'a, TypeId> {
+    match ty {
+        Type::Named(named_ty) => {
+            let name = named_ty.name().as_ref();
+            let generic_arg_count = named_ty
+                .generic_args()
+                .map(|generic_args| generic_args.args().len())
+                .unwrap_or(0);
+
+            let resolved_ty = match name {
+                "bit" => {
+                    if generic_arg_count == 0 {
+                        ResolvedType::BuiltinBits { width: 1 }
+                    } else {
+                        return Err(TypecheckError::GenericCountMismatch {
+                            ty: named_ty,
+                            arg_count: 0,
+                        });
+                    }
+                }
+                "bits" => {
+                    if generic_arg_count == 1 {
+                        let width_expr = transform_generic_arg(
+                            &named_ty.generic_args().unwrap().args()[0],
+                            scope,
+                        )?;
+
+                        let width = eval(
+                            &width_expr,
+                            &mut VarScope::empty(),
+                            global_const_values,
+                            local_const_values,
+                            funcs,
+                        )?;
+
+                        ResolvedType::BuiltinBits { width }
+                    } else {
+                        return Err(TypecheckError::GenericCountMismatch {
+                            ty: named_ty,
+                            arg_count: 1,
+                        });
+                    }
+                }
+                _ => {
+                    // FIXME: check if type is valid
+
+                    let mut generic_vals = Vec::with_capacity(generic_arg_count);
+                    if let Some(generic_args) = named_ty.generic_args() {
+                        for arg in generic_args.args().iter() {
+                            let arg_expr = transform_generic_arg(arg, scope)?;
+                            let arg_val = eval(
+                                &arg_expr,
+                                &mut VarScope::empty(),
+                                global_const_values,
+                                local_const_values,
+                                funcs,
+                            )?;
+                            generic_vals.push(arg_val);
+                        }
+                    }
+
+                    ResolvedType::Named {
+                        name: named_ty.name().as_string(),
+                        generic_args: generic_vals.into(),
+                    }
+                }
+            };
+
+            let id = TypeId::from_type(&resolved_ty);
+            if !known_types.contains_key(&id) {
+                known_types.insert(id, resolved_ty);
+                type_queue.push_back(id);
+            }
+
+            Ok(id)
+        }
+        Type::Array(array_ty) => {
+            let item_ty = resolve_type(
+                array_ty.item_ty(),
+                type_items,
+                scope,
+                global_const_values,
+                local_const_values,
+                funcs,
+                known_types,
+                type_order,
+                type_queue,
+            )?;
+
+            let len_expr = transform_const_expr(array_ty.len(), scope, false)?;
+
+            let len = eval(
+                &len_expr,
+                &mut VarScope::empty(),
+                global_const_values,
+                local_const_values,
+                funcs,
+            )?;
+
+            let resolved_ty = ResolvedType::Array { item_ty, len };
+            let id = TypeId::from_type(&resolved_ty);
+            if !known_types.contains_key(&id) {
+                known_types.insert(id, resolved_ty);
+                type_queue.push_back(id);
+            }
+
+            type_order.add_dependency(item_ty, id);
+            Ok(id)
+        }
+    }
+}
+
+fn resolve_module<'a>(
+    module_item: &'a Module,
+    generic_values: &[i64],
+    type_items: &HashMap<SharedString, TypeItem>,
+    global_scope: &Scope,
+    global_const_values: &HashMap<SharedString, i64>,
+    funcs: &HashMap<SharedString, ConstFunc>,
+    known_types: &mut HashMap<TypeId, ResolvedType>,
+    type_order: &mut TopologicalSort<TypeId>,
+    type_queue: &mut VecDeque<TypeId>,
+) -> TypecheckResult<'a, ResolvedModule> {
+    use crate::const_eval::*;
+
+    debug_assert_eq!(
+        module_item
+            .generic_args()
+            .map(|args| args.args().len())
+            .unwrap_or(0),
+        generic_values.len()
+    );
+
+    let this_ty = ResolvedType::Named {
+        name: module_item.name().as_string(),
+        generic_args: generic_values.into(),
+    };
+    let this_id = TypeId::from_type(&this_ty);
+
+    let mut errors = Vec::new();
+    if let Err(err) =
+        check_for_duplicate_members(module_item.generic_args(), module_item.members().iter())
+    {
+        errors.push(err);
+    }
+
+    let mut local_consts = HashMap::default();
+    let mut scope = Scope::new(global_scope);
+    if let Some(args) = module_item.generic_args() {
+        for (arg, value) in args.args().iter().zip(generic_values.iter().copied()) {
+            if !local_consts.contains_key(arg.as_ref()) {
+                local_consts.insert(arg.as_string(), ConstExpr::Value(value));
+                scope.add_const(arg);
+            }
+        }
+    }
+
+    for member in module_item.members().iter() {
+        if let Member::Const(const_member) = member {
+            if !local_consts.contains_key(const_member.name().as_ref()) {
+                let const_expr = transform_const_expr(const_member.value(), &mut scope, false)?;
+                local_consts.insert(const_member.name().as_string(), const_expr);
+                scope.add_const(const_member.name());
+            }
+        }
+    }
+
+    let mut local_const_values = HashMap::default();
+    for (name, expr) in local_consts.iter() {
+        let result = eval(
+            expr,
+            &mut VarScope::empty(),
+            global_const_values,
+            Some(&local_consts),
+            funcs,
+        );
+
+        match result {
+            Ok(value) => {
+                local_const_values.insert(SharedString::clone(name), value);
+            }
+            Err(err) => errors.push(err.into()),
+        }
+    }
+
+    for port in module_item.ports().iter() {
+        let result = resolve_type(
+            port.ty(),
+            type_items,
+            &mut scope,
+            global_const_values,
+            Some(&local_const_values),
+            funcs,
+            known_types,
+            type_order,
+            type_queue,
+        );
+
+        match result {
+            Ok(ty_id) => type_order.add_dependency(ty_id, this_id),
+            Err(err) => errors.push(err),
+        }
+    }
+
+    for member in module_item.members().iter() {
+        match member {
+            Member::Logic(logic_member) => {
+                let result = resolve_type(
+                    logic_member.ty(),
+                    type_items,
+                    &mut scope,
+                    global_const_values,
+                    Some(&local_const_values),
+                    funcs,
+                    known_types,
+                    type_order,
+                    type_queue,
+                );
+
+                match result {
+                    Ok(ty_id) => type_order.add_dependency(ty_id, this_id),
+                    Err(err) => errors.push(err),
+                }
+            }
+            Member::Proc(_) => { /* TODO: */ }
+            Member::Comb(_) => { /* TODO: */ }
+            _ => {}
+        }
+    }
+
+    wrap_errors!(
+        ResolvedModule::new(local_const_values, Vec::new(), Vec::new()),
+        errors
+    )
+}
+
+pub fn resolve_types<'a>(
+    top_module: &'a Module,
+    type_items: &'a HashMap<SharedString, TypeItem>,
+    global_scope: &Scope,
+    global_const_values: &HashMap<SharedString, i64>,
+    funcs: &HashMap<SharedString, ConstFunc>,
+) -> TypecheckResult<'a, ()> {
+    let mut known_types = HashMap::default();
+    let mut type_order = TopologicalSort::new();
+    let mut type_queue = VecDeque::new();
+
+    let top_ty = ResolvedType::Named {
+        name: top_module.name().as_string(),
+        generic_args: [].as_slice().into(),
+    };
+    let top_id = TypeId::from_type(&top_ty);
+    known_types.insert(top_id, top_ty);
+    type_queue.push_back(top_id);
+
+    let mut errors = Vec::new();
+    while let Some(ty_id) = type_queue.pop_front() {
+        let ty = known_types[&ty_id].clone();
+
+        match ty {
+            ResolvedType::Named { name, generic_args } => {
+                if let Some(item) = type_items.get(name.as_ref()) {
+                    match item {
+                        TypeItem::Struct(struct_item) => {
+                            // TODO:
+                        }
+                        TypeItem::Enum(enum_item) => {
+                            // TODO:
+                        }
+                        TypeItem::Module(module_item) => {
+                            let result = resolve_module(
+                                module_item,
+                                &generic_args,
+                                type_items,
+                                &global_scope,
+                                &global_const_values,
+                                &funcs,
+                                &mut known_types,
+                                &mut type_order,
+                                &mut type_queue,
+                            );
+
+                            match result {
+                                Ok(_) => {
+                                    // TODO:
+                                }
+                                Err(err) => errors.push(err),
+                            }
+                        }
+                    }
+                } else {
+                    unreachable!("invalid resolved type");
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if errors.len() > 0 {
+        return Err(TypecheckError::new_list(errors));
+    }
+
+    for (id, ty) in known_types.iter() {
+        println!("{}: {}", id, ty.to_string(&known_types));
+    }
+
+    Ok(())
 }

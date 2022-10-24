@@ -1,12 +1,12 @@
 use crate::ast::{AssignKind, Ident, Spanned};
 use crate::ir::*;
-use crate::SharedString;
+use crate::{HashMap, SharedString};
 use langbox::TextSpan;
-use std::collections::HashMap;
 
-pub enum ConstValue<'a> {
+pub enum ConstValue<'a, G: Evaluatable, L: Evaluatable> {
     Value(i64),
-    Expr(&'a ConstExpr),
+    GlobalExpr(&'a G),
+    LocalExpr(&'a L),
 }
 
 pub struct VarScope<'p> {
@@ -18,7 +18,7 @@ impl<'p> VarScope<'p> {
     pub fn empty() -> Self {
         Self {
             parent: None,
-            vars: HashMap::new(),
+            vars: HashMap::default(),
         }
     }
 
@@ -31,7 +31,7 @@ impl<'p> VarScope<'p> {
                 // Since we only use the reference to modify the `vars` HashMap this is fine.
                 std::mem::transmute(parent)
             }),
-            vars: HashMap::new(),
+            vars: HashMap::default(),
         }
     }
 
@@ -47,20 +47,20 @@ impl<'p> VarScope<'p> {
         })
     }
 
-    pub fn var<'a>(
+    pub fn var<'a, G: Evaluatable, L: Evaluatable>(
         &self,
         name: &Ident,
-        global_consts: &'a HashMap<SharedString, ConstExpr>,
-        local_consts: Option<&'a HashMap<SharedString, ConstExpr>>,
-    ) -> ConstValue<'a> {
+        global_consts: &'a HashMap<SharedString, G>,
+        local_consts: Option<&'a HashMap<SharedString, L>>,
+    ) -> ConstValue<'a, G, L> {
         if let Some(value) = self.var_inner(name) {
             ConstValue::Value(value)
         } else if let Some(expr) = global_consts.get(name.as_ref()) {
-            ConstValue::Expr(expr)
+            ConstValue::GlobalExpr(expr)
         } else if let Some(expr) =
             local_consts.and_then(|local_consts| local_consts.get(name.as_ref()))
         {
-            ConstValue::Expr(expr)
+            ConstValue::LocalExpr(expr)
         } else {
             unreachable!("variable not found")
         }
@@ -131,11 +131,48 @@ fn erroring_neg(value: i64, expr_span: TextSpan) -> ArithmeticResult<i64> {
         .ok_or(ArithmeticError::Overflow { expr_span })
 }
 
-fn pattern_matches(
+pub trait Evaluatable {
+    fn eval<G: Evaluatable, L: Evaluatable>(
+        &self,
+        scope: &mut VarScope,
+        global_consts: &HashMap<SharedString, G>,
+        local_consts: Option<&HashMap<SharedString, L>>,
+        funcs: &HashMap<SharedString, ConstFunc>,
+    ) -> ArithmeticResult<i64>;
+}
+
+impl Evaluatable for i64 {
+    #[inline]
+    fn eval<G: Evaluatable, L: Evaluatable>(
+        &self,
+        _scope: &mut VarScope,
+        _global_consts: &HashMap<SharedString, G>,
+        _local_consts: Option<&HashMap<SharedString, L>>,
+        _funcs: &HashMap<SharedString, ConstFunc>,
+    ) -> ArithmeticResult<i64> {
+        Ok(*self)
+    }
+}
+
+impl Evaluatable for ConstExpr {
+    #[inline]
+    fn eval<G: Evaluatable, L: Evaluatable>(
+        &self,
+        scope: &mut VarScope,
+        global_consts: &HashMap<SharedString, G>,
+        local_consts: Option<&HashMap<SharedString, L>>,
+        funcs: &HashMap<SharedString, ConstFunc>,
+    ) -> ArithmeticResult<i64> {
+        eval(self, scope, global_consts, local_consts, funcs)
+    }
+}
+
+fn pattern_matches<G: Evaluatable, L: Evaluatable>(
     patterns: &[ConstMatchPattern],
     value: i64,
     scope: &mut VarScope,
-    consts: &HashMap<SharedString, ConstExpr>,
+    global_consts: &HashMap<SharedString, G>,
+    local_consts: Option<&HashMap<SharedString, L>>,
     funcs: &HashMap<SharedString, ConstFunc>,
 ) -> ArithmeticResult<bool> {
     for pattern in patterns.iter() {
@@ -150,9 +187,20 @@ fn pattern_matches(
                     return Ok(true);
                 }
 
-                let pattern_value = eval(&consts[ident.as_ref()], scope, consts, funcs)?;
-                if pattern_value == value {
-                    return Ok(true);
+                if let Some(expr) = global_consts.get(ident.as_ref()) {
+                    let pattern_value = expr.eval(scope, global_consts, local_consts, funcs)?;
+                    if pattern_value == value {
+                        return Ok(true);
+                    }
+                } else if let Some(expr) =
+                    local_consts.and_then(|local_consts| local_consts.get(ident.as_ref()))
+                {
+                    let pattern_value = expr.eval(scope, global_consts, local_consts, funcs)?;
+                    if pattern_value == value {
+                        return Ok(true);
+                    }
+                } else {
+                    unreachable!("constant does not exist");
                 }
             }
         }
@@ -161,46 +209,49 @@ fn pattern_matches(
     Ok(false)
 }
 
-pub fn eval(
+pub fn eval<G: Evaluatable, L: Evaluatable>(
     expr: &ConstExpr,
     scope: &mut VarScope,
-    consts: &HashMap<SharedString, ConstExpr>,
+    global_consts: &HashMap<SharedString, G>,
+    local_consts: Option<&HashMap<SharedString, L>>,
     funcs: &HashMap<SharedString, ConstFunc>,
 ) -> ArithmeticResult<i64> {
     macro_rules! eval_cmp_expr {
         ($lhs:expr, $rhs:expr, $op:tt) => {{
-            let lhs = eval($lhs, scope, consts, funcs)?;
-            let rhs = eval($rhs, scope, consts, funcs)?;
+            let lhs = eval($lhs, scope, global_consts, local_consts, funcs)?;
+            let rhs = eval($rhs, scope, global_consts, local_consts, funcs)?;
             Ok((lhs $op rhs) as i64)
         }};
     }
 
     macro_rules! eval_binary_expr {
         ($lhs:expr, $rhs:expr, $op:tt) => {{
-            let lhs = eval($lhs, scope, consts, funcs)?;
-            let rhs = eval($rhs, scope, consts, funcs)?;
+            let lhs = eval($lhs, scope, global_consts, local_consts, funcs)?;
+            let rhs = eval($rhs, scope, global_consts, local_consts, funcs)?;
             Ok(lhs $op rhs)
         }};
     }
 
     macro_rules! eval_binary_fn {
         ($lhs:expr, $rhs:expr, $span:expr, $fn:ident) => {{
-            let lhs = eval($lhs, scope, consts, funcs)?;
-            let rhs = eval($rhs, scope, consts, funcs)?;
+            let lhs = eval($lhs, scope, global_consts, local_consts, funcs)?;
+            let rhs = eval($rhs, scope, global_consts, local_consts, funcs)?;
             $fn(lhs, rhs, $span)
         }};
     }
 
     match expr {
+        ConstExpr::Value(v) => Ok(*v),
         ConstExpr::Literal(l) => Ok(l.value()),
-        ConstExpr::Ident(name) => match scope.var(name, consts, None) {
+        ConstExpr::Ident(name) => match scope.var(name, global_consts, local_consts) {
             ConstValue::Value(value) => Ok(value),
-            ConstValue::Expr(expr) => eval(expr, scope, consts, funcs),
+            ConstValue::GlobalExpr(expr) => expr.eval(scope, global_consts, local_consts, funcs),
+            ConstValue::LocalExpr(expr) => expr.eval(scope, global_consts, local_consts, funcs),
         },
         ConstExpr::Call(expr) => {
             let mut arg_values = Vec::with_capacity(expr.args().len());
             for arg in expr.args().iter() {
-                arg_values.push(eval(arg, scope, consts, funcs)?);
+                arg_values.push(eval(arg, scope, global_consts, local_consts, funcs)?);
             }
 
             let func = &funcs[expr.func().as_ref()];
@@ -210,42 +261,74 @@ pub fn eval(
                 inner_scope.add_var(arg, value);
             }
 
-            eval_expr_block(func.body(), &mut inner_scope, consts, funcs)
+            eval_expr_block(
+                func.body(),
+                &mut inner_scope,
+                global_consts,
+                local_consts,
+                funcs,
+            )
         }
         ConstExpr::If(expr) => {
-            if eval(expr.condition(), scope, consts, funcs)? != 0 {
-                eval_expr_block(expr.body(), scope, consts, funcs)
+            if eval(expr.condition(), scope, global_consts, local_consts, funcs)? != 0 {
+                eval_expr_block(expr.body(), scope, global_consts, local_consts, funcs)
             } else {
                 for else_if_block in expr.else_if_blocks().iter() {
-                    if eval(else_if_block.condition(), scope, consts, funcs)? != 0 {
-                        return eval_expr_block(else_if_block.body(), scope, consts, funcs);
+                    if eval(
+                        else_if_block.condition(),
+                        scope,
+                        global_consts,
+                        local_consts,
+                        funcs,
+                    )? != 0
+                    {
+                        return eval_expr_block(
+                            else_if_block.body(),
+                            scope,
+                            global_consts,
+                            local_consts,
+                            funcs,
+                        );
                     }
                 }
 
                 let else_block = expr.else_block().expect("missing else block");
-                eval_expr_block(else_block.body(), scope, consts, funcs)
+                eval_expr_block(else_block.body(), scope, global_consts, local_consts, funcs)
             }
         }
         ConstExpr::Match(expr) => {
-            let value = eval(expr.value(), scope, consts, funcs)?;
+            let value = eval(expr.value(), scope, global_consts, local_consts, funcs)?;
             for branch in expr.branches().iter() {
-                if pattern_matches(branch.patterns(), value, scope, consts, funcs)? {
+                if pattern_matches(
+                    branch.patterns(),
+                    value,
+                    scope,
+                    global_consts,
+                    local_consts,
+                    funcs,
+                )? {
                     return match branch.body() {
-                        ConstMatchBody::Expr(body) => eval(body, scope, consts, funcs),
-                        ConstMatchBody::Block(body) => eval_expr_block(body, scope, consts, funcs),
+                        ConstMatchBody::Expr(body) => {
+                            eval(body, scope, global_consts, local_consts, funcs)
+                        }
+                        ConstMatchBody::Block(body) => {
+                            eval_expr_block(body, scope, global_consts, local_consts, funcs)
+                        }
                     };
                 }
             }
 
             unreachable!("unhandled match case");
         }
-        ConstExpr::Block(block) => eval_expr_block(&block, scope, consts, funcs),
+        ConstExpr::Block(block) => {
+            eval_expr_block(&block, scope, global_consts, local_consts, funcs)
+        }
         ConstExpr::Neg(expr) => {
-            let inner = eval(expr.inner(), scope, consts, funcs)?;
+            let inner = eval(expr.inner(), scope, global_consts, local_consts, funcs)?;
             erroring_neg(inner, expr.span())
         }
         ConstExpr::Not(expr) => {
-            let inner = eval(expr.inner(), scope, consts, funcs)?;
+            let inner = eval(expr.inner(), scope, global_consts, local_consts, funcs)?;
             Ok(!inner)
         }
         ConstExpr::Lt(expr) => eval_cmp_expr!(expr.lhs(), expr.rhs(), <),
@@ -264,71 +347,99 @@ pub fn eval(
         ConstExpr::Or(expr) => eval_binary_expr!(expr.lhs(), expr.rhs(), |),
         ConstExpr::Shl(expr) => eval_binary_expr!(expr.lhs(), expr.rhs(), <<),
         ConstExpr::Lsr(expr) => {
-            let lhs = eval(expr.lhs(), scope, consts, funcs)? as u64;
-            let rhs = eval(expr.rhs(), scope, consts, funcs)? as u64;
+            let lhs = eval(expr.lhs(), scope, global_consts, local_consts, funcs)? as u64;
+            let rhs = eval(expr.rhs(), scope, global_consts, local_consts, funcs)? as u64;
             Ok((lhs >> rhs) as i64)
         }
         ConstExpr::Asr(expr) => eval_binary_expr!(expr.lhs(), expr.rhs(), >>),
     }
 }
 
-fn eval_statement(
+fn eval_statement<G: Evaluatable, L: Evaluatable>(
     statement: &ConstStatement,
     scope: &mut VarScope,
-    consts: &HashMap<SharedString, ConstExpr>,
+    global_consts: &HashMap<SharedString, G>,
+    local_consts: Option<&HashMap<SharedString, L>>,
     funcs: &HashMap<SharedString, ConstFunc>,
 ) -> ArithmeticResult<()> {
     match statement {
         ConstStatement::Expr(expr) => match expr {
             ConstExpr::If(expr) => {
-                if eval(expr.condition(), scope, consts, funcs)? != 0 {
-                    eval_statement_block(expr.body(), scope, consts, funcs)
+                if eval(expr.condition(), scope, global_consts, local_consts, funcs)? != 0 {
+                    eval_statement_block(expr.body(), scope, global_consts, local_consts, funcs)
                 } else {
                     for else_if_block in expr.else_if_blocks().iter() {
-                        if eval(else_if_block.condition(), scope, consts, funcs)? != 0 {
+                        if eval(
+                            else_if_block.condition(),
+                            scope,
+                            global_consts,
+                            local_consts,
+                            funcs,
+                        )? != 0
+                        {
                             return eval_statement_block(
                                 else_if_block.body(),
                                 scope,
-                                consts,
+                                global_consts,
+                                local_consts,
                                 funcs,
                             );
                         }
                     }
 
                     if let Some(else_block) = expr.else_block() {
-                        return eval_statement_block(else_block.body(), scope, consts, funcs);
+                        return eval_statement_block(
+                            else_block.body(),
+                            scope,
+                            global_consts,
+                            local_consts,
+                            funcs,
+                        );
                     }
 
                     Ok(())
                 }
             }
             ConstExpr::Match(expr) => {
-                let value = eval(expr.value(), scope, consts, funcs)?;
+                let value = eval(expr.value(), scope, global_consts, local_consts, funcs)?;
                 for branch in expr.branches().iter() {
-                    if pattern_matches(branch.patterns(), value, scope, consts, funcs)? {
+                    if pattern_matches(
+                        branch.patterns(),
+                        value,
+                        scope,
+                        global_consts,
+                        local_consts,
+                        funcs,
+                    )? {
                         return match branch.body() {
                             ConstMatchBody::Expr(body) => {
-                                eval(body, scope, consts, funcs).map(|_| ())
+                                eval(body, scope, global_consts, local_consts, funcs).map(|_| ())
                             }
-                            ConstMatchBody::Block(body) => {
-                                eval_statement_block(body, scope, consts, funcs)
-                            }
+                            ConstMatchBody::Block(body) => eval_statement_block(
+                                body,
+                                scope,
+                                global_consts,
+                                local_consts,
+                                funcs,
+                            ),
                         };
                     }
                 }
 
                 unreachable!("unhandled match case");
             }
-            ConstExpr::Block(block) => eval_statement_block(&block, scope, consts, funcs),
-            _ => eval(expr, scope, consts, funcs).map(|_| ()),
+            ConstExpr::Block(block) => {
+                eval_statement_block(&block, scope, global_consts, local_consts, funcs)
+            }
+            _ => eval(expr, scope, global_consts, local_consts, funcs).map(|_| ()),
         },
         ConstStatement::Declaration(decl) => {
-            let value = eval(decl.value(), scope, consts, funcs)?;
+            let value = eval(decl.value(), scope, global_consts, local_consts, funcs)?;
             scope.add_var(decl.name(), value);
             Ok(())
         }
         ConstStatement::Assignment(assign) => {
-            let value = eval(assign.value(), scope, consts, funcs)?;
+            let value = eval(assign.value(), scope, global_consts, local_consts, funcs)?;
             let var = scope.var_mut(assign.target());
 
             match assign.kind() {
@@ -349,21 +460,46 @@ fn eval_statement(
             Ok(())
         }
         ConstStatement::WhileLoop(while_loop) => {
-            while eval(while_loop.condition(), scope, consts, funcs)? != 0 {
-                eval_statement_block(while_loop.body(), scope, consts, funcs)?;
+            while eval(
+                while_loop.condition(),
+                scope,
+                global_consts,
+                local_consts,
+                funcs,
+            )? != 0
+            {
+                eval_statement_block(while_loop.body(), scope, global_consts, local_consts, funcs)?;
             }
 
             Ok(())
         }
         ConstStatement::ForLoop(for_loop) => {
-            let start = eval(&for_loop.range().start, scope, consts, funcs)?;
-            let end = eval(&for_loop.range().end, scope, consts, funcs)?;
+            let start = eval(
+                &for_loop.range().start,
+                scope,
+                global_consts,
+                local_consts,
+                funcs,
+            )?;
+            let end = eval(
+                &for_loop.range().end,
+                scope,
+                global_consts,
+                local_consts,
+                funcs,
+            )?;
 
             for loop_index in start..end {
                 let mut inner_scope = VarScope::new(scope);
                 inner_scope.add_var(for_loop.item_name(), loop_index);
 
-                eval_statement_block(for_loop.body(), &mut inner_scope, consts, funcs)?;
+                eval_statement_block(
+                    for_loop.body(),
+                    &mut inner_scope,
+                    global_consts,
+                    local_consts,
+                    funcs,
+                )?;
             }
 
             Ok(())
@@ -371,40 +507,52 @@ fn eval_statement(
     }
 }
 
-fn eval_block(
+fn eval_block<G: Evaluatable, L: Evaluatable>(
     block: &ConstBlock,
     parent_scope: &mut VarScope,
-    consts: &HashMap<SharedString, ConstExpr>,
+    global_consts: &HashMap<SharedString, G>,
+    local_consts: Option<&HashMap<SharedString, L>>,
     funcs: &HashMap<SharedString, ConstFunc>,
 ) -> ArithmeticResult<Option<i64>> {
     let mut scope = VarScope::new(parent_scope);
     for statement in block.statements().iter() {
-        eval_statement(statement, &mut scope, consts, funcs)?;
+        eval_statement(statement, &mut scope, global_consts, local_consts, funcs)?;
     }
 
     if let Some(result) = block.result() {
-        Ok(Some(eval(result, &mut scope, consts, funcs)?))
+        Ok(Some(eval(
+            result,
+            &mut scope,
+            global_consts,
+            local_consts,
+            funcs,
+        )?))
     } else {
         Ok(None)
     }
 }
 
-fn eval_expr_block(
+fn eval_expr_block<G: Evaluatable, L: Evaluatable>(
     block: &ConstBlock,
     parent_scope: &mut VarScope,
-    consts: &HashMap<SharedString, ConstExpr>,
+    global_consts: &HashMap<SharedString, G>,
+    local_consts: Option<&HashMap<SharedString, L>>,
     funcs: &HashMap<SharedString, ConstFunc>,
 ) -> ArithmeticResult<i64> {
-    Ok(eval_block(block, parent_scope, consts, funcs)?.expect("block is not an expression"))
+    Ok(
+        eval_block(block, parent_scope, global_consts, local_consts, funcs)?
+            .expect("block is not an expression"),
+    )
 }
 
-fn eval_statement_block(
+fn eval_statement_block<G: Evaluatable, L: Evaluatable>(
     block: &ConstBlock,
     parent_scope: &mut VarScope,
-    consts: &HashMap<SharedString, ConstExpr>,
+    global_consts: &HashMap<SharedString, G>,
+    local_consts: Option<&HashMap<SharedString, L>>,
     funcs: &HashMap<SharedString, ConstFunc>,
 ) -> ArithmeticResult<()> {
-    let result = eval_block(block, parent_scope, consts, funcs)?;
+    let result = eval_block(block, parent_scope, global_consts, local_consts, funcs)?;
     assert!(result.is_none(), "block is not a statement");
     Ok(())
 }

@@ -27,7 +27,7 @@ mod Bram<ADDR_BITS, DATA_BITS>(
     in sig rport: ReadPort<ADDR_BITS>,
     out reg rdata: bits<DATA_BITS>,
 ) {
-    reg mem: [u<DATA_BITS>; 1 << ADDR_BITS];
+    reg mem: [bits<DATA_BITS>; 1 << ADDR_BITS];
     
     proc rising(wport.clk) {
         if wport.en {

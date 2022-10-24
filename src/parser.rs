@@ -625,7 +625,7 @@ fn block() -> impl QuartzParser<Block> {
 fn named_ty() -> impl QuartzParser<NamedType> {
     let generic_arg = parser!(
         {literal()}->[GenericTypeArg::Literal]
-        <|> {path()}->[GenericTypeArg::Path]
+        <|> {ident()}->[GenericTypeArg::Ident]
         <|> (
             {punct(PunctKind::OpenCurl)}
             .> {expr(true)}!![err!("expected expression")]
@@ -885,6 +885,10 @@ fn item() -> impl QuartzParser<Item> {
     )
 }
 
-pub fn design() -> impl QuartzParser<Vec<Item>> {
-    parser!(*{ item() })
+pub fn parse(
+    tokens: &[Token<QuartzToken>],
+) -> ParseResult<QuartzToken, Vec<Item>, QuartzParserErrror> {
+    let parser = parser!(*{ item() });
+    let input = TokenStream::new(tokens);
+    parser.run(input)
 }

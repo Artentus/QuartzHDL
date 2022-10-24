@@ -1,10 +1,11 @@
 #![allow(dead_code)]
 
 use crate::ast::*;
-use crate::default_spanned_impl;
-use crate::SharedString;
+use crate::{default_spanned_impl, HashMap, SharedString};
 use langbox::TextSpan;
+use std::borrow::Cow;
 use std::ops::Range;
+use std::rc::Rc;
 
 #[derive(Debug, Clone)]
 pub struct ConstCallExpr {
@@ -276,6 +277,8 @@ default_spanned_impl!(ConstBinaryExpr);
 
 #[derive(Debug, Clone)]
 pub enum ConstExpr {
+    Value(i64), // Value that was inserted by the compiler
+
     // Leaf expressions
     Literal(Literal),
     Ident(Ident),
@@ -491,6 +494,13 @@ impl ConstFunc {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum TypeItem {
+    Struct(Struct),
+    Enum(Enum),
+    Module(Module),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResolvedType {
     Const,
@@ -499,43 +509,49 @@ pub enum ResolvedType {
     },
     Named {
         name: SharedString,
-        generic_args: Vec<i64>,
+        generic_args: Rc<[i64]>,
     },
     Array {
-        item_ty: Box<ResolvedType>,
+        item_ty: TypeId,
         len: i64,
     },
 }
 
-impl std::fmt::Display for ResolvedType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl ResolvedType {
+    pub fn to_string(&self, known_types: &HashMap<TypeId, ResolvedType>) -> Cow<'static, str> {
         match self {
-            Self::Const => write!(f, "const int"),
+            Self::Const => "const int".into(),
             Self::BuiltinBits { width } => {
                 if *width == 1 {
-                    write!(f, "bit")
+                    "bit".into()
                 } else {
-                    write!(f, "bits<{}>", width)
+                    format!("bits<{}>", width).into()
                 }
             }
             Self::Named { name, generic_args } => {
-                write!(f, "{}", name)?;
+                use std::fmt::Write;
+
+                let mut result = String::new();
+                let _ = write!(result, "{}", name);
 
                 if generic_args.len() > 0 {
-                    write!(f, "<")?;
+                    let _ = write!(result, "<");
                     for (i, arg) in generic_args.iter().copied().enumerate() {
                         if i == 0 {
-                            write!(f, "{}", arg)?;
+                            let _ = write!(result, "{}", arg);
                         } else {
-                            write!(f, ", {}", arg)?;
+                            let _ = write!(result, ", {}", arg);
                         }
                     }
-                    write!(f, ">")?;
+                    let _ = write!(result, ">");
                 }
 
-                Ok(())
+                result.into()
             }
-            Self::Array { item_ty, len } => write!(f, "[{}; {}]", item_ty, len),
+            Self::Array { item_ty, len } => {
+                let item_ty_str = known_types[item_ty].to_string(known_types);
+                format!("[{}; {}]", item_ty_str, len).into()
+            }
         }
     }
 }
@@ -556,8 +572,8 @@ impl std::hash::Hash for ResolvedType {
                 Hash::hash(generic_args, state);
             }
             Self::Array { item_ty, len } => {
-                Hash::hash(len, state);
                 Hash::hash(item_ty, state);
+                Hash::hash(len, state);
             }
         }
     }
@@ -575,5 +591,42 @@ impl TypeId {
         let mut hasher = Xxh3::new();
         std::hash::Hash::hash(ty, &mut hasher);
         Self(hasher.digest128())
+    }
+}
+
+impl std::fmt::Display for TypeId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:0>32x}", self.0)
+    }
+}
+
+pub struct ResolvedModule {
+    local_consts: HashMap<SharedString, i64>,
+    ports: Vec<Port>,
+    members: Vec<Member>,
+}
+
+impl ResolvedModule {
+    #[inline]
+    pub fn new(
+        local_consts: HashMap<SharedString, i64>,
+        ports: Vec<Port>,
+        members: Vec<Member>,
+    ) -> Self {
+        Self {
+            local_consts,
+            ports,
+            members,
+        }
+    }
+
+    #[inline]
+    pub fn ports(&self) -> &[Port] {
+        &self.ports
+    }
+
+    #[inline]
+    pub fn members(&self) -> &[Member] {
+        &self.members
     }
 }

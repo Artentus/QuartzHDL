@@ -294,6 +294,18 @@ impl WriteColored for crate::typecheck::TypecheckError<'_> {
                 ),
                 call_expr.span(),
             ),
+            Self::GenericCountMismatch { ty, arg_count } => ErrorInfo::new(
+                format!(
+                    "expected {} generic arguments to type `{}` but found {}",
+                    arg_count,
+                    ty.name().as_ref(),
+                    ty.generic_args().map(|args| args.args().len()).unwrap_or(0)
+                ),
+                ty.span(),
+            ),
+            Self::ArithmeticError(err) => {
+                return err.write_colored(stream, file_server);
+            }
             Self::List(list) => {
                 for (i, err) in list.iter().enumerate() {
                     if i > 0 {
