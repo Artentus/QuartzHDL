@@ -203,7 +203,7 @@ fn main() -> std::io::Result<()> {
                     );
 
                     match result {
-                        Ok(_) => {
+                        Ok(resolved_types) => {
                             // TODO:
                         }
                         Err(err) => {

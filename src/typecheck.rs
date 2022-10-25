@@ -1,9 +1,8 @@
-use std::collections::VecDeque;
-
 use crate::ast::*;
-use crate::const_eval::{eval, ArithmeticError, VarScope};
+use crate::const_eval::*;
 use crate::ir::*;
 use crate::{HashMap, HashSet, SharedString};
+use std::collections::VecDeque;
 use topological_sort::TopologicalSort;
 
 #[derive(Debug)]
@@ -57,6 +56,16 @@ pub enum TypecheckError<'a> {
     GenericCountMismatch {
         ty: &'a NamedType,
         arg_count: usize,
+    },
+    InvalidEnumBaseType {
+        ty: &'a Type,
+    },
+    InvalidBitWidth {
+        width: i64,
+        arg: &'a GenericTypeArg,
+    },
+    UndefinedType {
+        ty: &'a Type,
     },
     ArithmeticError(ArithmeticError),
     List(Vec<TypecheckError<'a>>),
@@ -735,36 +744,6 @@ pub fn collect_type_items(
     type_items
 }
 
-fn check_for_duplicate_members<'a>(
-    generic_args: Option<&'a GenericStructArgs>,
-    members: impl Iterator<Item = &'a Member>,
-) -> TypecheckResult<'static, ()> {
-    let mut errors = Vec::new();
-    let mut set = HashSet::default();
-
-    if let Some(generic_args) = generic_args {
-        for arg in generic_args.args().iter() {
-            if set.contains(arg.as_ref()) {
-                errors.push(TypecheckError::DuplicateIdent { name: arg.clone() })
-            } else {
-                set.insert(arg.as_string());
-            }
-        }
-    }
-
-    for member in members {
-        if let Some(name) = member.name() {
-            if set.contains(name.as_ref()) {
-                errors.push(TypecheckError::DuplicateIdent { name: name.clone() })
-            } else {
-                set.insert(name.as_string());
-            }
-        }
-    }
-
-    wrap_errors!((), errors)
-}
-
 fn resolve_type<'a>(
     ty: &'a Type,
     type_items: &HashMap<SharedString, TypeItem>,
@@ -779,10 +758,7 @@ fn resolve_type<'a>(
     match ty {
         Type::Named(named_ty) => {
             let name = named_ty.name().as_ref();
-            let generic_arg_count = named_ty
-                .generic_args()
-                .map(|generic_args| generic_args.args().len())
-                .unwrap_or(0);
+            let generic_arg_count = named_ty.generic_arg_count();
 
             let resolved_ty = match name {
                 "bit" => {
@@ -797,10 +773,8 @@ fn resolve_type<'a>(
                 }
                 "bits" => {
                     if generic_arg_count == 1 {
-                        let width_expr = transform_generic_arg(
-                            &named_ty.generic_args().unwrap().args()[0],
-                            scope,
-                        )?;
+                        let width_arg = &named_ty.generic_args().unwrap().args()[0];
+                        let width_expr = transform_generic_arg(width_arg, scope)?;
 
                         let width = eval(
                             &width_expr,
@@ -809,6 +783,13 @@ fn resolve_type<'a>(
                             local_const_values,
                             funcs,
                         )?;
+
+                        if width < 1 {
+                            return Err(TypecheckError::InvalidBitWidth {
+                                width,
+                                arg: width_arg,
+                            });
+                        }
 
                         ResolvedType::BuiltinBits { width }
                     } else {
@@ -819,7 +800,38 @@ fn resolve_type<'a>(
                     }
                 }
                 _ => {
-                    // FIXME: check if type is valid
+                    if let Some(type_item) = type_items.get(name) {
+                        match type_item {
+                            TypeItem::Struct(struct_item) => {
+                                let struct_generic_count = struct_item.generic_arg_count();
+                                if generic_arg_count != struct_generic_count {
+                                    return Err(TypecheckError::GenericCountMismatch {
+                                        ty: named_ty,
+                                        arg_count: struct_generic_count,
+                                    });
+                                }
+                            }
+                            TypeItem::Enum(_) => {
+                                if generic_arg_count > 0 {
+                                    return Err(TypecheckError::GenericCountMismatch {
+                                        ty: named_ty,
+                                        arg_count: 0,
+                                    });
+                                }
+                            }
+                            TypeItem::Module(module_item) => {
+                                let module_generic_count = module_item.generic_arg_count();
+                                if generic_arg_count != module_generic_count {
+                                    return Err(TypecheckError::GenericCountMismatch {
+                                        ty: named_ty,
+                                        arg_count: module_generic_count,
+                                    });
+                                }
+                            }
+                        }
+                    } else {
+                        return Err(TypecheckError::UndefinedType { ty });
+                    }
 
                     let mut generic_vals = Vec::with_capacity(generic_arg_count);
                     if let Some(generic_args) = named_ty.generic_args() {
@@ -887,6 +899,228 @@ fn resolve_type<'a>(
     }
 }
 
+fn check_for_duplicate_fields<'a>(
+    generic_args: Option<&'a GenericStructArgs>,
+    fields: impl Iterator<Item = &'a Field>,
+) -> TypecheckResult<'static, ()> {
+    let mut errors = Vec::new();
+    let mut set = HashSet::default();
+
+    if let Some(generic_args) = generic_args {
+        for arg in generic_args.args().iter() {
+            if set.contains(arg.as_ref()) {
+                errors.push(TypecheckError::DuplicateIdent { name: arg.clone() })
+            } else {
+                set.insert(arg.as_string());
+            }
+        }
+    }
+
+    for field in fields {
+        if set.contains(field.name().as_ref()) {
+            errors.push(TypecheckError::DuplicateIdent {
+                name: field.name().clone(),
+            })
+        } else {
+            set.insert(field.name().as_string());
+        }
+    }
+
+    wrap_errors!((), errors)
+}
+
+fn resolve_struct<'a>(
+    struct_item: &'a Struct,
+    generic_values: &[i64],
+    type_items: &HashMap<SharedString, TypeItem>,
+    global_scope: &Scope,
+    global_const_values: &HashMap<SharedString, i64>,
+    funcs: &HashMap<SharedString, ConstFunc>,
+    known_types: &mut HashMap<TypeId, ResolvedType>,
+    type_order: &mut TopologicalSort<TypeId>,
+    type_queue: &mut VecDeque<TypeId>,
+) -> TypecheckResult<'a, ResolvedStruct> {
+    debug_assert_eq!(
+        struct_item
+            .generic_args()
+            .map(|args| args.args().len())
+            .unwrap_or(0),
+        generic_values.len()
+    );
+
+    let this_ty = ResolvedType::Named {
+        name: struct_item.name().as_string(),
+        generic_args: generic_values.into(),
+    };
+    let this_id = TypeId::from_type(&this_ty);
+
+    let mut errors = Vec::new();
+    if let Err(err) =
+        check_for_duplicate_fields(struct_item.generic_args(), struct_item.fields().iter())
+    {
+        errors.push(err);
+    }
+
+    let mut local_consts = HashMap::default();
+    let mut scope = Scope::new(global_scope);
+    if let Some(args) = struct_item.generic_args() {
+        for (arg, value) in args.args().iter().zip(generic_values.iter().copied()) {
+            if !local_consts.contains_key(arg.as_ref()) {
+                local_consts.insert(arg.as_string(), ConstExpr::Value(value));
+                scope.add_const(arg);
+            }
+        }
+    }
+
+    let mut local_const_values = HashMap::default();
+    for (name, expr) in local_consts.iter() {
+        let result = eval(
+            expr,
+            &mut VarScope::empty(),
+            global_const_values,
+            Some(&local_consts),
+            funcs,
+        );
+
+        match result {
+            Ok(value) => {
+                local_const_values.insert(SharedString::clone(name), value);
+            }
+            Err(err) => errors.push(err.into()),
+        }
+    }
+
+    let mut fields = HashMap::default();
+    for field in struct_item.fields().iter() {
+        let result = resolve_type(
+            field.ty(),
+            type_items,
+            &mut scope,
+            global_const_values,
+            Some(&local_const_values),
+            funcs,
+            known_types,
+            type_order,
+            type_queue,
+        );
+
+        match result {
+            Ok(ty_id) => {
+                type_order.add_dependency(ty_id, this_id);
+                fields.insert(field.name().as_string(), ty_id);
+            }
+            Err(err) => errors.push(err),
+        }
+    }
+
+    wrap_errors!(ResolvedStruct::new(fields), errors)
+}
+
+fn resolve_enum<'a>(
+    enum_item: &'a Enum,
+    type_items: &HashMap<SharedString, TypeItem>,
+    global_scope: &Scope,
+    global_const_values: &HashMap<SharedString, i64>,
+    funcs: &HashMap<SharedString, ConstFunc>,
+    known_types: &mut HashMap<TypeId, ResolvedType>,
+    type_order: &mut TopologicalSort<TypeId>,
+    type_queue: &mut VecDeque<TypeId>,
+) -> TypecheckResult<'a, ResolvedEnum> {
+    let this_ty = ResolvedType::Named {
+        name: enum_item.name().as_string(),
+        generic_args: [].as_slice().into(),
+    };
+    let this_id = TypeId::from_type(&this_ty);
+
+    let mut scope = Scope::new(global_scope);
+    let base_id = resolve_type(
+        enum_item.base_ty(),
+        type_items,
+        &mut scope,
+        global_const_values,
+        None,
+        funcs,
+        known_types,
+        type_order,
+        type_queue,
+    )?;
+
+    let mut errors = Vec::new();
+    let base_ty = &known_types[&base_id];
+    match base_ty {
+        ResolvedType::BuiltinBits { .. } => {}
+        _ => {
+            errors.push(TypecheckError::InvalidEnumBaseType {
+                ty: enum_item.base_ty(),
+            });
+        }
+    }
+
+    type_order.add_dependency(base_id, this_id);
+
+    let mut variants = HashMap::default();
+    let mut next_variant_value = 0;
+    for (name, expr) in enum_item.variants().iter().map(|v| (v.name(), v.value())) {
+        if let Some(expr) = expr {
+            match transform_const_expr(expr, &mut scope, false) {
+                Ok(expr) => {
+                    let result = eval::<_, i64>(
+                        &expr,
+                        &mut VarScope::empty(),
+                        global_const_values,
+                        None,
+                        funcs,
+                    );
+
+                    match result {
+                        Ok(value) => {
+                            variants.insert(name.as_string(), value);
+                            next_variant_value = value + 1;
+                        }
+                        Err(err) => errors.push(TypecheckError::ArithmeticError(err)),
+                    }
+                }
+                Err(err) => errors.push(err),
+            }
+        } else {
+            variants.insert(name.as_string(), next_variant_value);
+            next_variant_value += 1;
+        }
+    }
+
+    wrap_errors!(ResolvedEnum::new(base_id, variants), errors)
+}
+
+fn check_for_duplicate_members<'a>(
+    generic_args: Option<&'a GenericStructArgs>,
+    members: impl Iterator<Item = &'a Member>,
+) -> TypecheckResult<'static, ()> {
+    let mut errors = Vec::new();
+    let mut set = HashSet::default();
+
+    if let Some(generic_args) = generic_args {
+        for arg in generic_args.args().iter() {
+            if set.contains(arg.as_ref()) {
+                errors.push(TypecheckError::DuplicateIdent { name: arg.clone() })
+            } else {
+                set.insert(arg.as_string());
+            }
+        }
+    }
+
+    for member in members {
+        if let Some(name) = member.name() {
+            if set.contains(name.as_ref()) {
+                errors.push(TypecheckError::DuplicateIdent { name: name.clone() })
+            } else {
+                set.insert(name.as_string());
+            }
+        }
+    }
+
+    wrap_errors!((), errors)
+}
+
 fn resolve_module<'a>(
     module_item: &'a Module,
     generic_values: &[i64],
@@ -898,8 +1132,6 @@ fn resolve_module<'a>(
     type_order: &mut TopologicalSort<TypeId>,
     type_queue: &mut VecDeque<TypeId>,
 ) -> TypecheckResult<'a, ResolvedModule> {
-    use crate::const_eval::*;
-
     debug_assert_eq!(
         module_item
             .generic_args()
@@ -960,6 +1192,7 @@ fn resolve_module<'a>(
         }
     }
 
+    let mut ports = HashMap::default();
     for port in module_item.ports().iter() {
         let result = resolve_type(
             port.ty(),
@@ -974,7 +1207,13 @@ fn resolve_module<'a>(
         );
 
         match result {
-            Ok(ty_id) => type_order.add_dependency(ty_id, this_id),
+            Ok(ty_id) => {
+                type_order.add_dependency(ty_id, this_id);
+                ports.insert(
+                    port.name().as_string(),
+                    ResolvedPort::new(port.mode().dir(), port.logic_mode().kind(), ty_id),
+                );
+            }
             Err(err) => errors.push(err),
         }
     }
@@ -1005,10 +1244,7 @@ fn resolve_module<'a>(
         }
     }
 
-    wrap_errors!(
-        ResolvedModule::new(local_const_values, Vec::new(), Vec::new()),
-        errors
-    )
+    wrap_errors!(ResolvedModule::new(ports, Vec::new()), errors)
 }
 
 pub fn resolve_types<'a>(
@@ -1017,7 +1253,7 @@ pub fn resolve_types<'a>(
     global_scope: &Scope,
     global_const_values: &HashMap<SharedString, i64>,
     funcs: &HashMap<SharedString, ConstFunc>,
-) -> TypecheckResult<'a, ()> {
+) -> TypecheckResult<'a, HashMap<TypeId, ResolvedTypeItem>> {
     let mut known_types = HashMap::default();
     let mut type_order = TopologicalSort::new();
     let mut type_queue = VecDeque::new();
@@ -1031,18 +1267,63 @@ pub fn resolve_types<'a>(
     type_queue.push_back(top_id);
 
     let mut errors = Vec::new();
+    let mut resolved_type_items = HashMap::default();
     while let Some(ty_id) = type_queue.pop_front() {
         let ty = known_types[&ty_id].clone();
 
         match ty {
+            ResolvedType::Const => {
+                resolved_type_items.insert(ty_id, ResolvedTypeItem::Const);
+            }
+            ResolvedType::BuiltinBits { width } => {
+                resolved_type_items.insert(ty_id, ResolvedTypeItem::BuiltinBits { width });
+            }
+            ResolvedType::Array { item_ty, len } => {
+                resolved_type_items.insert(ty_id, ResolvedTypeItem::Array { item_ty, len });
+            }
             ResolvedType::Named { name, generic_args } => {
                 if let Some(item) = type_items.get(name.as_ref()) {
                     match item {
                         TypeItem::Struct(struct_item) => {
-                            // TODO:
+                            let result = resolve_struct(
+                                struct_item,
+                                &generic_args,
+                                type_items,
+                                &global_scope,
+                                &global_const_values,
+                                &funcs,
+                                &mut known_types,
+                                &mut type_order,
+                                &mut type_queue,
+                            );
+
+                            match result {
+                                Ok(resolved_struct) => {
+                                    resolved_type_items
+                                        .insert(ty_id, ResolvedTypeItem::Struct(resolved_struct));
+                                }
+                                Err(err) => errors.push(err),
+                            }
                         }
                         TypeItem::Enum(enum_item) => {
-                            // TODO:
+                            let result = resolve_enum(
+                                enum_item,
+                                type_items,
+                                &global_scope,
+                                &global_const_values,
+                                &funcs,
+                                &mut known_types,
+                                &mut type_order,
+                                &mut type_queue,
+                            );
+
+                            match result {
+                                Ok(resolved_enum) => {
+                                    resolved_type_items
+                                        .insert(ty_id, ResolvedTypeItem::Enum(resolved_enum));
+                                }
+                                Err(err) => errors.push(err),
+                            }
                         }
                         TypeItem::Module(module_item) => {
                             let result = resolve_module(
@@ -1058,8 +1339,9 @@ pub fn resolve_types<'a>(
                             );
 
                             match result {
-                                Ok(_) => {
-                                    // TODO:
+                                Ok(resolved_module) => {
+                                    resolved_type_items
+                                        .insert(ty_id, ResolvedTypeItem::Module(resolved_module));
                                 }
                                 Err(err) => errors.push(err),
                             }
@@ -1069,17 +1351,12 @@ pub fn resolve_types<'a>(
                     unreachable!("invalid resolved type");
                 }
             }
-            _ => {}
         }
-    }
-
-    if errors.len() > 0 {
-        return Err(TypecheckError::new_list(errors));
     }
 
     for (id, ty) in known_types.iter() {
         println!("{}: {}", id, ty.to_string(&known_types));
     }
 
-    Ok(())
+    wrap_errors!(resolved_type_items, errors)
 }

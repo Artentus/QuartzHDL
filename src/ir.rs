@@ -600,28 +600,89 @@ impl std::fmt::Display for TypeId {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct ResolvedStruct {
+    fields: HashMap<SharedString, TypeId>,
+}
+
+impl ResolvedStruct {
+    #[inline]
+    pub fn new(fields: HashMap<SharedString, TypeId>) -> Self {
+        Self { fields }
+    }
+
+    #[inline]
+    pub fn fields(&self) -> &HashMap<SharedString, TypeId> {
+        &self.fields
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ResolvedEnum {
+    base_ty: TypeId,
+    variants: HashMap<SharedString, i64>,
+}
+
+impl ResolvedEnum {
+    #[inline]
+    pub fn new(base_ty: TypeId, variants: HashMap<SharedString, i64>) -> Self {
+        Self { base_ty, variants }
+    }
+
+    #[inline]
+    pub fn base_ty(&self) -> TypeId {
+        self.base_ty
+    }
+
+    #[inline]
+    pub fn variants(&self) -> &HashMap<SharedString, i64> {
+        &self.variants
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ResolvedPort {
+    dir: Direction,
+    kind: LogicKind,
+    ty: TypeId,
+}
+
+impl ResolvedPort {
+    #[inline]
+    pub fn new(dir: Direction, kind: LogicKind, ty: TypeId) -> Self {
+        Self { dir, kind, ty }
+    }
+
+    #[inline]
+    pub fn dir(&self) -> Direction {
+        self.dir
+    }
+
+    #[inline]
+    pub fn kind(&self) -> LogicKind {
+        self.kind
+    }
+
+    #[inline]
+    pub fn ty(&self) -> TypeId {
+        self.ty
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct ResolvedModule {
-    local_consts: HashMap<SharedString, i64>,
-    ports: Vec<Port>,
+    ports: HashMap<SharedString, ResolvedPort>,
     members: Vec<Member>,
 }
 
 impl ResolvedModule {
     #[inline]
-    pub fn new(
-        local_consts: HashMap<SharedString, i64>,
-        ports: Vec<Port>,
-        members: Vec<Member>,
-    ) -> Self {
-        Self {
-            local_consts,
-            ports,
-            members,
-        }
+    pub fn new(ports: HashMap<SharedString, ResolvedPort>, members: Vec<Member>) -> Self {
+        Self { ports, members }
     }
 
     #[inline]
-    pub fn ports(&self) -> &[Port] {
+    pub fn ports(&self) -> &HashMap<SharedString, ResolvedPort> {
         &self.ports
     }
 
@@ -629,4 +690,14 @@ impl ResolvedModule {
     pub fn members(&self) -> &[Member] {
         &self.members
     }
+}
+
+#[derive(Debug, Clone)]
+pub enum ResolvedTypeItem {
+    Const,
+    BuiltinBits { width: i64 },
+    Array { item_ty: TypeId, len: i64 },
+    Struct(ResolvedStruct),
+    Enum(ResolvedEnum),
+    Module(ResolvedModule),
 }

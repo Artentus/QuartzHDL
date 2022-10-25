@@ -212,7 +212,7 @@ fn construct_expr() -> impl QuartzParser<Expr> {
 
     parser!(
         {sequence!(
-            ty(),
+            expr_ty(),
             punct(PunctKind::OpenCurl),
             sep_by(field, punct(PunctKind::Comma), true, true),
             parser!({punct(PunctKind::CloseCurl)}!![err!("expected `}`")])
@@ -639,7 +639,7 @@ fn named_ty() -> impl QuartzParser<NamedType> {
             parser!({sep_by(generic_arg, punct(PunctKind::Comma), false, true)}!![err!("expected generic arguments")]),
             parser!({punct(PunctKind::Gt)}!![err!("expected `>`")]),
         )}
-        ->[|(open_paren, exprs, close_paren)| GenericTypeArgs::new(open_paren, exprs, close_paren)]
+        ->[|(open_paren, exprs, close_paren)| GenericTypeArgs::new(None, open_paren, exprs, close_paren)]
     );
 
     parser!(
@@ -671,6 +671,59 @@ fn ty() -> impl QuartzParser<Type> {
     choice!(
         parser!({named_ty()}->[Type::Named]),
         parser!({array_ty()}->[Type::Array]),
+    )
+}
+
+fn expr_named_ty() -> impl QuartzParser<NamedType> {
+    let generic_arg = parser!(
+        {literal()}->[GenericTypeArg::Literal]
+        <|> {ident()}->[GenericTypeArg::Ident]
+        <|> (
+            {punct(PunctKind::OpenCurl)}
+            .> {expr(true)}!![err!("expected expression")]
+            <. {punct(PunctKind::CloseCurl)}!![err!("expected `}`")]
+        )->[GenericTypeArg::Expr]
+    );
+
+    let generic_args = parser!(
+        {sequence!(
+            punct(PunctKind::DoubleColon),
+            punct(PunctKind::Lt),
+            parser!({sep_by(generic_arg, punct(PunctKind::Comma), false, true)}!![err!("expected generic arguments")]),
+            parser!({punct(PunctKind::Gt)}!![err!("expected `>`")]),
+        )}
+        ->[|(turbofish, open_paren, exprs, close_paren)| GenericTypeArgs::new(Some(turbofish), open_paren, exprs, close_paren)]
+    );
+
+    parser!(
+        ({ident()} <.> ?generic_args)
+        ->[|(name, generic_args)| NamedType::new(name, generic_args)]
+    )
+}
+
+fn expr_array_ty() -> impl QuartzParser<ArrayType> {
+    parser!(
+        {sequence!(
+            punct(PunctKind::OpenBracket),
+            parser!({expr_ty()}!![err!("expected type")]),
+            parser!({punct(PunctKind::Semicolon)}!![err!("expected `;`")]),
+            parser!({expr(true)}!![err!("expected expression")]),
+            parser!({punct(PunctKind::CloseBracket)}!![err!("expected `]`")]),
+        )}
+        ->[|(open_bracket, ty, sep, len, close_bracket)| ArrayType::new(
+            open_bracket,
+            ty,
+            sep,
+            len,
+            close_bracket,
+        )]
+    )
+}
+
+fn expr_ty() -> impl QuartzParser<Type> {
+    choice!(
+        parser!({expr_named_ty()}->[Type::Named]),
+        parser!({expr_array_ty()}->[Type::Array]),
     )
 }
 

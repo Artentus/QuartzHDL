@@ -303,6 +303,16 @@ impl WriteColored for crate::typecheck::TypecheckError<'_> {
                 ),
                 ty.span(),
             ),
+            Self::InvalidEnumBaseType { ty } => ErrorInfo::new(
+                format!("`{}` is not a valid base type for an enum", ty),
+                ty.span(),
+            ),
+            Self::InvalidBitWidth { width, arg } => {
+                ErrorInfo::new(format!("`{}` is not a valid bit width", width), arg.span())
+            }
+            Self::UndefinedType { ty } => {
+                ErrorInfo::new(format!("`the type {}` is not defined", ty), ty.span())
+            }
             Self::ArithmeticError(err) => {
                 return err.write_colored(stream, file_server);
             }

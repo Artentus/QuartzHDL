@@ -1801,6 +1801,7 @@ default_display_impl!(GenericTypeArg);
 
 #[derive(Debug, Clone)]
 pub struct GenericTypeArgs {
+    turbofish: Option<Punct>,
     open_paren: Punct,
     args: Vec<GenericTypeArg>,
     close_paren: Punct,
@@ -1808,12 +1809,23 @@ pub struct GenericTypeArgs {
 
 impl GenericTypeArgs {
     #[inline]
-    pub fn new(open_paren: Punct, args: Vec<GenericTypeArg>, close_paren: Punct) -> Self {
+    pub fn new(
+        turbofish: Option<Punct>,
+        open_paren: Punct,
+        args: Vec<GenericTypeArg>,
+        close_paren: Punct,
+    ) -> Self {
         Self {
+            turbofish,
             open_paren,
             args,
             close_paren,
         }
+    }
+
+    #[inline]
+    pub fn turbofish(&self) -> Option<&Punct> {
+        self.turbofish.as_ref()
     }
 
     #[inline]
@@ -1840,6 +1852,10 @@ impl Spanned for GenericTypeArgs {
 
 impl DisplayScoped for GenericTypeArgs {
     fn fmt(&self, f: &mut ScopedFormatter<'_, '_>) -> std::fmt::Result {
+        if let Some(turbofish) = &self.turbofish {
+            write!(f, "{}", turbofish)?;
+        }
+
         write!(f, "{}", self.open_paren)?;
         for (i, arg) in self.args.iter().enumerate() {
             if i == 0 {
@@ -1874,6 +1890,12 @@ impl NamedType {
     #[inline]
     pub fn generic_args(&self) -> Option<&GenericTypeArgs> {
         self.generic_args.as_ref()
+    }
+
+    pub fn generic_arg_count(&self) -> usize {
+        self.generic_args()
+            .map(|args| args.args().len())
+            .unwrap_or(0)
     }
 }
 
@@ -2137,6 +2159,12 @@ impl Struct {
     #[inline]
     pub fn generic_args(&self) -> Option<&GenericStructArgs> {
         self.generic_args.as_ref()
+    }
+
+    pub fn generic_arg_count(&self) -> usize {
+        self.generic_args()
+            .map(|args| args.args().len())
+            .unwrap_or(0)
     }
 
     #[inline]
@@ -2894,6 +2922,12 @@ impl Module {
     #[inline]
     pub fn generic_args(&self) -> Option<&GenericStructArgs> {
         self.generic_args.as_ref()
+    }
+
+    pub fn generic_arg_count(&self) -> usize {
+        self.generic_args()
+            .map(|args| args.args().len())
+            .unwrap_or(0)
     }
 
     #[inline]
