@@ -498,7 +498,7 @@ default_display_impl!(FieldAssign);
 
 #[derive(Debug, Clone)]
 pub struct ConstructExpr {
-    ty: Box<Type>,
+    ty: Box<NamedType>,
     open_curl: Punct,
     fields: Vec<FieldAssign>,
     close_curl: Punct,
@@ -506,7 +506,12 @@ pub struct ConstructExpr {
 
 impl ConstructExpr {
     #[inline]
-    pub fn new(ty: Type, open_curl: Punct, fields: Vec<FieldAssign>, close_curl: Punct) -> Self {
+    pub fn new(
+        ty: NamedType,
+        open_curl: Punct,
+        fields: Vec<FieldAssign>,
+        close_curl: Punct,
+    ) -> Self {
         Self {
             ty: Box::new(ty),
             open_curl,
@@ -516,7 +521,7 @@ impl ConstructExpr {
     }
 
     #[inline]
-    pub fn ty(&self) -> &Type {
+    pub fn ty(&self) -> &NamedType {
         &self.ty
     }
 

@@ -670,15 +670,50 @@ impl ResolvedPort {
 }
 
 #[derive(Debug, Clone)]
+pub struct ResolvedLogicMember {
+    kind: LogicKind,
+    ty: TypeId,
+}
+
+impl ResolvedLogicMember {
+    #[inline]
+    pub fn new(kind: LogicKind, ty: TypeId) -> Self {
+        Self { kind, ty }
+    }
+
+    #[inline]
+    pub fn kind(&self) -> LogicKind {
+        self.kind
+    }
+
+    #[inline]
+    pub fn ty(&self) -> TypeId {
+        self.ty
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct ResolvedModule {
     ports: HashMap<SharedString, ResolvedPort>,
-    members: Vec<Member>,
+    logic_members: HashMap<SharedString, ResolvedLogicMember>,
+    proc_members: Vec<ProcMember>,
+    comb_members: Vec<CombMember>,
 }
 
 impl ResolvedModule {
     #[inline]
-    pub fn new(ports: HashMap<SharedString, ResolvedPort>, members: Vec<Member>) -> Self {
-        Self { ports, members }
+    pub fn new(
+        ports: HashMap<SharedString, ResolvedPort>,
+        logic_members: HashMap<SharedString, ResolvedLogicMember>,
+        proc_members: Vec<ProcMember>,
+        comb_members: Vec<CombMember>,
+    ) -> Self {
+        Self {
+            ports,
+            logic_members,
+            proc_members,
+            comb_members,
+        }
     }
 
     #[inline]
@@ -687,8 +722,18 @@ impl ResolvedModule {
     }
 
     #[inline]
-    pub fn members(&self) -> &[Member] {
-        &self.members
+    pub fn logic_members(&self) -> &HashMap<SharedString, ResolvedLogicMember> {
+        &self.logic_members
+    }
+
+    #[inline]
+    pub fn proc_members(&self) -> &[ProcMember] {
+        &self.proc_members
+    }
+
+    #[inline]
+    pub fn comb_members(&self) -> &[CombMember] {
+        &self.comb_members
     }
 }
 

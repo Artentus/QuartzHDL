@@ -674,7 +674,7 @@ fn ty() -> impl QuartzParser<Type> {
     )
 }
 
-fn expr_named_ty() -> impl QuartzParser<NamedType> {
+fn expr_ty() -> impl QuartzParser<NamedType> {
     let generic_arg = parser!(
         {literal()}->[GenericTypeArg::Literal]
         <|> {ident()}->[GenericTypeArg::Ident]
@@ -698,32 +698,6 @@ fn expr_named_ty() -> impl QuartzParser<NamedType> {
     parser!(
         ({ident()} <.> ?generic_args)
         ->[|(name, generic_args)| NamedType::new(name, generic_args)]
-    )
-}
-
-fn expr_array_ty() -> impl QuartzParser<ArrayType> {
-    parser!(
-        {sequence!(
-            punct(PunctKind::OpenBracket),
-            parser!({expr_ty()}!![err!("expected type")]),
-            parser!({punct(PunctKind::Semicolon)}!![err!("expected `;`")]),
-            parser!({expr(true)}!![err!("expected expression")]),
-            parser!({punct(PunctKind::CloseBracket)}!![err!("expected `]`")]),
-        )}
-        ->[|(open_bracket, ty, sep, len, close_bracket)| ArrayType::new(
-            open_bracket,
-            ty,
-            sep,
-            len,
-            close_bracket,
-        )]
-    )
-}
-
-fn expr_ty() -> impl QuartzParser<Type> {
-    choice!(
-        parser!({expr_named_ty()}->[Type::Named]),
-        parser!({expr_array_ty()}->[Type::Array]),
     )
 }
 
