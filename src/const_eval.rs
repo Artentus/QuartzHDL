@@ -182,6 +182,16 @@ fn pattern_matches<G: Evaluatable, L: Evaluatable>(
                     return Ok(true);
                 }
             }
+            ConstMatchPattern::Range(start, end) => {
+                if (start.value()..end.value()).contains(&value) {
+                    return Ok(true);
+                }
+            }
+            ConstMatchPattern::RangeInclusive(start, end) => {
+                if (start.value()..=end.value()).contains(&value) {
+                    return Ok(true);
+                }
+            }
             ConstMatchPattern::Ident(ident) => {
                 if ident.as_ref() == "_" {
                     return Ok(true);
@@ -474,32 +484,27 @@ fn eval_statement<G: Evaluatable, L: Evaluatable>(
             Ok(())
         }
         ConstStatement::ForLoop(for_loop) => {
-            let start = eval(
-                &for_loop.range().start,
-                scope,
-                global_consts,
-                local_consts,
-                funcs,
-            )?;
-            let end = eval(
-                &for_loop.range().end,
-                scope,
-                global_consts,
-                local_consts,
-                funcs,
-            )?;
+            let (start, end, inclusive) = match for_loop.range() {
+                ConstForLoopRange::Range(start, end) => (start, end, false),
+                ConstForLoopRange::RangeInclusive(start, end) => (start, end, true),
+            };
 
-            for loop_index in start..end {
-                let mut inner_scope = VarScope::new(scope);
-                inner_scope.add_var(for_loop.item_name(), loop_index);
+            let start = eval(start, scope, global_consts, local_consts, funcs)?;
+            let end = eval(end, scope, global_consts, local_consts, funcs)?;
 
-                eval_statement_block(
-                    for_loop.body(),
-                    &mut inner_scope,
-                    global_consts,
-                    local_consts,
-                    funcs,
-                )?;
+            for loop_index in start..=end {
+                if (loop_index < end) || inclusive {
+                    let mut inner_scope = VarScope::new(scope);
+                    inner_scope.add_var(for_loop.item_name(), loop_index);
+
+                    eval_statement_block(
+                        for_loop.body(),
+                        &mut inner_scope,
+                        global_consts,
+                        local_consts,
+                        funcs,
+                    )?;
+                }
             }
 
             Ok(())

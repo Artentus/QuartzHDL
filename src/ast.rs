@@ -1,9 +1,11 @@
 #![allow(dead_code)]
 
 use crate::fmt::{DisplayScoped, ScopedFormatter};
+use crate::ir::TypeId;
 use crate::lexer::PunctKind;
 use crate::{default_display_impl, SharedString};
 use langbox::TextSpan;
+use once_cell::sync::OnceCell;
 use std::fmt::Write;
 use std::hash::Hash;
 use std::ops::Range;
@@ -149,6 +151,20 @@ impl AsRef<str> for Ident {
     }
 }
 
+impl Into<SharedString> for Ident {
+    #[inline]
+    fn into(self) -> SharedString {
+        self.as_string()
+    }
+}
+
+impl Into<SharedString> for &Ident {
+    #[inline]
+    fn into(self) -> SharedString {
+        self.as_string()
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Literal {
     value: i64,
@@ -214,66 +230,20 @@ impl DisplayScoped for Punct {
 
 default_display_impl!(Punct);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PathSeparatorKind {
-    Period,
-    DoubleColon,
-}
-
-impl DisplayScoped for PathSeparatorKind {
-    fn fmt(&self, f: &mut ScopedFormatter<'_, '_>) -> std::fmt::Result {
-        match self {
-            Self::Period => write!(f, "."),
-            Self::DoubleColon => write!(f, "::"),
-        }
-    }
-}
-
-default_display_impl!(PathSeparatorKind);
-
-#[derive(Debug, Clone, Copy)]
-pub struct PathSeparator {
-    kind: PathSeparatorKind,
-    span: TextSpan,
-}
-
-impl PathSeparator {
-    #[inline]
-    pub fn new(kind: PathSeparatorKind, span: TextSpan) -> Self {
-        Self { kind, span }
-    }
-
-    #[inline]
-    pub fn kind(&self) -> PathSeparatorKind {
-        self.kind
-    }
-}
-
-default_spanned_impl!(PathSeparator);
-
-impl DisplayScoped for PathSeparator {
-    #[inline]
-    fn fmt(&self, f: &mut ScopedFormatter<'_, '_>) -> std::fmt::Result {
-        DisplayScoped::fmt(&self.kind, f)
-    }
-}
-
-default_display_impl!(PathSeparator);
-
 #[derive(Debug, Clone)]
 pub struct PathSegment {
-    sep: PathSeparator,
+    sep: Punct,
     ident: Ident,
 }
 
 impl PathSegment {
     #[inline]
-    pub fn new(sep: PathSeparator, ident: Ident) -> Self {
+    pub fn new(sep: Punct, ident: Ident) -> Self {
         Self { sep, ident }
     }
 
     #[inline]
-    pub fn sep(&self) -> &PathSeparator {
+    pub fn sep(&self) -> &Punct {
         &self.sep
     }
 
@@ -317,6 +287,20 @@ impl Path {
     #[inline]
     pub fn tail(&self) -> &[PathSegment] {
         &self.tail
+    }
+
+    #[inline]
+    pub fn is_ident(&self) -> bool {
+        self.tail.len() == 0
+    }
+
+    #[inline]
+    pub fn as_ident(&self) -> Option<&Ident> {
+        if self.is_ident() {
+            Some(self.head())
+        } else {
+            None
+        }
     }
 }
 
@@ -502,6 +486,7 @@ pub struct ConstructExpr {
     open_curl: Punct,
     fields: Vec<FieldAssign>,
     close_curl: Punct,
+    resolved_ty: OnceCell<TypeId>,
 }
 
 impl ConstructExpr {
@@ -517,6 +502,7 @@ impl ConstructExpr {
             open_curl,
             fields,
             close_curl,
+            resolved_ty: OnceCell::new(),
         }
     }
 
@@ -538,6 +524,17 @@ impl ConstructExpr {
     #[inline]
     pub fn close_curl(&self) -> &Punct {
         &self.close_curl
+    }
+
+    pub fn resolve(&self, ty: TypeId) {
+        self.resolved_ty
+            .set(ty)
+            .expect("construct expression was resolved more than once");
+    }
+
+    #[inline]
+    pub fn resolved_ty(&self) -> Option<TypeId> {
+        self.resolved_ty.get().copied()
     }
 }
 
@@ -756,6 +753,8 @@ default_display_impl!(IfExpr);
 #[derive(Debug, Clone)]
 pub enum MatchPattern {
     Literal(Literal),
+    Range(Literal, Literal),
+    RangeInclusive(Literal, Literal),
     Path(Path),
 }
 
@@ -763,6 +762,8 @@ impl Spanned for MatchPattern {
     fn span(&self) -> TextSpan {
         match self {
             Self::Literal(l) => l.span(),
+            Self::Range(s, e) => s.span().join(&e.span()),
+            Self::RangeInclusive(s, e) => s.span().join(&e.span()),
             Self::Path(p) => p.span(),
         }
     }
@@ -772,6 +773,8 @@ impl DisplayScoped for MatchPattern {
     fn fmt(&self, f: &mut ScopedFormatter<'_, '_>) -> std::fmt::Result {
         match self {
             Self::Literal(l) => DisplayScoped::fmt(l, f),
+            Self::Range(s, e) => write!(f, "{}..{}", s, e),
+            Self::RangeInclusive(s, e) => write!(f, "{}..={}", s, e),
             Self::Path(p) => DisplayScoped::fmt(p, f),
         }
     }
@@ -1053,6 +1056,83 @@ impl DisplayScoped for IndexExpr {
 default_display_impl!(IndexExpr);
 
 #[derive(Debug, Clone)]
+pub struct MemberAccess {
+    op: Punct,
+    member: Ident,
+}
+
+impl MemberAccess {
+    #[inline]
+    pub fn new(op: Punct, member: Ident) -> Self {
+        Self { op, member }
+    }
+
+    #[inline]
+    pub fn op(&self) -> &Punct {
+        &self.op
+    }
+
+    #[inline]
+    pub fn member(&self) -> &Ident {
+        &self.member
+    }
+}
+
+impl Spanned for MemberAccess {
+    fn span(&self) -> TextSpan {
+        self.op.span().join(&self.member.span())
+    }
+}
+
+impl DisplayScoped for MemberAccess {
+    fn fmt(&self, f: &mut ScopedFormatter<'_, '_>) -> std::fmt::Result {
+        write!(f, "{}{}", self.op, self.member)
+    }
+}
+
+default_display_impl!(MemberAccess);
+
+#[derive(Debug, Clone)]
+pub struct MemberAccessExpr {
+    base: Box<Expr>,
+    member: MemberAccess,
+}
+
+impl MemberAccessExpr {
+    #[inline]
+    pub fn new(base: Expr, member: MemberAccess) -> Self {
+        Self {
+            base: Box::new(base),
+            member,
+        }
+    }
+
+    #[inline]
+    pub fn base(&self) -> &Expr {
+        &self.base
+    }
+
+    #[inline]
+    pub fn member(&self) -> &MemberAccess {
+        &self.member
+    }
+}
+
+impl Spanned for MemberAccessExpr {
+    fn span(&self) -> TextSpan {
+        self.base.span().join(&self.member.span())
+    }
+}
+
+impl DisplayScoped for MemberAccessExpr {
+    fn fmt(&self, f: &mut ScopedFormatter<'_, '_>) -> std::fmt::Result {
+        write!(f, "{}{}", self.base, self.member)
+    }
+}
+
+default_display_impl!(MemberAccessExpr);
+
+#[derive(Debug, Clone)]
 pub struct UnaryExpr {
     op: Punct,
     inner: Box<Expr>,
@@ -1097,6 +1177,7 @@ pub struct CastExpr {
     value: Box<Expr>,
     as_kw: Keyword,
     target_ty: Box<Type>,
+    resolved_ty: OnceCell<TypeId>,
 }
 
 impl CastExpr {
@@ -1106,6 +1187,7 @@ impl CastExpr {
             value: Box::new(value),
             as_kw,
             target_ty: Box::new(target_ty),
+            resolved_ty: OnceCell::new(),
         }
     }
 
@@ -1122,6 +1204,17 @@ impl CastExpr {
     #[inline]
     pub fn target_ty(&self) -> &Type {
         &self.target_ty
+    }
+
+    pub fn resolve(&self, ty: TypeId) {
+        self.resolved_ty
+            .set(ty)
+            .expect("cast expression was resolved more than once");
+    }
+
+    #[inline]
+    pub fn resolved_ty(&self) -> Option<TypeId> {
+        self.resolved_ty.get().copied()
     }
 }
 
@@ -1201,6 +1294,7 @@ pub enum Expr {
 
     // Operators
     Index(IndexExpr),
+    MemberAccess(MemberAccessExpr),
     Pos(UnaryExpr),
     Neg(UnaryExpr),
     Not(UnaryExpr),
@@ -1243,6 +1337,7 @@ impl Spanned for Expr {
             Self::Block(b) => b.span(),
 
             Self::Index(expr) => expr.span(),
+            Self::MemberAccess(expr) => expr.span(),
             Self::Pos(expr) => expr.span(),
             Self::Neg(expr) => expr.span(),
             Self::Not(expr) => expr.span(),
@@ -1287,6 +1382,7 @@ impl DisplayScoped for Expr {
             Self::Block(b) => DisplayScoped::fmt(b.as_ref(), f),
 
             Self::Index(expr) => DisplayScoped::fmt(expr, f),
+            Self::MemberAccess(expr) => DisplayScoped::fmt(expr, f),
             Self::Pos(expr) => DisplayScoped::fmt(expr, f),
             Self::Neg(expr) => DisplayScoped::fmt(expr, f),
             Self::Not(expr) => DisplayScoped::fmt(expr, f),
@@ -1378,15 +1474,41 @@ impl DisplayScoped for Declaration {
 default_display_impl!(Declaration);
 
 #[derive(Debug, Clone)]
+pub enum SuffixOp {
+    Indexer(Indexer),
+    MemberAccess(MemberAccess),
+}
+
+impl Spanned for SuffixOp {
+    fn span(&self) -> TextSpan {
+        match self {
+            Self::Indexer(indexer) => indexer.span(),
+            Self::MemberAccess(member) => member.span(),
+        }
+    }
+}
+
+impl DisplayScoped for SuffixOp {
+    fn fmt(&self, f: &mut ScopedFormatter<'_, '_>) -> std::fmt::Result {
+        match self {
+            Self::Indexer(indexer) => DisplayScoped::fmt(indexer, f),
+            Self::MemberAccess(member) => DisplayScoped::fmt(member, f),
+        }
+    }
+}
+
+default_display_impl!(SuffixOp);
+
+#[derive(Debug, Clone)]
 pub struct AssignTarget {
     path: Path,
-    indexers: Vec<Indexer>,
+    suffixes: Vec<SuffixOp>,
 }
 
 impl AssignTarget {
     #[inline]
-    pub fn new(path: Path, indexers: Vec<Indexer>) -> Self {
-        Self { path, indexers }
+    pub fn new(path: Path, suffixes: Vec<SuffixOp>) -> Self {
+        Self { path, suffixes }
     }
 
     #[inline]
@@ -1395,14 +1517,14 @@ impl AssignTarget {
     }
 
     #[inline]
-    pub fn indexers(&self) -> &[Indexer] {
-        &self.indexers
+    pub fn suffixes(&self) -> &[SuffixOp] {
+        &self.suffixes
     }
 }
 
 impl Spanned for AssignTarget {
     fn span(&self) -> TextSpan {
-        if let Some(last) = self.indexers.last() {
+        if let Some(last) = self.suffixes.last() {
             self.path.span().join(&last.span())
         } else {
             self.path.span()
@@ -1414,8 +1536,8 @@ impl DisplayScoped for AssignTarget {
     fn fmt(&self, f: &mut ScopedFormatter<'_, '_>) -> std::fmt::Result {
         write!(f, "{}", self.path)?;
 
-        for indexer in self.indexers.iter() {
-            write!(f, "{}", indexer)?;
+        for suffix in self.suffixes.iter() {
+            write!(f, "{}", suffix)?;
         }
 
         Ok(())
@@ -1597,11 +1719,28 @@ impl DisplayScoped for WhileLoop {
 default_display_impl!(WhileLoop);
 
 #[derive(Debug, Clone)]
+pub enum ForLoopRange {
+    Range(Expr, Expr),
+    RangeInclusive(Expr, Expr),
+}
+
+impl DisplayScoped for ForLoopRange {
+    fn fmt(&self, f: &mut ScopedFormatter<'_, '_>) -> std::fmt::Result {
+        match self {
+            Self::Range(s, e) => write!(f, "{}..{}", s, e),
+            Self::RangeInclusive(s, e) => write!(f, "{}..={}", s, e),
+        }
+    }
+}
+
+default_display_impl!(ForLoopRange);
+
+#[derive(Debug, Clone)]
 pub struct ForLoop {
     for_kw: Keyword,
     item_name: Ident,
     in_kw: Keyword,
-    range: Range<Expr>,
+    range: ForLoopRange,
     body: Box<Block>,
 }
 
@@ -1611,7 +1750,7 @@ impl ForLoop {
         for_kw: Keyword,
         item_name: Ident,
         in_kw: Keyword,
-        range: Range<Expr>,
+        range: ForLoopRange,
         body: Block,
     ) -> Self {
         Self {
@@ -1639,7 +1778,7 @@ impl ForLoop {
     }
 
     #[inline]
-    pub fn range(&self) -> &Range<Expr> {
+    pub fn range(&self) -> &ForLoopRange {
         &self.range
     }
 
@@ -1659,8 +1798,8 @@ impl DisplayScoped for ForLoop {
     fn fmt(&self, f: &mut ScopedFormatter<'_, '_>) -> std::fmt::Result {
         write!(
             f,
-            "{} {} {} {}..{} {}",
-            self.for_kw, self.item_name, self.in_kw, self.range.start, self.range.end, self.body
+            "{} {} {} {} {}",
+            self.for_kw, self.item_name, self.in_kw, self.range, self.body
         )
     }
 }
@@ -2627,13 +2766,13 @@ default_display_impl!(Edge);
 pub struct Sens {
     edge: Edge,
     open_paren: Punct,
-    sig: Path,
+    sig: Expr,
     close_paren: Punct,
 }
 
 impl Sens {
     #[inline]
-    pub fn new(edge: Edge, open_paren: Punct, sig: Path, close_paren: Punct) -> Self {
+    pub fn new(edge: Edge, open_paren: Punct, sig: Expr, close_paren: Punct) -> Self {
         Self {
             edge,
             open_paren,
@@ -2653,7 +2792,7 @@ impl Sens {
     }
 
     #[inline]
-    pub fn sig(&self) -> &Path {
+    pub fn sig(&self) -> &Expr {
         &self.sig
     }
 

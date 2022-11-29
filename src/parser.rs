@@ -164,13 +164,7 @@ fn literal() -> impl QuartzParser<Literal> {
 
 fn path() -> impl QuartzParser<Path> {
     let segment = parser!(
-        (
-            (
-                {punct(PunctKind::Period)}->[|punct| PathSeparator::new(PathSeparatorKind::Period, punct.span())]
-                <|> {punct(PunctKind::DoubleColon)}->[|punct| PathSeparator::new(PathSeparatorKind::DoubleColon, punct.span())]
-            )
-            <.> {ident()}!![err!("expected identifier")]
-        )
+        ({punct(PunctKind::DoubleColon)} <.> {ident()}!![err!("expected identifier")])
         ->[|(sep, ident)| PathSegment::new(sep, ident)]
     );
 
@@ -212,7 +206,7 @@ fn construct_expr() -> impl QuartzParser<Expr> {
 
     parser!(
         {sequence!(
-            expr_ty(),
+            expr_named_ty(),
             punct(PunctKind::OpenCurl),
             sep_by(field, punct(PunctKind::Comma), true, true),
             parser!({punct(PunctKind::CloseCurl)}!![err!("expected `}`")])
@@ -255,6 +249,21 @@ fn if_expr() -> impl QuartzParser<Expr> {
 
 fn match_expr() -> impl QuartzParser<Expr> {
     let pattern = choice!(
+        parser!(
+            (
+                {literal()}
+                <. {punct(PunctKind::DoublePeriod)}
+                <.> ?{punct(PunctKind::Eq)}
+                <.> {literal()}!![err!("expected literal")]
+            )
+            ->[|((start, eq), end)| {
+                if eq.is_some() {
+                    MatchPattern::RangeInclusive(start, end)
+                } else {
+                    MatchPattern::Range(start, end)
+                }
+            }]
+        ),
         parser!({literal()}->[MatchPattern::Literal]),
         parser!({path()}->[MatchPattern::Path]),
     );
@@ -333,10 +342,26 @@ fn indexer() -> impl QuartzParser<Indexer> {
     )
 }
 
-fn concat_unary_suffix_exprs(base: Expr, indexers: Vec<Indexer>) -> Expr {
+fn member_access() -> impl QuartzParser<MemberAccess> {
+    parser!(
+        ({punct(PunctKind::Period)} <.> {ident()})
+        ->[|(op, member)| MemberAccess::new(op, member)]
+    )
+}
+
+fn suffix_op() -> impl QuartzParser<SuffixOp> {
+    parser!({indexer()}->[SuffixOp::Indexer] <|> {member_access()}->[SuffixOp::MemberAccess])
+}
+
+fn concat_unary_suffix_exprs(base: Expr, suffixes: Vec<SuffixOp>) -> Expr {
     let mut result = base;
-    for indexer in indexers.into_iter() {
-        result = Expr::Index(IndexExpr::new(result, indexer));
+    for suffix in suffixes.into_iter() {
+        result = match suffix {
+            SuffixOp::Indexer(indexer) => Expr::Index(IndexExpr::new(result, indexer)),
+            SuffixOp::MemberAccess(member) => {
+                Expr::MemberAccess(MemberAccessExpr::new(result, member))
+            }
+        };
     }
     result
 }
@@ -354,13 +379,13 @@ fn unary_suffix_expr(simple: bool) -> impl QuartzParser<Expr> {
                 value: base,
                 span: s1,
                 remaining,
-            } => match parser!(*{ indexer() }).run(remaining)? {
+            } => match parser!(*{ suffix_op() }).run(remaining)? {
                 InfallibleParseResult::Match {
-                    value: indexers,
+                    value: suffixes,
                     span: s2,
                     remaining,
                 } => ParseResult::Match {
-                    value: concat_unary_suffix_exprs(base, indexers),
+                    value: concat_unary_suffix_exprs(base, suffixes),
                     span: s1.join(&s2),
                     remaining,
                 },
@@ -411,7 +436,7 @@ fn cast_expr(simple: bool) -> impl QuartzParser<Expr> {
                 span: s1,
                 remaining,
             } => {
-                let tail = parser!({kw(KeywordKind::As)} <.> {ty()});
+                let tail = parser!({kw(KeywordKind::As)} <.> {expr_ty()});
                 match parser!(*tail).run(remaining)? {
                     InfallibleParseResult::Match {
                         value: targets,
@@ -535,8 +560,8 @@ fn punct_to_assign_op(punct: Punct) -> AssignOp {
 
 fn assign() -> impl QuartzParser<Assignment> {
     let target = parser!(
-        ({path()} <.> *{indexer()})
-        ->[|(path, indexers)| AssignTarget::new(path, indexers)]
+        ({path()} <.> *{suffix_op()})
+        ->[|(path, suffixes)| AssignTarget::new(path, suffixes)]
     );
 
     let op = parser!({punct([
@@ -575,10 +600,17 @@ fn for_loop() -> impl QuartzParser<ForLoop> {
             parser!({kw(KeywordKind::In)}!![err!("expected `in`")]),
             parser!({expr(true)}!![err!("expected expression")]),
             parser!({punct(PunctKind::DoublePeriod)}!![err!("expected `..`")]),
+            parser!(?{punct(PunctKind::Eq)}),
             parser!({expr(true)}!![err!("expected expression")]),
             parser!({block()}!![err!("expected block")]),
         )}
-        ->[|(for_kw, item_name, in_kw, start, _, end, body)| ForLoop::new(for_kw, item_name, in_kw, start..end, body)]
+        ->[|(for_kw, item_name, in_kw, start, _, eq, end, body)| {
+            if eq.is_some() {
+                ForLoop::new(for_kw, item_name, in_kw, ForLoopRange::RangeInclusive(start, end), body)
+            } else {
+                ForLoop::new(for_kw, item_name, in_kw, ForLoopRange::Range(start, end), body)
+            }
+        }]
     )
 }
 
@@ -609,11 +641,10 @@ fn block() -> impl QuartzParser<Block> {
                 Block::new(open_curl, statements, Some(last_expr), close_curl)
             } else {
                 if let Some(Statement::Expr(_)) = statements.last() && (trailing_semis.len() == 0) {
-                    if let Some(Statement::Expr(last_expr)) = statements.pop() {
-                        Block::new(open_curl, statements, Some(last_expr), close_curl)
-                    } else {
-                        unreachable!()
-                    }
+                    let Some(Statement::Expr(last_expr)) = statements.pop() else  {
+                        unreachable!();
+                    };
+                    Block::new(open_curl, statements, Some(last_expr), close_curl)
                 } else {
                     Block::new(open_curl, statements, None, close_curl)
                 }
@@ -674,7 +705,7 @@ fn ty() -> impl QuartzParser<Type> {
     )
 }
 
-fn expr_ty() -> impl QuartzParser<NamedType> {
+fn expr_named_ty() -> impl QuartzParser<NamedType> {
     let generic_arg = parser!(
         {literal()}->[GenericTypeArg::Literal]
         <|> {ident()}->[GenericTypeArg::Ident]
@@ -698,6 +729,32 @@ fn expr_ty() -> impl QuartzParser<NamedType> {
     parser!(
         ({ident()} <.> ?generic_args)
         ->[|(name, generic_args)| NamedType::new(name, generic_args)]
+    )
+}
+
+fn expr_array_ty() -> impl QuartzParser<ArrayType> {
+    parser!(
+        {sequence!(
+            punct(PunctKind::OpenBracket),
+            parser!({expr_ty()}!![err!("expected type")]),
+            parser!({punct(PunctKind::Semicolon)}!![err!("expected `;`")]),
+            parser!({expr(true)}!![err!("expected expression")]),
+            parser!({punct(PunctKind::CloseBracket)}!![err!("expected `]`")]),
+        )}
+        ->[|(open_bracket, ty, sep, len, close_bracket)| ArrayType::new(
+            open_bracket,
+            ty,
+            sep,
+            len,
+            close_bracket,
+        )]
+    )
+}
+
+fn expr_ty() -> impl QuartzParser<Type> {
+    choice!(
+        parser!({expr_named_ty()}->[Type::Named]),
+        parser!({expr_array_ty()}->[Type::Array]),
     )
 }
 
@@ -837,11 +894,11 @@ fn member() -> impl QuartzParser<Member> {
 
     let edge = choice!(
         parser!({kw(KeywordKind::Rising)}->[|kw| Edge::new(EdgeKind::Rising, kw.span())]),
-        parser!({kw(KeywordKind::Rising)}->[|kw| Edge::new(EdgeKind::Rising, kw.span())]),
+        parser!({kw(KeywordKind::Falling)}->[|kw| Edge::new(EdgeKind::Falling, kw.span())]),
     );
 
     let sens = parser!(
-        (edge <.> {punct(PunctKind::OpenParen)} <.> {path()} <.> {punct(PunctKind::CloseParen)})
+        (edge <.> {punct(PunctKind::OpenParen)} <.> {expr(true)} <.> {punct(PunctKind::CloseParen)})
         ->[|(((edge, open_paren), sig), close_paren)| Sens::new(edge, open_paren, sig, close_paren)]
     );
 

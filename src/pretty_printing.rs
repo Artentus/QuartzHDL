@@ -239,9 +239,6 @@ impl WriteColored for crate::typecheck::TypecheckError<'_> {
             Self::InvalidConstExpr { expr } => {
                 ErrorInfo::new("expression is not valid in constant context", expr.span())
             }
-            Self::InvalidConstPattern { pattern } => {
-                ErrorInfo::new("pattern is not valid in constant context", pattern.span())
-            }
             Self::NonExhaustiveMatch { match_expr } => ErrorInfo::new(
                 "match expression is not exhaustive",
                 match_expr
@@ -313,6 +310,199 @@ impl WriteColored for crate::typecheck::TypecheckError<'_> {
             Self::UndefinedType { ty } => {
                 ErrorInfo::new(format!("`the type {}` is not defined", ty), ty.span())
             }
+            Self::IncompatibleType { expr, ty } => ErrorInfo::new(
+                format!("operator '{}' is not defined on type `{}`", expr.op(), ty),
+                expr.span(),
+            ),
+            Self::IncompatibleTypes {
+                expr,
+                lhs_ty,
+                rhs_ty,
+            } => ErrorInfo::new(
+                format!(
+                    "operator '{}' is not defined on types `{}` and `{}`",
+                    expr.op(),
+                    lhs_ty,
+                    rhs_ty
+                ),
+                expr.span(),
+            ),
+            Self::InvalidCast { value_ty, expr } => ErrorInfo::new(
+                format!("cannot cast `{}` to `{}`", value_ty, expr.target_ty()),
+                expr.span(),
+            ),
+            Self::TypeNotConstructible { ty } => ErrorInfo::new(
+                format!("the type `{}` cannot be constructed", ty),
+                ty.span(),
+            ),
+            Self::UnknownField { ty, field } => ErrorInfo::new(
+                format!("no field named `{}` in struct `{}`", field, ty),
+                field.span(),
+            ),
+            Self::MissingField { ty, field } => ErrorInfo::new(
+                format!("missing field `{}` for struct `{}`", field, ty),
+                ty.span(),
+            ),
+            Self::IncompatibleFieldType {
+                assign,
+                field_ty,
+                value_ty,
+            } => ErrorInfo::new(
+                format!(
+                    "field `{}` is of type `{}` but found type `{}`",
+                    assign.field(),
+                    field_ty,
+                    value_ty
+                ),
+                assign.span(),
+            ),
+            Self::InvalidPath { path } => ErrorInfo::new("invalid path", path.span()),
+            Self::InvalidEnumIdent { name } => {
+                ErrorInfo::new(format!("`{}` is not an enum", name), name.span())
+            }
+            Self::InvalidEnumVariant {
+                enum_name,
+                variant_name,
+            } => ErrorInfo::new(
+                format!(
+                    "enum `{}` does not have a variant named `{}`",
+                    enum_name, variant_name
+                ),
+                variant_name.span(),
+            ),
+            Self::UndefinedMember { ty, name } => ErrorInfo::new(
+                format!("type `{}` does not have a member named `{}`", ty, name),
+                name.span(),
+            ),
+            Self::InvalidIndexing { indexer, base_ty } => ErrorInfo::new(
+                format!("value of type `{}` cannot be indexed", base_ty),
+                indexer.span(),
+            ),
+            Self::InvalidRangeIndexing { indexer, base_ty } => ErrorInfo::new(
+                format!("value of type `{}` cannot be range indexed", base_ty),
+                indexer.span(),
+            ),
+            Self::InvalidArrayLength { ty, len } => ErrorInfo::new(
+                format!(
+                    "`{}` is not a valid array length (must be greater than zero)",
+                    len
+                ),
+                ty.span(),
+            ),
+            Self::IndexOutOfRange {
+                index_expr,
+                index,
+                len,
+            } => ErrorInfo::new(
+                format!(
+                    "index `{}` is out of range for array of length {}",
+                    index, len
+                ),
+                index_expr.span(),
+            ),
+            Self::InvalidIndexType {
+                expr,
+                expected_ty,
+                value_ty,
+            } => ErrorInfo::new(
+                format!(
+                    "expected index type `{}` but found type `{}`",
+                    expected_ty, value_ty
+                ),
+                expr.span(),
+            ),
+            Self::ElseIfTypeMismatch {
+                if_ty,
+                else_if_ty,
+                else_if_block,
+            } => ErrorInfo::new(
+                format!(
+                    "if expression is of type `{}` but this branch is returning type `{}`",
+                    if_ty, else_if_ty
+                ),
+                else_if_block.body().result().unwrap().span(),
+            ),
+            Self::ElseTypeMismatch {
+                if_ty,
+                else_ty,
+                else_block,
+            } => ErrorInfo::new(
+                format!(
+                    "if expression is of type `{}` but this branch is returning type `{}`",
+                    if_ty, else_ty
+                ),
+                else_block.body().result().unwrap().span(),
+            ),
+            Self::InvalidConditionType { cond, cond_ty } => ErrorInfo::new(
+                format!(
+                    "expected expression of type `const int` or of type `bit` but found type `{}`",
+                    cond_ty
+                ),
+                cond.span(),
+            ),
+            Self::UnsupportedDeclaration { decl } => ErrorInfo::new(
+                "declarations are not supported in this context",
+                decl.span(),
+            ),
+            Self::UnsupportedWhileLoop { while_loop } => ErrorInfo::new(
+                "while loops are not supported in this context",
+                while_loop.span(),
+            ),
+            Self::UnsupportedForLoop { for_loop } => ErrorInfo::new(
+                "for loops are not supported in this context",
+                for_loop.span(),
+            ),
+            Self::InvalidMatchType { value, value_ty } => ErrorInfo::new(
+                format!("cannot match on expression of type `{}`", value_ty),
+                value.span(),
+            ),
+            Self::IncompatiblePattern { pattern, value_ty } => ErrorInfo::new(
+                format!("pattern is not valid for type `{}`", value_ty),
+                pattern.span(),
+            ),
+            Self::PatternOutOfRange { pattern, value_ty } => ErrorInfo::new(
+                format!("value out of range for type `{}`", value_ty),
+                pattern.span(),
+            ),
+            Self::MatchBranchTypeMismatch {
+                match_ty,
+                branch_ty,
+                branch,
+            } => {
+                use crate::ast::MatchBody;
+                ErrorInfo::new(
+                    format!(
+                        "match expression is of type `{}` but this branch is returning type `{}`",
+                        match_ty, branch_ty
+                    ),
+                    match branch.body() {
+                        MatchBody::Expr(body_expr) => body_expr.span(),
+                        MatchBody::Block(body) => body.result().unwrap().span(),
+                    },
+                )
+            }
+            Self::UnreachablePattern { pattern } => {
+                ErrorInfo::new("pattern was already covered", pattern.span())
+            }
+            Self::InvalidAssignOp { assign } => ErrorInfo::new(
+                format!(
+                    "assignment with `{}` is not valid in this context",
+                    assign.op()
+                ),
+                assign.op().span(),
+            ),
+            Self::InvalidSeqAssignSig { assign } => ErrorInfo::new(
+                "cannot assign to signal in sequential context",
+                assign.target().span().join(&assign.op().span()),
+            ),
+            Self::InvalidSeqAssignMod { assign } => ErrorInfo::new(
+                "cannot assign to signal in sequential context",
+                assign.target().span().join(&assign.op().span()),
+            ),
+            Self::InvalidCombAssignReg { assign } => ErrorInfo::new(
+                "cannot assign to register in combinatoric context",
+                assign.target().span().join(&assign.op().span()),
+            ),
             Self::ArithmeticError(err) => {
                 return err.write_colored(stream, file_server);
             }

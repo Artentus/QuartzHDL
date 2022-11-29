@@ -74,7 +74,7 @@ mod Adder<BITS>(
     sig sum: bits<{BITS + 1}>;
     
     comb {
-        sum = (0 as bit)@lhs + (0 as bit)@rhs + (0 as bits<BITS>)@c_in;
+        sum = (0 as bit)@lhs + (0 as bit)@rhs + (0 as bits::<BITS>)@c_in;
         result = sum[0..BITS];
         c_out = sum[BITS];
     }
@@ -121,9 +121,9 @@ mod Alu<BITS>(
             AluOp::And => lhs & rhs,
             AluOp::Or => lhs | rhs,
             AluOp::Xor => lhs ^ rhs,
-            AluOp::Shl => lhs << shift_amt,
-            AluOp::Lsr => lhs >> shift_amt,
-            AluOp::Asr => lhs >>> shift_amt,
+            AluOp::Shl => lhs << (shift_amt as bits::<BITS>),
+            AluOp::Lsr => lhs >> (shift_amt as bits::<BITS>),
+            AluOp::Asr => lhs >>> (shift_amt as bits::<BITS>),
             AluOp::Mul => lhs * rhs,
         };
     }
@@ -139,7 +139,7 @@ mod Alu<BITS>(
         lhs_s = lhs[BITS - 1];
         rhs_s = rhs[BITS - 1];
 
-        z = result == 0 as bits<BITS>;
+        z = result == 0 as bits::<BITS>;
         s = result[BITS - 1];
         o = (lhs_s == rhs_s) & (lhs_s == s);
 

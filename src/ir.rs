@@ -3,6 +3,7 @@
 use crate::ast::*;
 use crate::{default_spanned_impl, HashMap, SharedString};
 use langbox::TextSpan;
+use once_cell::sync::Lazy;
 use std::borrow::Cow;
 use std::ops::Range;
 use std::rc::Rc;
@@ -157,6 +158,8 @@ default_spanned_impl!(ConstIfExpr);
 #[derive(Debug, Clone)]
 pub enum ConstMatchPattern {
     Literal(Literal),
+    Range(Literal, Literal),
+    RangeInclusive(Literal, Literal),
     Ident(Ident),
 }
 
@@ -397,15 +400,21 @@ impl ConstWhileLoop {
 }
 
 #[derive(Debug, Clone)]
+pub enum ConstForLoopRange {
+    Range(ConstExpr, ConstExpr),
+    RangeInclusive(ConstExpr, ConstExpr),
+}
+
+#[derive(Debug, Clone)]
 pub struct ConstForLoop {
     item_name: Ident,
-    range: Range<ConstExpr>,
+    range: ConstForLoopRange,
     body: Box<ConstBlock>,
 }
 
 impl ConstForLoop {
     #[inline]
-    pub fn new(item_name: Ident, range: Range<ConstExpr>, body: ConstBlock) -> Self {
+    pub fn new(item_name: Ident, range: ConstForLoopRange, body: ConstBlock) -> Self {
         Self {
             item_name,
             range,
@@ -419,7 +428,7 @@ impl ConstForLoop {
     }
 
     #[inline]
-    pub fn range(&self) -> &Range<ConstExpr> {
+    pub fn range(&self) -> &ConstForLoopRange {
         &self.range
     }
 
@@ -505,7 +514,7 @@ pub enum TypeItem {
 pub enum ResolvedType {
     Const,
     BuiltinBits {
-        width: i64,
+        width: u64,
     },
     Named {
         name: SharedString,
@@ -513,7 +522,7 @@ pub enum ResolvedType {
     },
     Array {
         item_ty: TypeId,
-        len: i64,
+        len: u64,
     },
 }
 
@@ -599,6 +608,8 @@ impl std::fmt::Display for TypeId {
         write!(f, "{:0>32x}", self.0)
     }
 }
+
+pub static CONST_TYPE_ID: Lazy<TypeId> = Lazy::new(|| TypeId::from_type(&ResolvedType::Const));
 
 #[derive(Debug, Clone)]
 pub struct ResolvedStruct {
@@ -695,6 +706,7 @@ impl ResolvedLogicMember {
 #[derive(Debug, Clone)]
 pub struct ResolvedModule {
     ports: HashMap<SharedString, ResolvedPort>,
+    local_consts: HashMap<SharedString, i64>,
     logic_members: HashMap<SharedString, ResolvedLogicMember>,
     proc_members: Vec<ProcMember>,
     comb_members: Vec<CombMember>,
@@ -704,12 +716,14 @@ impl ResolvedModule {
     #[inline]
     pub fn new(
         ports: HashMap<SharedString, ResolvedPort>,
+        local_consts: HashMap<SharedString, i64>,
         logic_members: HashMap<SharedString, ResolvedLogicMember>,
         proc_members: Vec<ProcMember>,
         comb_members: Vec<CombMember>,
     ) -> Self {
         Self {
             ports,
+            local_consts,
             logic_members,
             proc_members,
             comb_members,
@@ -719,6 +733,11 @@ impl ResolvedModule {
     #[inline]
     pub fn ports(&self) -> &HashMap<SharedString, ResolvedPort> {
         &self.ports
+    }
+
+    #[inline]
+    pub fn local_consts(&self) -> &HashMap<SharedString, i64> {
+        &self.local_consts
     }
 
     #[inline]
@@ -739,10 +758,878 @@ impl ResolvedModule {
 
 #[derive(Debug, Clone)]
 pub enum ResolvedTypeItem {
-    Const,
-    BuiltinBits { width: i64 },
-    Array { item_ty: TypeId, len: i64 },
     Struct(ResolvedStruct),
     Enum(ResolvedEnum),
     Module(ResolvedModule),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UnresolvedType {
+    BuiltinBits { width: u64 },
+}
+
+pub trait Typed {
+    fn ty(&self) -> TypeId;
+}
+
+#[derive(Debug, Clone)]
+pub struct CheckedFieldAssign {
+    field: Ident,
+    value: CheckedExpr,
+}
+
+impl CheckedFieldAssign {
+    #[inline]
+    pub fn new(field: Ident, value: CheckedExpr) -> Self {
+        Self { field, value }
+    }
+
+    #[inline]
+    pub fn field(&self) -> &Ident {
+        &self.field
+    }
+
+    #[inline]
+    pub fn value(&self) -> &CheckedExpr {
+        &self.value
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CheckedConstructExpr {
+    ty: TypeId,
+    fields: HashMap<SharedString, CheckedExpr>,
+}
+
+impl CheckedConstructExpr {
+    #[inline]
+    pub fn new(ty: TypeId, fields: HashMap<SharedString, CheckedExpr>) -> Self {
+        Self { ty, fields }
+    }
+
+    #[inline]
+    pub fn fields(&self) -> &HashMap<SharedString, CheckedExpr> {
+        &self.fields
+    }
+}
+
+impl Typed for CheckedConstructExpr {
+    #[inline]
+    fn ty(&self) -> TypeId {
+        self.ty
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CheckedIfExprElseIfBlock {
+    condition: Box<CheckedExpr>,
+    body: Box<CheckedExprBlock>,
+}
+
+impl CheckedIfExprElseIfBlock {
+    #[inline]
+    pub fn new(condition: CheckedExpr, body: CheckedExprBlock) -> Self {
+        Self {
+            condition: Box::new(condition),
+            body: Box::new(body),
+        }
+    }
+
+    #[inline]
+    pub fn condition(&self) -> &CheckedExpr {
+        &self.condition
+    }
+
+    #[inline]
+    pub fn body(&self) -> &CheckedExprBlock {
+        &self.body
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CheckedIfExprElseBlock {
+    body: Box<CheckedExprBlock>,
+}
+
+impl CheckedIfExprElseBlock {
+    #[inline]
+    pub fn new(body: CheckedExprBlock) -> Self {
+        Self {
+            body: Box::new(body),
+        }
+    }
+
+    #[inline]
+    pub fn body(&self) -> &CheckedExprBlock {
+        &self.body
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CheckedIfExpr {
+    condition: Box<CheckedExpr>,
+    body: Box<CheckedExprBlock>,
+    else_if_blocks: Vec<CheckedIfExprElseIfBlock>,
+    else_block: CheckedIfExprElseBlock,
+    ty: TypeId,
+}
+
+impl CheckedIfExpr {
+    #[inline]
+    pub fn new(
+        condition: CheckedExpr,
+        body: CheckedExprBlock,
+        else_if_blocks: Vec<CheckedIfExprElseIfBlock>,
+        else_block: CheckedIfExprElseBlock,
+        ty: TypeId,
+    ) -> Self {
+        Self {
+            condition: Box::new(condition),
+            body: Box::new(body),
+            else_if_blocks,
+            else_block,
+            ty,
+        }
+    }
+
+    #[inline]
+    pub fn condition(&self) -> &CheckedExpr {
+        &self.condition
+    }
+
+    #[inline]
+    pub fn body(&self) -> &CheckedExprBlock {
+        &self.body
+    }
+
+    #[inline]
+    pub fn else_if_blocks(&self) -> &[CheckedIfExprElseIfBlock] {
+        &self.else_if_blocks
+    }
+
+    #[inline]
+    pub fn else_block(&self) -> &CheckedIfExprElseBlock {
+        &self.else_block
+    }
+}
+
+impl Typed for CheckedIfExpr {
+    #[inline]
+    fn ty(&self) -> TypeId {
+        self.ty
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum CheckedMatchExprBody {
+    Expr(CheckedExpr),
+    Block(CheckedExprBlock),
+}
+
+impl Typed for CheckedMatchExprBody {
+    fn ty(&self) -> TypeId {
+        match self {
+            Self::Expr(expr) => expr.ty(),
+            Self::Block(block) => block.ty(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CheckedMatchExprBranch {
+    patterns: Vec<MatchPattern>,
+    body: Box<CheckedMatchExprBody>,
+}
+
+impl CheckedMatchExprBranch {
+    #[inline]
+    pub fn new(patterns: Vec<MatchPattern>, body: CheckedMatchExprBody) -> Self {
+        Self {
+            patterns,
+            body: Box::new(body),
+        }
+    }
+
+    #[inline]
+    pub fn patterns(&self) -> &[MatchPattern] {
+        &self.patterns
+    }
+
+    #[inline]
+    pub fn body(&self) -> &CheckedMatchExprBody {
+        &self.body
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CheckedMatchExpr {
+    value: Box<CheckedExpr>,
+    branches: Vec<CheckedMatchExprBranch>,
+    ty: TypeId,
+}
+
+impl CheckedMatchExpr {
+    #[inline]
+    pub fn new(value: CheckedExpr, branches: Vec<CheckedMatchExprBranch>, ty: TypeId) -> Self {
+        Self {
+            value: Box::new(value),
+            branches,
+            ty,
+        }
+    }
+
+    #[inline]
+    pub fn value(&self) -> &CheckedExpr {
+        &self.value
+    }
+
+    #[inline]
+    pub fn branches(&self) -> &[CheckedMatchExprBranch] {
+        &self.branches
+    }
+}
+
+impl Typed for CheckedMatchExpr {
+    #[inline]
+    fn ty(&self) -> TypeId {
+        self.ty
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum CheckedIndexKind {
+    Single(CheckedExpr),
+    Range(Range<i64>),
+}
+
+#[derive(Debug, Clone)]
+pub struct CheckedIndexExpr {
+    base: Box<CheckedExpr>,
+    indexer: Box<CheckedIndexKind>,
+    ty: TypeId,
+}
+
+impl CheckedIndexExpr {
+    #[inline]
+    pub fn new(base: CheckedExpr, indexer: CheckedIndexKind, ty: TypeId) -> Self {
+        Self {
+            base: Box::new(base),
+            indexer: Box::new(indexer),
+            ty,
+        }
+    }
+
+    #[inline]
+    pub fn base(&self) -> &CheckedExpr {
+        &self.base
+    }
+
+    #[inline]
+    pub fn indexer(&self) -> &CheckedIndexKind {
+        &self.indexer
+    }
+}
+
+impl Typed for CheckedIndexExpr {
+    #[inline]
+    fn ty(&self) -> TypeId {
+        self.ty
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CheckedMemberAccessExpr {
+    base: Box<CheckedExpr>,
+    member: Ident,
+    ty: TypeId,
+}
+
+impl CheckedMemberAccessExpr {
+    #[inline]
+    pub fn new(base: CheckedExpr, member: Ident, ty: TypeId) -> Self {
+        Self {
+            base: Box::new(base),
+            member,
+            ty,
+        }
+    }
+
+    #[inline]
+    pub fn base(&self) -> &CheckedExpr {
+        &self.base
+    }
+
+    #[inline]
+    pub fn member(&self) -> &Ident {
+        &self.member
+    }
+}
+
+impl Typed for CheckedMemberAccessExpr {
+    #[inline]
+    fn ty(&self) -> TypeId {
+        self.ty
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CheckedUnaryExpr {
+    inner: Box<CheckedExpr>,
+}
+
+impl CheckedUnaryExpr {
+    #[inline]
+    pub fn new(inner: CheckedExpr) -> Self {
+        Self {
+            inner: Box::new(inner),
+        }
+    }
+
+    #[inline]
+    pub fn inner(&self) -> &CheckedExpr {
+        &self.inner
+    }
+}
+
+impl Typed for CheckedUnaryExpr {
+    #[inline]
+    fn ty(&self) -> TypeId {
+        self.inner.ty()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CheckedCastExpr {
+    value: Box<CheckedExpr>,
+    target_ty: TypeId,
+}
+
+impl CheckedCastExpr {
+    #[inline]
+    pub fn new(value: CheckedExpr, target_ty: TypeId) -> Self {
+        Self {
+            value: Box::new(value),
+            target_ty,
+        }
+    }
+
+    #[inline]
+    pub fn value(&self) -> &CheckedExpr {
+        &self.value
+    }
+
+    #[inline]
+    pub fn target_ty(&self) -> TypeId {
+        self.target_ty
+    }
+}
+
+impl Typed for CheckedCastExpr {
+    #[inline]
+    fn ty(&self) -> TypeId {
+        self.target_ty
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CheckedConcatExpr {
+    lhs: Box<CheckedExpr>,
+    rhs: Box<CheckedExpr>,
+    ty: TypeId,
+}
+
+impl CheckedConcatExpr {
+    #[inline]
+    pub fn new(lhs: CheckedExpr, rhs: CheckedExpr, ty: TypeId) -> Self {
+        Self {
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+            ty,
+        }
+    }
+
+    #[inline]
+    pub fn lhs(&self) -> &CheckedExpr {
+        &self.lhs
+    }
+
+    #[inline]
+    pub fn rhs(&self) -> &CheckedExpr {
+        &self.rhs
+    }
+}
+
+impl Typed for CheckedConcatExpr {
+    #[inline]
+    fn ty(&self) -> TypeId {
+        self.ty
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CheckedBinaryExpr {
+    lhs: Box<CheckedExpr>,
+    rhs: Box<CheckedExpr>,
+    ty: TypeId,
+}
+
+impl CheckedBinaryExpr {
+    #[inline]
+    pub fn new(lhs: CheckedExpr, rhs: CheckedExpr, ty: TypeId) -> Self {
+        Self {
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+            ty,
+        }
+    }
+
+    #[inline]
+    pub fn lhs(&self) -> &CheckedExpr {
+        &self.lhs
+    }
+
+    #[inline]
+    pub fn rhs(&self) -> &CheckedExpr {
+        &self.rhs
+    }
+}
+
+impl Typed for CheckedBinaryExpr {
+    #[inline]
+    fn ty(&self) -> TypeId {
+        self.ty
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CheckedPath {
+    path: Path,
+    ty: TypeId,
+}
+
+impl CheckedPath {
+    #[inline]
+    pub fn new(path: Path, ty: TypeId) -> Self {
+        Self { path, ty }
+    }
+
+    #[inline]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Typed for CheckedPath {
+    #[inline]
+    fn ty(&self) -> TypeId {
+        self.ty
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CheckedExprBlock {
+    statements: Vec<CheckedStatement>,
+    result: Box<CheckedExpr>,
+}
+
+impl CheckedExprBlock {
+    #[inline]
+    pub fn new(statements: Vec<CheckedStatement>, result: CheckedExpr) -> Self {
+        Self {
+            statements,
+            result: Box::new(result),
+        }
+    }
+
+    #[inline]
+    pub fn statements(&self) -> &[CheckedStatement] {
+        &self.statements
+    }
+
+    #[inline]
+    pub fn result(&self) -> &CheckedExpr {
+        &self.result
+    }
+}
+
+impl Typed for CheckedExprBlock {
+    #[inline]
+    fn ty(&self) -> TypeId {
+        self.result.ty()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum CheckedExpr {
+    // Leaf expressions
+    Value(i64),
+    Path(CheckedPath),
+    Construct(CheckedConstructExpr),
+
+    If(CheckedIfExpr),
+    Match(CheckedMatchExpr),
+    Block(CheckedExprBlock),
+
+    // Operators
+    Index(CheckedIndexExpr),
+    MemberAccess(CheckedMemberAccessExpr),
+    Neg(CheckedUnaryExpr),
+    Not(CheckedUnaryExpr),
+    Cast(CheckedCastExpr),
+    Concat(CheckedConcatExpr),
+    Lt(CheckedBinaryExpr),
+    Lte(CheckedBinaryExpr),
+    Gt(CheckedBinaryExpr),
+    Gte(CheckedBinaryExpr),
+    Slt(CheckedBinaryExpr),
+    Slte(CheckedBinaryExpr),
+    Sgt(CheckedBinaryExpr),
+    Sgte(CheckedBinaryExpr),
+    Eq(CheckedBinaryExpr),
+    Ne(CheckedBinaryExpr),
+    Add(CheckedBinaryExpr),
+    Sub(CheckedBinaryExpr),
+    Mul(CheckedBinaryExpr),
+    Div(CheckedBinaryExpr),
+    Rem(CheckedBinaryExpr),
+    And(CheckedBinaryExpr),
+    Xor(CheckedBinaryExpr),
+    Or(CheckedBinaryExpr),
+    Shl(CheckedBinaryExpr),
+    Lsr(CheckedBinaryExpr),
+    Asr(CheckedBinaryExpr),
+}
+
+impl Typed for CheckedExpr {
+    fn ty(&self) -> TypeId {
+        match self {
+            Self::Value(_) => *CONST_TYPE_ID,
+            Self::Path(path) => path.ty(),
+            Self::Construct(expr) => expr.ty(),
+            Self::If(expr) => expr.ty(),
+            Self::Match(expr) => expr.ty(),
+            Self::Block(block) => block.ty(),
+            Self::Index(expr) => expr.ty(),
+            Self::MemberAccess(expr) => expr.ty(),
+            Self::Neg(expr) => expr.ty(),
+            Self::Not(expr) => expr.ty(),
+            Self::Cast(expr) => expr.ty(),
+            Self::Concat(expr) => expr.ty(),
+            Self::Lt(expr) => expr.ty(),
+            Self::Lte(expr) => expr.ty(),
+            Self::Gt(expr) => expr.ty(),
+            Self::Gte(expr) => expr.ty(),
+            Self::Slt(expr) => expr.ty(),
+            Self::Slte(expr) => expr.ty(),
+            Self::Sgt(expr) => expr.ty(),
+            Self::Sgte(expr) => expr.ty(),
+            Self::Eq(expr) => expr.ty(),
+            Self::Ne(expr) => expr.ty(),
+            Self::Add(expr) => expr.ty(),
+            Self::Sub(expr) => expr.ty(),
+            Self::Mul(expr) => expr.ty(),
+            Self::Div(expr) => expr.ty(),
+            Self::Rem(expr) => expr.ty(),
+            Self::And(expr) => expr.ty(),
+            Self::Xor(expr) => expr.ty(),
+            Self::Or(expr) => expr.ty(),
+            Self::Shl(expr) => expr.ty(),
+            Self::Lsr(expr) => expr.ty(),
+            Self::Asr(expr) => expr.ty(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CheckedBlock {
+    statements: Vec<CheckedStatement>,
+}
+
+impl CheckedBlock {
+    #[inline]
+    pub fn new(statements: Vec<CheckedStatement>) -> Self {
+        Self { statements }
+    }
+
+    #[inline]
+    pub fn statements(&self) -> &[CheckedStatement] {
+        &self.statements
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CheckedIfStatementElseIfBlock {
+    condition: Box<CheckedExpr>,
+    body: Box<CheckedBlock>,
+}
+
+impl CheckedIfStatementElseIfBlock {
+    #[inline]
+    pub fn new(condition: CheckedExpr, body: CheckedBlock) -> Self {
+        Self {
+            condition: Box::new(condition),
+            body: Box::new(body),
+        }
+    }
+
+    #[inline]
+    pub fn condition(&self) -> &CheckedExpr {
+        &self.condition
+    }
+
+    #[inline]
+    pub fn body(&self) -> &CheckedBlock {
+        &self.body
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CheckedIfStatementElseBlock {
+    body: Box<CheckedBlock>,
+}
+
+impl CheckedIfStatementElseBlock {
+    #[inline]
+    pub fn new(body: CheckedBlock) -> Self {
+        Self {
+            body: Box::new(body),
+        }
+    }
+
+    #[inline]
+    pub fn body(&self) -> &CheckedBlock {
+        &self.body
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CheckedIfStatement {
+    condition: Box<CheckedExpr>,
+    body: Box<CheckedBlock>,
+    else_if_blocks: Vec<CheckedIfStatementElseIfBlock>,
+    else_block: Option<CheckedIfStatementElseBlock>,
+}
+
+impl CheckedIfStatement {
+    #[inline]
+    pub fn new(
+        condition: CheckedExpr,
+        body: CheckedBlock,
+        else_if_blocks: Vec<CheckedIfStatementElseIfBlock>,
+        else_block: Option<CheckedIfStatementElseBlock>,
+    ) -> Self {
+        Self {
+            condition: Box::new(condition),
+            body: Box::new(body),
+            else_if_blocks,
+            else_block,
+        }
+    }
+
+    #[inline]
+    pub fn condition(&self) -> &CheckedExpr {
+        &self.condition
+    }
+
+    #[inline]
+    pub fn body(&self) -> &CheckedBlock {
+        &self.body
+    }
+
+    #[inline]
+    pub fn else_if_blocks(&self) -> &[CheckedIfStatementElseIfBlock] {
+        &self.else_if_blocks
+    }
+
+    #[inline]
+    pub fn else_block(&self) -> Option<&CheckedIfStatementElseBlock> {
+        self.else_block.as_ref()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CheckedMatchStatementBranch {
+    patterns: Vec<MatchPattern>,
+    body: Box<CheckedBlock>,
+}
+
+impl CheckedMatchStatementBranch {
+    #[inline]
+    pub fn new(patterns: Vec<MatchPattern>, body: CheckedBlock) -> Self {
+        Self {
+            patterns,
+            body: Box::new(body),
+        }
+    }
+
+    #[inline]
+    pub fn patterns(&self) -> &[MatchPattern] {
+        &self.patterns
+    }
+
+    #[inline]
+    pub fn body(&self) -> &CheckedBlock {
+        &self.body
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CheckedMatchStatement {
+    value: Box<CheckedExpr>,
+    branches: Vec<CheckedMatchStatementBranch>,
+}
+
+impl CheckedMatchStatement {
+    #[inline]
+    pub fn new(value: CheckedExpr, branches: Vec<CheckedMatchStatementBranch>) -> Self {
+        Self {
+            value: Box::new(value),
+            branches,
+        }
+    }
+
+    #[inline]
+    pub fn value(&self) -> &CheckedExpr {
+        &self.value
+    }
+
+    #[inline]
+    pub fn branches(&self) -> &[CheckedMatchStatementBranch] {
+        &self.branches
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum CheckedSuffixOp {
+    Indexer(CheckedIndexKind),
+    MemberAccess(Ident),
+}
+
+#[derive(Debug, Clone)]
+pub struct CheckedAssignTarget {
+    base: Ident,
+    suffixes: Vec<CheckedSuffixOp>,
+    ty: TypeId,
+}
+
+impl CheckedAssignTarget {
+    #[inline]
+    pub fn new(base: Ident, suffixes: Vec<CheckedSuffixOp>, ty: TypeId) -> Self {
+        Self { base, suffixes, ty }
+    }
+
+    #[inline]
+    pub fn base(&self) -> &Ident {
+        &self.base
+    }
+
+    #[inline]
+    pub fn suffixes(&self) -> &[CheckedSuffixOp] {
+        &self.suffixes
+    }
+}
+
+impl Typed for CheckedAssignTarget {
+    #[inline]
+    fn ty(&self) -> TypeId {
+        self.ty
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CheckedAssignment {
+    target: CheckedAssignTarget,
+    value: CheckedExpr,
+}
+
+impl CheckedAssignment {
+    #[inline]
+    pub fn new(target: CheckedAssignTarget, value: CheckedExpr) -> Self {
+        Self { target, value }
+    }
+
+    #[inline]
+    pub fn target(&self) -> &CheckedAssignTarget {
+        &self.target
+    }
+
+    #[inline]
+    pub fn value(&self) -> &CheckedExpr {
+        &self.value
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum CheckedStatement {
+    Expr(CheckedExpr),
+    Block(CheckedBlock),
+    If(CheckedIfStatement),
+    Match(CheckedMatchStatement),
+    Assignment(CheckedAssignment),
+}
+
+#[derive(Debug, Clone)]
+pub struct CheckedProcMember {
+    sens: Vec<Sens>,
+    body: CheckedBlock,
+}
+
+impl CheckedProcMember {
+    #[inline]
+    pub fn new(sens: Vec<Sens>, body: CheckedBlock) -> Self {
+        Self { sens, body }
+    }
+
+    #[inline]
+    pub fn sens(&self) -> &[Sens] {
+        &self.sens
+    }
+
+    #[inline]
+    pub fn body(&self) -> &CheckedBlock {
+        &self.body
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CheckedCombMember {
+    body: CheckedBlock,
+}
+
+impl CheckedCombMember {
+    #[inline]
+    pub fn new(body: CheckedBlock) -> Self {
+        Self { body }
+    }
+
+    #[inline]
+    pub fn body(&self) -> &CheckedBlock {
+        &self.body
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CheckedModule {
+    proc_members: Vec<CheckedProcMember>,
+    comb_members: Vec<CheckedCombMember>,
+}
+
+impl CheckedModule {
+    #[inline]
+    pub fn new(proc_members: Vec<CheckedProcMember>, comb_members: Vec<CheckedCombMember>) -> Self {
+        Self {
+            proc_members,
+            comb_members,
+        }
+    }
+
+    #[inline]
+    pub fn proc_members(&self) -> &[CheckedProcMember] {
+        &self.proc_members
+    }
+
+    #[inline]
+    pub fn comb_members(&self) -> &[CheckedCombMember] {
+        &self.comb_members
+    }
 }

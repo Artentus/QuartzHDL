@@ -327,8 +327,9 @@ fn parse_literal(text: &str) -> Option<ReadTokenResult<QuartzToken>> {
             (raw_literal.replace('_', ""), 10)
         };
 
-        let token = match i64::from_str_radix(&literal, radix) {
-            Ok(value) => QuartzToken::Literal(value),
+        // We parse as u64 because literal tokens are always unsigned but we still want to support the whole 64bit range
+        let token = match u64::from_str_radix(&literal, radix) {
+            Ok(value) => QuartzToken::Literal(value as i64),
             Err(_) => QuartzToken::InvalidLiteral(raw_literal.into()),
         };
 

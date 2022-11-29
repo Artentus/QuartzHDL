@@ -1,5 +1,10 @@
 #![feature(trait_alias)]
 #![feature(int_log)]
+#![feature(let_chains)]
+#![feature(maybe_uninit_uninit_array)]
+#![feature(const_maybe_uninit_uninit_array)]
+#![feature(maybe_uninit_slice)]
+#![feature(bigint_helper_methods)]
 
 mod ast;
 mod const_eval;
@@ -8,6 +13,8 @@ mod ir;
 mod lexer;
 mod parser;
 mod pretty_printing;
+mod range_collection;
+mod small_vec;
 mod typecheck;
 
 use const_eval::{eval, VarScope};
@@ -22,6 +29,27 @@ use typecheck::*;
 type SharedString = Rc<str>;
 type HashMap<K, V> = std::collections::HashMap<K, V, xxhash_rust::xxh3::Xxh3Builder>;
 type HashSet<T> = std::collections::HashSet<T, xxhash_rust::xxh3::Xxh3Builder>;
+pub use small_vec::SmallVec;
+
+trait Clog2 {
+    fn clog2(self) -> Self;
+}
+
+impl Clog2 for u64 {
+    fn clog2(mut self) -> Self {
+        if self == 0 {
+            return 0;
+        }
+
+        self -= 1;
+        let mut log = 0;
+        while self > 0 {
+            self >>= 1;
+            log += 1;
+        }
+        log
+    }
+}
 
 #[doc(hidden)]
 fn _write_errors<E: WriteColored>(
@@ -203,8 +231,37 @@ fn main() -> std::io::Result<()> {
                     );
 
                     match result {
-                        Ok(resolved_types) => {
-                            // TODO:
+                        Ok((mut known_types, resolved_types, mut type_order)) => {
+                            let mut errors = Vec::new();
+                            let mut module_items = Vec::new();
+                            while let Some(ty_id) = type_order.pop() {
+                                if let Some(ir::ResolvedTypeItem::Module(module_item)) =
+                                    &resolved_types.get(&ty_id)
+                                {
+                                    match typecheck_module(
+                                        module_item,
+                                        &global_scope,
+                                        &mut known_types,
+                                        &resolved_types,
+                                        &global_const_values,
+                                        &funcs,
+                                    ) {
+                                        Ok(module_item) => module_items.push((ty_id, module_item)),
+                                        Err(err) => errors.push(err),
+                                    }
+                                }
+                            }
+
+                            abort_on_error!(errors, stderr, file_server);
+
+                            if !type_order.is_empty() {
+                                let mut stderr = stderr.lock();
+                                // TODO: find a way to report which types actually form a cycle
+                                return write_error(
+                                    "cyclic type definitions detected",
+                                    &mut stderr,
+                                );
+                            }
                         }
                         Err(err) => {
                             let mut stderr = stderr.lock();

@@ -1,7 +1,9 @@
 use crate::ast::*;
 use crate::const_eval::*;
 use crate::ir::*;
-use crate::{HashMap, HashSet, SharedString};
+use crate::range_collection::*;
+use crate::{Clog2, HashMap, HashSet, SharedString};
+use std::borrow::Cow;
 use std::collections::VecDeque;
 use topological_sort::TopologicalSort;
 
@@ -12,9 +14,6 @@ pub enum TypecheckError<'a> {
     },
     InvalidConstExpr {
         expr: &'a Expr,
-    },
-    InvalidConstPattern {
-        pattern: &'a MatchPattern,
     },
     NonExhaustiveMatch {
         match_expr: &'a MatchExpr,
@@ -66,6 +65,126 @@ pub enum TypecheckError<'a> {
     },
     UndefinedType {
         ty: &'a NamedType,
+    },
+    IncompatibleType {
+        expr: &'a UnaryExpr,
+        ty: Cow<'a, str>,
+    },
+    IncompatibleTypes {
+        expr: &'a BinaryExpr,
+        lhs_ty: Cow<'a, str>,
+        rhs_ty: Cow<'a, str>,
+    },
+    InvalidCast {
+        value_ty: Cow<'a, str>,
+        expr: &'a CastExpr,
+    },
+    TypeNotConstructible {
+        ty: &'a NamedType,
+    },
+    UnknownField {
+        ty: &'a NamedType,
+        field: &'a Ident,
+    },
+    MissingField {
+        ty: &'a NamedType,
+        field: SharedString,
+    },
+    IncompatibleFieldType {
+        assign: &'a FieldAssign,
+        field_ty: Cow<'a, str>,
+        value_ty: Cow<'a, str>,
+    },
+    InvalidPath {
+        path: &'a Path,
+    },
+    InvalidEnumIdent {
+        name: Ident,
+    },
+    InvalidEnumVariant {
+        enum_name: SharedString,
+        variant_name: Ident,
+    },
+    UndefinedMember {
+        ty: Cow<'a, str>,
+        name: Ident,
+    },
+    InvalidIndexing {
+        indexer: &'a Indexer,
+        base_ty: Cow<'a, str>,
+    },
+    InvalidRangeIndexing {
+        indexer: &'a Indexer,
+        base_ty: Cow<'a, str>,
+    },
+    InvalidArrayLength {
+        ty: &'a ArrayType,
+        len: i64,
+    },
+    IndexOutOfRange {
+        index_expr: &'a Expr,
+        index: i64,
+        len: u64,
+    },
+    InvalidIndexType {
+        expr: &'a Expr,
+        expected_ty: Cow<'a, str>,
+        value_ty: Cow<'a, str>,
+    },
+    ElseIfTypeMismatch {
+        if_ty: Cow<'a, str>,
+        else_if_ty: Cow<'a, str>,
+        else_if_block: &'a ElseIfBlock,
+    },
+    ElseTypeMismatch {
+        if_ty: Cow<'a, str>,
+        else_ty: Cow<'a, str>,
+        else_block: &'a ElseBlock,
+    },
+    InvalidConditionType {
+        cond: &'a Expr,
+        cond_ty: Cow<'a, str>,
+    },
+    UnsupportedDeclaration {
+        decl: &'a Declaration,
+    },
+    UnsupportedWhileLoop {
+        while_loop: &'a WhileLoop,
+    },
+    UnsupportedForLoop {
+        for_loop: &'a ForLoop,
+    },
+    InvalidMatchType {
+        value: &'a Expr,
+        value_ty: Cow<'a, str>,
+    },
+    IncompatiblePattern {
+        pattern: &'a MatchPattern,
+        value_ty: Cow<'a, str>,
+    },
+    PatternOutOfRange {
+        pattern: &'a MatchPattern,
+        value_ty: Cow<'a, str>,
+    },
+    MatchBranchTypeMismatch {
+        match_ty: Cow<'a, str>,
+        branch_ty: Cow<'a, str>,
+        branch: &'a MatchBranch,
+    },
+    UnreachablePattern {
+        pattern: &'a MatchPattern,
+    },
+    InvalidAssignOp {
+        assign: &'a Assignment,
+    },
+    InvalidSeqAssignSig {
+        assign: &'a Assignment,
+    },
+    InvalidSeqAssignMod {
+        assign: &'a Assignment,
+    },
+    InvalidCombAssignReg {
+        assign: &'a Assignment,
     },
     ArithmeticError(ArithmeticError),
     List(Vec<TypecheckError<'a>>),
@@ -128,43 +247,43 @@ impl<'p> Scope<'p> {
         }
     }
 
-    pub fn add_const(&mut self, name: &Ident) {
-        self.consts.insert(name.as_string());
+    pub fn add_const(&mut self, name: impl Into<SharedString>) {
+        self.consts.insert(name.into());
     }
 
-    pub fn add_func(&mut self, name: &Ident, arg_count: usize) {
-        self.funcs.insert(name.as_string(), arg_count);
+    pub fn add_func(&mut self, name: impl Into<SharedString>, arg_count: usize) {
+        self.funcs.insert(name.into(), arg_count);
     }
 
-    pub fn add_var(&mut self, name: &Ident) {
-        self.vars.insert(name.as_string());
+    pub fn add_var(&mut self, name: impl Into<SharedString>) {
+        self.vars.insert(name.into());
     }
 
-    fn contains_const_inner(&self, name: &Ident) -> bool {
+    pub fn contains_const_exclusive(&self, name: impl AsRef<str>) -> bool {
         self.consts.contains(name.as_ref())
             || self
                 .parent
-                .map_or(false, |parent| parent.contains_const_inner(name))
+                .map_or(false, |parent| parent.contains_const_exclusive(name))
     }
 
-    fn contains_func_inner(&self, name: &Ident) -> Option<usize> {
+    pub fn contains_func_exclusive(&self, name: impl AsRef<str>) -> Option<usize> {
         self.funcs.get(name.as_ref()).copied().or_else(|| {
             self.parent
-                .and_then(|parent| parent.contains_func_inner(name))
+                .and_then(|parent| parent.contains_func_exclusive(name))
         })
     }
 
-    fn contains_var_inner(&self, name: &Ident) -> bool {
+    pub fn contains_var_exclusive(&self, name: impl AsRef<str>) -> bool {
         self.vars.contains(name.as_ref())
             || self
                 .parent
-                .map_or(false, |parent| parent.contains_var_inner(name))
+                .map_or(false, |parent| parent.contains_var_exclusive(name))
     }
 
     pub fn contains_func<'err>(&self, name: &Ident) -> TypecheckResult<'err, usize> {
-        if let Some(arg_count) = self.contains_func_inner(name) {
+        if let Some(arg_count) = self.contains_func_exclusive(name) {
             Ok(arg_count)
-        } else if self.contains_const_inner(name) || self.contains_var_inner(name) {
+        } else if self.contains_const_exclusive(name) || self.contains_var_exclusive(name) {
             Err(TypecheckError::InvalidFuncIdent { name: name.clone() })
         } else {
             Err(TypecheckError::UndefinedIdent { name: name.clone() })
@@ -172,11 +291,11 @@ impl<'p> Scope<'p> {
     }
 
     pub fn contains_const<'err>(&self, name: &Ident) -> TypecheckResult<'err, ()> {
-        if self.contains_const_inner(name) {
+        if self.contains_const_exclusive(name) {
             Ok(())
-        } else if self.contains_var_inner(name) {
+        } else if self.contains_var_exclusive(name) {
             Err(TypecheckError::ValueNotConst { name: name.clone() })
-        } else if self.contains_func_inner(name).is_some() {
+        } else if self.contains_func_exclusive(name).is_some() {
             Err(TypecheckError::InvalidValueIdent { name: name.clone() })
         } else {
             Err(TypecheckError::UndefinedIdent { name: name.clone() })
@@ -184,9 +303,9 @@ impl<'p> Scope<'p> {
     }
 
     pub fn contains_var<'err>(&self, name: &Ident) -> TypecheckResult<'err, ()> {
-        if self.contains_const_inner(name) || self.contains_var_inner(name) {
+        if self.contains_const_exclusive(name) || self.contains_var_exclusive(name) {
             Ok(())
-        } else if self.contains_func_inner(name).is_some() {
+        } else if self.contains_func_exclusive(name).is_some() {
             Err(TypecheckError::InvalidValueIdent { name: name.clone() })
         } else {
             Err(TypecheckError::UndefinedIdent { name: name.clone() })
@@ -194,11 +313,11 @@ impl<'p> Scope<'p> {
     }
 
     pub fn contains_mut_var<'err>(&self, name: &Ident) -> TypecheckResult<'err, ()> {
-        if self.contains_var_inner(name) {
+        if self.contains_var_exclusive(name) {
             Ok(())
-        } else if self.contains_const_inner(name) {
+        } else if self.contains_const_exclusive(name) {
             Err(TypecheckError::TargetNotAssignable { name: name.clone() })
-        } else if self.contains_func_inner(name).is_some() {
+        } else if self.contains_func_exclusive(name).is_some() {
             Err(TypecheckError::InvalidValueIdent { name: name.clone() })
         } else {
             Err(TypecheckError::UndefinedIdent { name: name.clone() })
@@ -231,7 +350,7 @@ pub fn check_for_duplicate_items<'a>(
 
 fn transform_const_bin_expr<'a>(
     expr: &'a BinaryExpr,
-    scope: &mut Scope,
+    scope: &Scope,
 ) -> TypecheckResult<'a, ConstBinaryExpr> {
     let lhs = transform_const_expr(expr.lhs(), scope, false);
     let rhs = transform_const_expr(expr.rhs(), scope, false);
@@ -248,9 +367,41 @@ fn transform_const_bin_expr<'a>(
     }
 }
 
+fn transform_const_call_expr<'a>(
+    expr: &'a CallExpr,
+    scope: &Scope,
+) -> TypecheckResult<'a, ConstCallExpr> {
+    let mut errors = Vec::new();
+
+    match scope.contains_func(expr.func()) {
+        Ok(arg_count) => {
+            if arg_count != expr.args().len() {
+                errors.push(TypecheckError::ArgumentCountMismatch {
+                    call_expr: expr,
+                    arg_count,
+                })
+            }
+        }
+        Err(err) => errors.push(err),
+    }
+
+    let mut args = Vec::with_capacity(expr.args().len());
+    for arg in expr.args().iter() {
+        match transform_const_expr(arg, scope, false) {
+            Ok(arg) => args.push(arg),
+            Err(err) => errors.push(err),
+        }
+    }
+
+    wrap_errors!(
+        ConstCallExpr::new(expr.func().clone(), args, expr.span()),
+        errors
+    )
+}
+
 fn transform_const_if_expr<'a>(
     expr: &'a IfExpr,
-    scope: &mut Scope,
+    scope: &Scope,
     needs_return: bool,
 ) -> TypecheckResult<'a, ConstIfExpr> {
     let mut errors = Vec::new();
@@ -320,35 +471,79 @@ fn transform_const_if_expr<'a>(
     }
 }
 
-fn has_exhaustive_patterns(expr: &MatchExpr) -> bool {
+fn has_exhaustive_patterns<'a>(expr: &'a MatchExpr) -> TypecheckResult<'a, bool> {
+    let mut errors = Vec::new();
+    let full_range = InclusiveRange::n_bit(64);
+    let mut covered_ranges = RangeCollection::new();
+
     for branch in expr.branches().iter() {
         for pattern in branch.patterns().iter() {
-            if let MatchPattern::Path(path) = pattern {
-                if (path.tail().len() == 0) && (path.head().as_ref() == "_") {
-                    return true;
+            match pattern {
+                MatchPattern::Literal(literal) => {
+                    if covered_ranges.contains(literal.value() as u64) {
+                        errors.push(TypecheckError::UnreachablePattern { pattern });
+                    } else {
+                        covered_ranges.insert(literal.value() as u64);
+                    }
+                }
+                MatchPattern::Range(start, end) => {
+                    let range = (start.value() as u64)..(end.value() as u64);
+                    if covered_ranges.contains(&range) {
+                        errors.push(TypecheckError::UnreachablePattern { pattern });
+                    } else {
+                        covered_ranges.insert(range);
+                    }
+                }
+                MatchPattern::RangeInclusive(start, end) => {
+                    let range = (start.value() as u64)..=(end.value() as u64);
+                    if covered_ranges.contains(&range) {
+                        errors.push(TypecheckError::UnreachablePattern { pattern });
+                    } else {
+                        covered_ranges.insert(range);
+                    }
+                }
+                MatchPattern::Path(path) => {
+                    if let Some(ident) = path.as_ident() {
+                        if ident.as_ref() == "_" {
+                            if covered_ranges.contains(full_range) {
+                                errors.push(TypecheckError::UnreachablePattern { pattern });
+                            } else {
+                                covered_ranges.insert(full_range);
+                            }
+                        } else {
+                            // FIXME: get value of the constant to perform the range check on it
+                        }
+                    } else {
+                        // Invalid pattern, cought later
+                    }
                 }
             }
         }
     }
 
-    false
+    wrap_errors!(covered_ranges.contains(full_range), errors)
 }
 
 fn transform_const_match_pattern<'a>(
     pattern: &'a MatchPattern,
-    scope: &mut Scope,
+    scope: &Scope,
 ) -> TypecheckResult<'a, ConstMatchPattern> {
     match pattern {
         MatchPattern::Literal(l) => Ok(ConstMatchPattern::Literal(*l)),
+        MatchPattern::Range(s, e) => Ok(ConstMatchPattern::Range(*s, *e)),
+        MatchPattern::RangeInclusive(s, e) => Ok(ConstMatchPattern::RangeInclusive(*s, *e)),
         MatchPattern::Path(p) => {
-            if p.tail().len() == 0 {
-                if p.head().as_ref() != "_" {
-                    scope.contains_const(p.head())?;
+            if let Some(ident) = p.as_ident() {
+                if ident.as_ref() != "_" {
+                    scope.contains_const(ident)?;
                 }
 
-                Ok(ConstMatchPattern::Ident(p.head().clone()))
+                Ok(ConstMatchPattern::Ident(ident.clone()))
             } else {
-                Err(TypecheckError::InvalidConstPattern { pattern })
+                Err(TypecheckError::IncompatiblePattern {
+                    pattern,
+                    value_ty: "const int".into(),
+                })
             }
         }
     }
@@ -356,7 +551,7 @@ fn transform_const_match_pattern<'a>(
 
 fn transform_const_match_expr<'a>(
     expr: &'a MatchExpr,
-    scope: &mut Scope,
+    scope: &Scope,
     needs_return: bool,
 ) -> TypecheckResult<'a, ConstMatchExpr> {
     let mut errors = Vec::new();
@@ -370,8 +565,10 @@ fn transform_const_match_expr<'a>(
         }
     };
 
-    if !has_exhaustive_patterns(expr) {
-        errors.push(TypecheckError::NonExhaustiveMatch { match_expr: expr });
+    match has_exhaustive_patterns(expr) {
+        Ok(true) => {}
+        Ok(false) => errors.push(TypecheckError::NonExhaustiveMatch { match_expr: expr }),
+        Err(err) => errors.push(err),
     }
 
     let mut branches = Vec::with_capacity(expr.branches().len());
@@ -416,7 +613,7 @@ fn transform_const_match_expr<'a>(
 
 pub fn transform_const_expr<'a>(
     expr: &'a Expr,
-    scope: &mut Scope,
+    scope: &Scope,
     is_statement: bool,
 ) -> TypecheckResult<'a, ConstExpr> {
     macro_rules! bin_expr {
@@ -428,42 +625,15 @@ pub fn transform_const_expr<'a>(
     match expr {
         Expr::Literal(l) => Ok(ConstExpr::Literal(l.clone())),
         Expr::Path(p) => {
-            if p.tail().len() == 0 {
-                scope.contains_var(p.head())?;
-                Ok(ConstExpr::Ident(p.head().clone()))
+            if let Some(ident) = p.as_ident() {
+                scope.contains_var(ident)?;
+                Ok(ConstExpr::Ident(ident.clone()))
             } else {
                 Err(TypecheckError::InvalidConstExpr { expr })
             }
         }
         Expr::Paren(expr) => transform_const_expr(expr.inner(), scope, is_statement),
-        Expr::Call(expr) => {
-            let mut errors = Vec::new();
-
-            match scope.contains_func(expr.func()) {
-                Ok(arg_count) => {
-                    if arg_count != expr.args().len() {
-                        errors.push(TypecheckError::ArgumentCountMismatch {
-                            call_expr: expr,
-                            arg_count,
-                        })
-                    }
-                }
-                Err(err) => errors.push(err),
-            }
-
-            let mut args = Vec::with_capacity(expr.args().len());
-            for arg in expr.args().iter() {
-                match transform_const_expr(arg, scope, false) {
-                    Ok(arg) => args.push(arg),
-                    Err(err) => errors.push(err),
-                }
-            }
-
-            wrap_errors!(
-                ConstExpr::Call(ConstCallExpr::new(expr.func().clone(), args, expr.span())),
-                errors
-            )
-        }
+        Expr::Call(expr) => Ok(ConstExpr::Call(transform_const_call_expr(expr, scope)?)),
         Expr::Construct(_) => Err(TypecheckError::InvalidConstExpr { expr }),
         Expr::If(expr) => Ok(ConstExpr::If(transform_const_if_expr(
             expr,
@@ -481,6 +651,7 @@ pub fn transform_const_expr<'a>(
             !is_statement,
         )?))),
         Expr::Index(_) => Err(TypecheckError::InvalidConstExpr { expr }),
+        Expr::MemberAccess(_) => Err(TypecheckError::InvalidConstExpr { expr }),
         Expr::Pos(expr) => transform_const_expr(expr.inner(), scope, false),
         Expr::Neg(expr) => Ok(ConstExpr::Neg(ConstUnaryExpr::new(
             transform_const_expr(expr.inner(), scope, false)?,
@@ -518,7 +689,7 @@ pub fn transform_const_expr<'a>(
 
 pub fn transform_generic_arg<'a>(
     arg: &'a GenericTypeArg,
-    scope: &mut Scope,
+    scope: &Scope,
 ) -> TypecheckResult<'a, ConstExpr> {
     match arg {
         GenericTypeArg::Literal(l) => Ok(ConstExpr::Literal(l.clone())),
@@ -534,9 +705,9 @@ fn transform_const_assignment<'a>(
     assign: &'a Assignment,
     scope: &mut Scope,
 ) -> TypecheckResult<'a, ConstAssignment> {
-    if (assign.target().path().tail().len() == 0) && (assign.target().indexers().len() == 0) {
-        let target = assign.target().path().head().clone();
-
+    if let Some(target) = assign.target().path().as_ident()
+        && (assign.target().suffixes().len() == 0)
+    {
         let err1 = match scope.contains_mut_var(&target) {
             Ok(_) => None,
             Err(err1) => Some(err1),
@@ -548,7 +719,7 @@ fn transform_const_assignment<'a>(
                     Err(err1)
                 } else {
                     Ok(ConstAssignment::new(
-                        target,
+                        target.clone(),
                         assign.op().kind(),
                         value,
                         assign.span(),
@@ -572,7 +743,7 @@ fn transform_const_assignment<'a>(
 
 fn transform_const_while_loop<'a>(
     while_loop: &'a WhileLoop,
-    scope: &mut Scope,
+    scope: &Scope,
 ) -> TypecheckResult<'a, ConstWhileLoop> {
     let condition = transform_const_expr(while_loop.condition(), scope, false);
     let body = transform_const_block(while_loop.body(), scope, false);
@@ -591,12 +762,17 @@ fn transform_const_while_loop<'a>(
 
 fn transform_const_for_loop<'a>(
     for_loop: &'a ForLoop,
-    scope: &mut Scope,
+    scope: &Scope,
 ) -> TypecheckResult<'a, ConstForLoop> {
     let mut errors = Vec::new();
 
-    let start = transform_const_expr(&for_loop.range().start, scope, false);
-    let end = transform_const_expr(&for_loop.range().end, scope, false);
+    let (start, end, inclusive) = match for_loop.range() {
+        ForLoopRange::Range(start, end) => (start, end, false),
+        ForLoopRange::RangeInclusive(start, end) => (start, end, true),
+    };
+
+    let start = transform_const_expr(start, scope, false);
+    let end = transform_const_expr(end, scope, false);
 
     let start = match start {
         Ok(start) => Some(start),
@@ -616,7 +792,7 @@ fn transform_const_for_loop<'a>(
 
     let mut inner_scope = Scope::new(scope);
     inner_scope.add_var(for_loop.item_name());
-    let body = transform_const_block(for_loop.body(), &mut inner_scope, false);
+    let body = transform_const_block(for_loop.body(), &inner_scope, false);
 
     let body = match body {
         Ok(body) => Some(body),
@@ -629,7 +805,11 @@ fn transform_const_for_loop<'a>(
     wrap_errors!(
         ConstForLoop::new(
             for_loop.item_name().clone(),
-            start.unwrap()..end.unwrap(),
+            if inclusive {
+                ConstForLoopRange::RangeInclusive(start.unwrap(), end.unwrap())
+            } else {
+                ConstForLoopRange::Range(start.unwrap(), end.unwrap())
+            },
             body.unwrap()
         ),
         errors
@@ -666,7 +846,7 @@ fn transform_const_statement<'a>(
 
 fn transform_const_block<'a>(
     block: &'a Block,
-    parent_scope: &mut Scope,
+    parent_scope: &Scope,
     needs_return: bool,
 ) -> TypecheckResult<'a, ConstBlock> {
     let mut scope = Scope::new(parent_scope);
@@ -704,16 +884,13 @@ fn transform_const_block<'a>(
     wrap_errors!(ConstBlock::new(statements, result, block.span()), errors)
 }
 
-pub fn transform_const_func<'a>(
-    func: &'a Func,
-    scope: &mut Scope,
-) -> TypecheckResult<'a, ConstFunc> {
+pub fn transform_const_func<'a>(func: &'a Func, scope: &Scope) -> TypecheckResult<'a, ConstFunc> {
     let mut inner_scope = Scope::new(scope);
     for arg in func.args().iter() {
         inner_scope.add_var(arg);
     }
 
-    let body = transform_const_block(func.body(), &mut inner_scope, true)?;
+    let body = transform_const_block(func.body(), &inner_scope, true)?;
     Ok(ConstFunc::new(func.args().to_vec(), body))
 }
 
@@ -811,14 +988,16 @@ fn resolve_named_type<'a>(
                     funcs,
                 )?;
 
-                if width < 1 {
+                if width <= 0 {
                     return Err(TypecheckError::InvalidBitWidth {
                         width,
                         arg: width_arg,
                     });
                 }
 
-                ResolvedType::BuiltinBits { width }
+                ResolvedType::BuiltinBits {
+                    width: width as u64,
+                }
             } else {
                 return Err(TypecheckError::GenericCountMismatch {
                     ty: named_ty,
@@ -922,7 +1101,6 @@ fn resolve_type<'a>(
             )?;
 
             let len_expr = transform_const_expr(array_ty.len(), scope, false)?;
-
             let len = eval(
                 &len_expr,
                 &mut VarScope::empty(),
@@ -931,7 +1109,14 @@ fn resolve_type<'a>(
                 funcs,
             )?;
 
-            let resolved_ty = ResolvedType::Array { item_ty, len };
+            if len <= 0 {
+                return Err(TypecheckError::InvalidArrayLength { ty: array_ty, len });
+            }
+
+            let resolved_ty = ResolvedType::Array {
+                item_ty,
+                len: len as u64,
+            };
             let id = TypeId::from_type(&resolved_ty);
             if !registry.known_types.contains_key(&id) {
                 registry.known_types.insert(id, resolved_ty);
@@ -1178,6 +1363,7 @@ fn resolve_expr<'a>(
                 registry,
             )?;
 
+            expr.resolve(ty_id);
             registry.type_order.add_dependency(ty_id, parent_id);
         }
         Expr::Cast(expr) => {
@@ -1191,11 +1377,13 @@ fn resolve_expr<'a>(
                 registry,
             )?;
 
+            expr.resolve(ty_id);
             registry.type_order.add_dependency(ty_id, parent_id);
         }
 
         Expr::Literal(_) => {}
         Expr::Path(_) => {}
+        Expr::MemberAccess(_) => {}
 
         Expr::Call(expr) => {
             for arg in expr.args().iter() {
@@ -1292,8 +1480,13 @@ fn resolve_statement<'a>(
             resolve_block(while_loop.body(), parent_id, scope, args, registry)
         }
         Statement::ForLoop(for_loop) => {
-            resolve_expr(&for_loop.range().start, parent_id, scope, args, registry)?;
-            resolve_expr(&for_loop.range().end, parent_id, scope, args, registry)?;
+            let (start, end) = match for_loop.range() {
+                ForLoopRange::Range(start, end) => (start, end),
+                ForLoopRange::RangeInclusive(start, end) => (start, end),
+            };
+
+            resolve_expr(start, parent_id, scope, args, registry)?;
+            resolve_expr(end, parent_id, scope, args, registry)?;
             resolve_block(for_loop.body(), parent_id, scope, args, registry)
         }
     }
@@ -1471,7 +1664,13 @@ fn resolve_module<'a>(
     }
 
     wrap_errors!(
-        ResolvedModule::new(ports, logic_members, proc_members, comb_members),
+        ResolvedModule::new(
+            ports,
+            local_const_values,
+            logic_members,
+            proc_members,
+            comb_members
+        ),
         errors
     )
 }
@@ -1482,10 +1681,19 @@ pub fn resolve_types<'a>(
     global_scope: &Scope,
     global_const_values: &HashMap<SharedString, i64>,
     funcs: &HashMap<SharedString, ConstFunc>,
-) -> TypecheckResult<'a, HashMap<TypeId, ResolvedTypeItem>> {
+) -> TypecheckResult<
+    'a,
+    (
+        HashMap<TypeId, ResolvedType>,
+        HashMap<TypeId, ResolvedTypeItem>,
+        TopologicalSort<TypeId>,
+    ),
+> {
     let mut known_types = HashMap::default();
     let mut type_order = TopologicalSort::new();
     let mut type_queue = VecDeque::new();
+
+    known_types.insert(*CONST_TYPE_ID, ResolvedType::Const);
 
     let top_ty = ResolvedType::Named {
         name: top_module.name().as_string(),
@@ -1500,78 +1708,2361 @@ pub fn resolve_types<'a>(
     while let Some(ty_id) = type_queue.pop_front() {
         let ty = known_types[&ty_id].clone();
 
-        match ty {
-            ResolvedType::Const => {
-                resolved_type_items.insert(ty_id, ResolvedTypeItem::Const);
-            }
-            ResolvedType::BuiltinBits { width } => {
-                resolved_type_items.insert(ty_id, ResolvedTypeItem::BuiltinBits { width });
-            }
-            ResolvedType::Array { item_ty, len } => {
-                resolved_type_items.insert(ty_id, ResolvedTypeItem::Array { item_ty, len });
-            }
-            ResolvedType::Named { name, generic_args } => {
-                if let Some(item) = type_items.get(name.as_ref()) {
-                    let args = ResolveArgs {
-                        type_items,
-                        global_scope: &global_scope,
-                        global_const_values: &global_const_values,
-                        funcs: &funcs,
-                    };
+        if let ResolvedType::Named { name, generic_args } = ty {
+            if let Some(item) = type_items.get(name.as_ref()) {
+                let args = ResolveArgs {
+                    type_items,
+                    global_scope: &global_scope,
+                    global_const_values: &global_const_values,
+                    funcs: &funcs,
+                };
 
-                    let mut registry = TypeRegistry {
-                        known_types: &mut known_types,
-                        type_order: &mut type_order,
-                        type_queue: &mut type_queue,
-                    };
+                let mut registry = TypeRegistry {
+                    known_types: &mut known_types,
+                    type_order: &mut type_order,
+                    type_queue: &mut type_queue,
+                };
 
-                    match item {
-                        TypeItem::Struct(struct_item) => {
-                            let result =
-                                resolve_struct(struct_item, &generic_args, &args, &mut registry);
+                match item {
+                    TypeItem::Struct(struct_item) => {
+                        let result =
+                            resolve_struct(struct_item, &generic_args, &args, &mut registry);
 
-                            match result {
-                                Ok(resolved_struct) => {
-                                    resolved_type_items
-                                        .insert(ty_id, ResolvedTypeItem::Struct(resolved_struct));
-                                }
-                                Err(err) => errors.push(err),
+                        match result {
+                            Ok(resolved_struct) => {
+                                resolved_type_items
+                                    .insert(ty_id, ResolvedTypeItem::Struct(resolved_struct));
                             }
+                            Err(err) => errors.push(err),
                         }
-                        TypeItem::Enum(enum_item) => {
-                            let result = resolve_enum(enum_item, &args, &mut registry);
+                    }
+                    TypeItem::Enum(enum_item) => {
+                        let result = resolve_enum(enum_item, &args, &mut registry);
 
-                            match result {
-                                Ok(resolved_enum) => {
-                                    resolved_type_items
-                                        .insert(ty_id, ResolvedTypeItem::Enum(resolved_enum));
-                                }
-                                Err(err) => errors.push(err),
+                        match result {
+                            Ok(resolved_enum) => {
+                                resolved_type_items
+                                    .insert(ty_id, ResolvedTypeItem::Enum(resolved_enum));
                             }
+                            Err(err) => errors.push(err),
                         }
-                        TypeItem::Module(module_item) => {
-                            let result =
-                                resolve_module(module_item, &generic_args, &args, &mut registry);
+                    }
+                    TypeItem::Module(module_item) => {
+                        let result =
+                            resolve_module(module_item, &generic_args, &args, &mut registry);
 
-                            match result {
-                                Ok(resolved_module) => {
-                                    resolved_type_items
-                                        .insert(ty_id, ResolvedTypeItem::Module(resolved_module));
+                        match result {
+                            Ok(resolved_module) => {
+                                resolved_type_items
+                                    .insert(ty_id, ResolvedTypeItem::Module(resolved_module));
+                            }
+                            Err(err) => errors.push(err),
+                        }
+                    }
+                }
+            } else {
+                unreachable!("invalid resolved type");
+            }
+        }
+    }
+
+    wrap_errors!((known_types, resolved_type_items, type_order), errors)
+}
+
+fn resolve_type_late(
+    ty: &UnresolvedType,
+    known_types: &mut HashMap<TypeId, ResolvedType>,
+) -> TypeId {
+    match ty {
+        UnresolvedType::BuiltinBits { width } => {
+            let resolved_ty = ResolvedType::BuiltinBits { width: *width };
+            let id = TypeId::from_type(&resolved_ty);
+
+            if !known_types.contains_key(&id) {
+                known_types.insert(id, resolved_ty);
+            }
+
+            id
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TypecheckMode {
+    Sequential,
+    Combinatoric,
+}
+
+struct TypecheckArgs<'a> {
+    global_const_values: &'a HashMap<SharedString, i64>,
+    local_const_values: &'a HashMap<SharedString, i64>,
+    funcs: &'a HashMap<SharedString, ConstFunc>,
+}
+
+enum Either<A, B> {
+    Const(A),
+    Checked(B),
+}
+
+impl<A, B> Either<A, B> {
+    fn map<A1, B1>(self, fa: impl FnOnce(A) -> A1, fb: impl FnOnce(B) -> B1) -> Either<A1, B1> {
+        match self {
+            Self::Const(a) => Either::Const(fa(a)),
+            Self::Checked(b) => Either::Checked(fb(b)),
+        }
+    }
+}
+
+impl<A, B: Typed> Either<A, B> {
+    fn ty_string(&self, known_types: &HashMap<TypeId, ResolvedType>) -> Cow<'static, str> {
+        let ty_id = match self {
+            Self::Const(_) => *CONST_TYPE_ID,
+            Self::Checked(expr) => expr.ty(),
+        };
+
+        known_types[&ty_id].to_string(known_types)
+    }
+}
+
+fn typecheck_unary_expr<'a>(
+    expr: &'a UnaryExpr,
+    parent_module: &ResolvedModule,
+    mode: TypecheckMode,
+    scope: &Scope,
+    known_types: &mut HashMap<TypeId, ResolvedType>,
+    resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
+    args: &TypecheckArgs,
+) -> TypecheckResult<'a, Either<ConstUnaryExpr, CheckedUnaryExpr>> {
+    let inner = typecheck_expr(
+        expr.inner(),
+        parent_module,
+        mode,
+        scope,
+        known_types,
+        resolved_types,
+        args,
+    )?;
+    match inner {
+        Either::Const(inner) => Ok(Either::Const(ConstUnaryExpr::new(inner, expr.span()))),
+        Either::Checked(inner) => {
+            let inner_id = inner.ty();
+            let inner_ty = &known_types[&inner_id];
+            match inner_ty {
+                ResolvedType::Const => unreachable!("error in constant folding"),
+                ResolvedType::BuiltinBits { .. } => {
+                    Ok(Either::Checked(CheckedUnaryExpr::new(inner)))
+                }
+                _ => Err(TypecheckError::IncompatibleType {
+                    expr,
+                    ty: inner_ty.to_string(known_types),
+                }),
+            }
+        }
+    }
+}
+
+fn typecheck_binary_expr<'a>(
+    expr: &'a BinaryExpr,
+    parent_module: &ResolvedModule,
+    mode: TypecheckMode,
+    scope: &Scope,
+    known_types: &mut HashMap<TypeId, ResolvedType>,
+    resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
+    args: &TypecheckArgs,
+) -> TypecheckResult<'a, Either<ConstBinaryExpr, CheckedBinaryExpr>> {
+    let mut errors = Vec::new();
+
+    let lhs = match typecheck_expr(
+        expr.lhs(),
+        parent_module,
+        mode,
+        scope,
+        known_types,
+        resolved_types,
+        args,
+    ) {
+        Ok(lhs) => Some(lhs),
+        Err(err) => {
+            errors.push(err);
+            None
+        }
+    };
+
+    let rhs = match typecheck_expr(
+        expr.rhs(),
+        parent_module,
+        mode,
+        scope,
+        known_types,
+        resolved_types,
+        args,
+    ) {
+        Ok(rhs) => Some(rhs),
+        Err(err) => {
+            errors.push(err);
+            None
+        }
+    };
+
+    if errors.len() > 0 {
+        return Err(TypecheckError::new_list(errors));
+    }
+
+    let lhs = lhs.unwrap();
+    let rhs = rhs.unwrap();
+
+    let (lhs, rhs) = match (lhs, rhs) {
+        (Either::Const(lhs), Either::Const(rhs)) => {
+            return Ok(Either::Const(ConstBinaryExpr::new(lhs, rhs, expr.span())));
+        }
+        (Either::Checked(lhs), Either::Checked(rhs)) => {
+            let lhs_id = lhs.ty();
+            let rhs_id = rhs.ty();
+
+            if lhs_id == rhs_id {
+                match &known_types[&lhs_id] {
+                    ResolvedType::Const => unreachable!("error in constant folding"),
+                    ResolvedType::BuiltinBits { .. } => {
+                        return Ok(Either::Checked(CheckedBinaryExpr::new(lhs, rhs, lhs_id)));
+                    }
+                    _ => {}
+                }
+            }
+
+            (Either::Checked(lhs), Either::Checked(rhs))
+        }
+        (lhs, rhs) => (lhs, rhs),
+    };
+
+    Err(TypecheckError::IncompatibleTypes {
+        expr,
+        lhs_ty: lhs.ty_string(known_types),
+        rhs_ty: rhs.ty_string(known_types),
+    })
+}
+
+fn typecheck_compare_expr<'a>(
+    expr: &'a BinaryExpr,
+    parent_module: &ResolvedModule,
+    mode: TypecheckMode,
+    scope: &Scope,
+    known_types: &mut HashMap<TypeId, ResolvedType>,
+    resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
+    args: &TypecheckArgs,
+) -> TypecheckResult<'a, Either<ConstBinaryExpr, CheckedBinaryExpr>> {
+    let mut errors = Vec::new();
+
+    let lhs = match typecheck_expr(
+        expr.lhs(),
+        parent_module,
+        mode,
+        scope,
+        known_types,
+        resolved_types,
+        args,
+    ) {
+        Ok(lhs) => Some(lhs),
+        Err(err) => {
+            errors.push(err);
+            None
+        }
+    };
+
+    let rhs = match typecheck_expr(
+        expr.rhs(),
+        parent_module,
+        mode,
+        scope,
+        known_types,
+        resolved_types,
+        args,
+    ) {
+        Ok(rhs) => Some(rhs),
+        Err(err) => {
+            errors.push(err);
+            None
+        }
+    };
+
+    if errors.len() > 0 {
+        return Err(TypecheckError::new_list(errors));
+    }
+
+    let lhs = lhs.unwrap();
+    let rhs = rhs.unwrap();
+
+    let (lhs, rhs) = match (lhs, rhs) {
+        (Either::Const(lhs), Either::Const(rhs)) => {
+            return Ok(Either::Const(ConstBinaryExpr::new(lhs, rhs, expr.span())));
+        }
+        (Either::Checked(lhs), Either::Checked(rhs)) => {
+            let lhs_id = lhs.ty();
+            let rhs_id = rhs.ty();
+
+            if lhs_id == rhs_id {
+                match &known_types[&lhs_id] {
+                    ResolvedType::Const => unreachable!("error in constant folding"),
+                    ResolvedType::BuiltinBits { .. } => {
+                        // Returns a single bit (boolean)
+                        let result_ty = UnresolvedType::BuiltinBits { width: 1 };
+                        let result_id = resolve_type_late(&result_ty, known_types);
+                        return Ok(Either::Checked(CheckedBinaryExpr::new(lhs, rhs, result_id)));
+                    }
+                    ResolvedType::Named { .. } => {
+                        if let ResolvedTypeItem::Enum(_) = &resolved_types[&lhs_id] {
+                            // Returns a single bit (boolean)
+                            let result_ty = UnresolvedType::BuiltinBits { width: 1 };
+                            let result_id = resolve_type_late(&result_ty, known_types);
+                            return Ok(Either::Checked(CheckedBinaryExpr::new(
+                                lhs, rhs, result_id,
+                            )));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            (Either::Checked(lhs), Either::Checked(rhs))
+        }
+        (lhs, rhs) => (lhs, rhs),
+    };
+
+    Err(TypecheckError::IncompatibleTypes {
+        expr,
+        lhs_ty: lhs.ty_string(known_types),
+        rhs_ty: rhs.ty_string(known_types),
+    })
+}
+
+fn typecheck_concat_expr<'a>(
+    expr: &'a BinaryExpr,
+    parent_module: &ResolvedModule,
+    mode: TypecheckMode,
+    scope: &Scope,
+    known_types: &mut HashMap<TypeId, ResolvedType>,
+    resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
+    args: &TypecheckArgs,
+) -> TypecheckResult<'a, CheckedConcatExpr> {
+    let mut errors = Vec::new();
+
+    let lhs = match typecheck_expr(
+        expr.lhs(),
+        parent_module,
+        mode,
+        scope,
+        known_types,
+        resolved_types,
+        args,
+    ) {
+        Ok(lhs) => Some(lhs),
+        Err(err) => {
+            errors.push(err);
+            None
+        }
+    };
+
+    let rhs = match typecheck_expr(
+        expr.rhs(),
+        parent_module,
+        mode,
+        scope,
+        known_types,
+        resolved_types,
+        args,
+    ) {
+        Ok(rhs) => Some(rhs),
+        Err(err) => {
+            errors.push(err);
+            None
+        }
+    };
+
+    if errors.len() > 0 {
+        return Err(TypecheckError::new_list(errors));
+    }
+
+    let lhs = lhs.unwrap();
+    let rhs = rhs.unwrap();
+
+    let (lhs, rhs) = match (lhs, rhs) {
+        (Either::Checked(lhs), Either::Checked(rhs)) => {
+            let lhs_id = lhs.ty();
+            let rhs_id = rhs.ty();
+
+            let lhs_ty = &known_types[&lhs_id];
+            let rhs_ty = &known_types[&rhs_id];
+
+            match (lhs_ty, rhs_ty) {
+                (
+                    ResolvedType::BuiltinBits { width: lhs_width },
+                    ResolvedType::BuiltinBits { width: rhs_width },
+                ) => {
+                    let result_ty = UnresolvedType::BuiltinBits {
+                        width: lhs_width + rhs_width,
+                    };
+                    let result_id = resolve_type_late(&result_ty, known_types);
+                    return Ok(CheckedConcatExpr::new(lhs, rhs, result_id));
+                }
+                _ => {}
+            }
+
+            (Either::Checked(lhs), Either::Checked(rhs))
+        }
+        (lhs, rhs) => (lhs, rhs),
+    };
+
+    Err(TypecheckError::IncompatibleTypes {
+        expr,
+        lhs_ty: lhs.ty_string(known_types),
+        rhs_ty: rhs.ty_string(known_types),
+    })
+}
+
+fn typecheck_cast_expr<'a>(
+    expr: &'a CastExpr,
+    parent_module: &ResolvedModule,
+    mode: TypecheckMode,
+    scope: &Scope,
+    known_types: &mut HashMap<TypeId, ResolvedType>,
+    resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
+    args: &TypecheckArgs,
+) -> TypecheckResult<'a, CheckedCastExpr> {
+    let value = typecheck_expr(
+        expr.value(),
+        parent_module,
+        mode,
+        scope,
+        known_types,
+        resolved_types,
+        args,
+    )?;
+
+    let target_id = expr.resolved_ty().expect("type not properly resolved");
+    let target_ty = &known_types[&target_id];
+
+    let value = match target_ty {
+        ResolvedType::Const => unreachable!("type cannot be declared"),
+        ResolvedType::BuiltinBits { .. } => match value {
+            Either::Const(value) => {
+                let value = eval(
+                    &value,
+                    &mut VarScope::empty(),
+                    args.global_const_values,
+                    Some(args.local_const_values),
+                    args.funcs,
+                )?;
+
+                return Ok(CheckedCastExpr::new(CheckedExpr::Value(value), target_id));
+            }
+            Either::Checked(value) => {
+                let value_ty = &known_types[&value.ty()];
+                match value_ty {
+                    ResolvedType::Const => unreachable!("error in constant folding"),
+                    ResolvedType::BuiltinBits { .. } => {
+                        return Ok(CheckedCastExpr::new(value, target_id));
+                    }
+                    ResolvedType::Named { .. } => {
+                        let value_ty_item = &resolved_types[&value.ty()];
+                        match value_ty_item {
+                            ResolvedTypeItem::Enum(_) => {
+                                // Enums can be converted into any bits<N>, but not the other way around
+                                return Ok(CheckedCastExpr::new(value, target_id));
+                            }
+                            _ => {}
+                        }
+                    }
+                    _ => {}
+                }
+
+                Either::Checked(value)
+            }
+        },
+        _ => value,
+    };
+
+    Err(TypecheckError::InvalidCast {
+        value_ty: value.ty_string(known_types),
+        expr,
+    })
+}
+
+fn merge_expr<'a>(
+    expr: Either<ConstExpr, CheckedExpr>,
+    args: &TypecheckArgs,
+) -> TypecheckResult<'a, CheckedExpr> {
+    match expr {
+        Either::Const(expr) => {
+            let value = eval(
+                &expr,
+                &mut VarScope::empty(),
+                args.global_const_values,
+                Some(args.local_const_values),
+                args.funcs,
+            )?;
+            Ok(CheckedExpr::Value(value))
+        }
+        Either::Checked(expr) => Ok(expr),
+    }
+}
+
+fn typecheck_construct_expr<'a>(
+    expr: &'a ConstructExpr,
+    parent_module: &ResolvedModule,
+    mode: TypecheckMode,
+    scope: &Scope,
+    known_types: &mut HashMap<TypeId, ResolvedType>,
+    resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
+    args: &TypecheckArgs,
+) -> TypecheckResult<'a, CheckedConstructExpr> {
+    let id = expr.resolved_ty().expect("type not properly resolved");
+    let ty = &known_types[&id];
+
+    match ty {
+        ResolvedType::Named { .. } => {
+            let ty_item = &resolved_types[&id];
+            match ty_item {
+                ResolvedTypeItem::Struct(struct_item) => {
+                    let mut errors = Vec::new();
+                    for field in expr.fields().iter().map(|f| f.field()) {
+                        if !struct_item.fields().contains_key(field.as_ref()) {
+                            errors.push(TypecheckError::UnknownField {
+                                ty: expr.ty(),
+                                field,
+                            });
+                        }
+                    }
+
+                    let mut fields = HashMap::default();
+                    for (name, &field_id) in struct_item.fields().iter() {
+                        let assign = expr
+                            .fields()
+                            .iter()
+                            .find(|f| f.field().as_ref() == name.as_ref());
+
+                        match assign {
+                            Some(assign) => {
+                                let value = typecheck_expr(
+                                    assign.value(),
+                                    parent_module,
+                                    mode,
+                                    scope,
+                                    known_types,
+                                    resolved_types,
+                                    args,
+                                );
+
+                                match value {
+                                    Ok(value) => {
+                                        let value = merge_expr(value, args);
+                                        match value {
+                                            Ok(value) => {
+                                                if value.ty() == field_id {
+                                                    fields.insert(SharedString::clone(name), value);
+                                                } else {
+                                                    let field_ty = &known_types[&field_id];
+                                                    let value_ty = &known_types[&value.ty()];
+                                                    errors.push(
+                                                        TypecheckError::IncompatibleFieldType {
+                                                            assign,
+                                                            field_ty: field_ty
+                                                                .to_string(known_types),
+                                                            value_ty: value_ty
+                                                                .to_string(known_types),
+                                                        },
+                                                    );
+                                                }
+                                            }
+                                            Err(err) => errors.push(err),
+                                        }
+                                    }
+                                    Err(err) => errors.push(err),
                                 }
-                                Err(err) => errors.push(err),
+                            }
+                            None => {
+                                errors.push(TypecheckError::MissingField {
+                                    ty: expr.ty(),
+                                    field: SharedString::clone(name),
+                                });
                             }
                         }
                     }
-                } else {
-                    unreachable!("invalid resolved type");
+
+                    wrap_errors!(CheckedConstructExpr::new(id, fields), errors)
+                }
+                _ => Err(TypecheckError::TypeNotConstructible { ty: expr.ty() }),
+            }
+        }
+        _ => unreachable!("type incorrectly resolved"),
+    }
+}
+
+fn find_module_member_type<'a>(
+    ident: &'a Ident,
+    module: &ResolvedModule,
+    module_id: Option<TypeId>,
+    known_types: &HashMap<TypeId, ResolvedType>,
+) -> TypecheckResult<'a, (TypeId, LogicKind)> {
+    if let Some(port) = module.ports().get(ident.as_ref()) {
+        Ok((port.ty(), port.kind()))
+    } else if let Some(member) = module.logic_members().get(ident.as_ref()) {
+        Ok((member.ty(), member.kind()))
+    } else {
+        if let Some(module_id) = module_id {
+            Err(TypecheckError::UndefinedMember {
+                ty: known_types[&module_id].to_string(known_types),
+                name: ident.clone(),
+            })
+        } else {
+            Err(TypecheckError::UndefinedIdent {
+                name: ident.clone(),
+            })
+        }
+    }
+}
+
+fn find_member_type<'a>(
+    ident: &'a Ident,
+    parent_id: TypeId,
+    known_types: &HashMap<TypeId, ResolvedType>,
+    resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
+) -> TypecheckResult<'a, TypeId> {
+    match resolved_types.get(&parent_id) {
+        Some(ResolvedTypeItem::Struct(struct_item)) => {
+            if let Some(field_ty) = struct_item.fields().get(ident.as_ref()).copied() {
+                Ok(field_ty)
+            } else {
+                Err(TypecheckError::UndefinedMember {
+                    ty: known_types[&parent_id].to_string(known_types),
+                    name: ident.clone(),
+                })
+            }
+        }
+        Some(ResolvedTypeItem::Module(module_item)) => {
+            Ok(find_module_member_type(ident, module_item, Some(parent_id), known_types)?.0)
+        }
+        Some(_) => Err(TypecheckError::UndefinedMember {
+            ty: known_types[&parent_id].to_string(known_types),
+            name: ident.clone(),
+        }),
+        None => unreachable!("type incorrectly resolved"),
+    }
+}
+
+fn is_valid_enum_variant<'a>(
+    enum_ty: TypeId,
+    enum_name: &'a Ident,
+    variant_name: &'a Ident,
+    resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
+) -> TypecheckResult<'a, ()> {
+    match resolved_types.get(&enum_ty) {
+        Some(ResolvedTypeItem::Enum(enum_item)) => {
+            if enum_item.variants().contains_key(variant_name.as_ref()) {
+                Ok(())
+            } else {
+                Err(TypecheckError::InvalidEnumVariant {
+                    enum_name: enum_name.as_string(),
+                    variant_name: variant_name.clone(),
+                })
+            }
+        }
+        _ => Err(TypecheckError::InvalidEnumIdent {
+            name: enum_name.clone(),
+        }),
+    }
+}
+
+fn typecheck_path<'a>(
+    path: &'a Path,
+    parent_module: &ResolvedModule,
+    known_types: &mut HashMap<TypeId, ResolvedType>,
+    resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
+    args: &TypecheckArgs,
+) -> TypecheckResult<'a, Either<Ident, CheckedPath>> {
+    if let Some(ident) = path.as_ident() {
+        if args.global_const_values.contains_key(ident.as_ref())
+            || args.local_const_values.contains_key(ident.as_ref())
+        {
+            Ok(Either::Const(ident.clone()))
+        } else {
+            let ty = find_module_member_type(ident, parent_module, None, known_types)?.0;
+            Ok(Either::Checked(CheckedPath::new(path.clone(), ty)))
+        }
+    } else {
+        // Currently this can only refer to an enum variant.
+        if path.tail().len() == 1 {
+            let enum_ty = ResolvedType::Named {
+                name: path.head().as_string(),
+                generic_args: [].as_slice().into(),
+            };
+            let enum_id = TypeId::from_type(&enum_ty);
+
+            is_valid_enum_variant(enum_id, path.head(), path.tail()[0].ident(), resolved_types)?;
+            Ok(Either::Checked(CheckedPath::new(path.clone(), enum_id)))
+        } else {
+            Err(TypecheckError::InvalidPath { path })
+        }
+    }
+}
+
+fn typecheck_indexer<'a>(
+    indexer: &'a Indexer,
+    base_id: TypeId,
+    parent_module: &ResolvedModule,
+    mode: TypecheckMode,
+    scope: &Scope,
+    known_types: &mut HashMap<TypeId, ResolvedType>,
+    resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
+    args: &TypecheckArgs,
+) -> TypecheckResult<'a, (CheckedIndexKind, TypeId)> {
+    match indexer.index() {
+        IndexKind::Single(index_expr) => {
+            let index = typecheck_expr(
+                index_expr,
+                parent_module,
+                mode,
+                scope,
+                known_types,
+                resolved_types,
+                args,
+            )?;
+
+            match index {
+                Either::Const(index) => {
+                    let index = eval(
+                        &index,
+                        &mut VarScope::empty(),
+                        args.global_const_values,
+                        Some(args.local_const_values),
+                        args.funcs,
+                    )?;
+                    let checked_indexer = CheckedIndexKind::Single(CheckedExpr::Value(index));
+
+                    let base_ty = &known_types[&base_id];
+                    match base_ty {
+                        ResolvedType::BuiltinBits { width } => {
+                            if (index < 0) || (index >= (*width as i64)) {
+                                return Err(TypecheckError::IndexOutOfRange {
+                                    index_expr,
+                                    index,
+                                    len: *width,
+                                });
+                            }
+
+                            let result_ty = UnresolvedType::BuiltinBits { width: 1 };
+                            let result_id = resolve_type_late(&result_ty, known_types);
+
+                            Ok((checked_indexer, result_id))
+                        }
+                        ResolvedType::Array { item_ty, len } => {
+                            if (index < 0) || (index >= (*len as i64)) {
+                                return Err(TypecheckError::IndexOutOfRange {
+                                    index_expr,
+                                    index,
+                                    len: *len,
+                                });
+                            }
+
+                            Ok((checked_indexer, *item_ty))
+                        }
+                        _ => Err(TypecheckError::InvalidIndexing {
+                            indexer,
+                            base_ty: base_ty.to_string(known_types),
+                        }),
+                    }
+                }
+                Either::Checked(index) => {
+                    let base_ty = &known_types[&base_id];
+                    let required_index_width = match base_ty {
+                        ResolvedType::BuiltinBits { width } => width.clog2(),
+                        ResolvedType::Array { len, .. } => len.clog2(),
+                        _ => {
+                            return Err(TypecheckError::InvalidIndexing {
+                                indexer,
+                                base_ty: base_ty.to_string(known_types),
+                            });
+                        }
+                    };
+
+                    let required_ty = UnresolvedType::BuiltinBits {
+                        width: required_index_width.max(1),
+                    };
+                    let required_id = resolve_type_late(&required_ty, known_types);
+                    let required_ty = &known_types[&required_id];
+
+                    let base_ty = &known_types[&base_id];
+                    let index_ty = &known_types[&index.ty()];
+                    if let ResolvedType::BuiltinBits { width } = index_ty && (*width == required_index_width) {
+                        let indexer = CheckedIndexKind::Single(index);
+
+                        match base_ty {
+                            ResolvedType::BuiltinBits { .. } => {
+                                let result_ty = UnresolvedType::BuiltinBits { width: 1 };
+                                let result_id = resolve_type_late(&result_ty, known_types);
+                                Ok((indexer, result_id))
+                            }
+                            ResolvedType::Array { item_ty, .. } => {
+                                Ok((indexer, *item_ty))
+                            }
+                            _ => unreachable!(),
+                        }
+                    } else {
+                        Err(TypecheckError::InvalidIndexType {
+                            expr: index_expr,
+                            expected_ty: required_ty.to_string(known_types),
+                            value_ty: index_ty.to_string(known_types),
+                        })
+                    }
+                }
+            }
+        }
+        IndexKind::Range(range) => {
+            // Index ranges can only be constant
+            let start = transform_const_expr(&range.start, scope, false)?;
+            let start = eval(
+                &start,
+                &mut VarScope::empty(),
+                args.global_const_values,
+                Some(args.local_const_values),
+                args.funcs,
+            )?;
+
+            let end = transform_const_expr(&range.end, scope, false)?;
+            let end = eval(
+                &end,
+                &mut VarScope::empty(),
+                args.global_const_values,
+                Some(args.local_const_values),
+                args.funcs,
+            )?;
+
+            let base_ty = &known_types[&base_id];
+            match base_ty {
+                ResolvedType::BuiltinBits { width } => {
+                    if (start < 0) || (start >= (*width as i64)) {
+                        return Err(TypecheckError::IndexOutOfRange {
+                            index_expr: &range.start,
+                            index: start,
+                            len: *width,
+                        });
+                    }
+
+                    if (end <= start) || (end >= (*width as i64)) {
+                        return Err(TypecheckError::IndexOutOfRange {
+                            index_expr: &range.end,
+                            index: end,
+                            len: *width,
+                        });
+                    }
+
+                    let result_width = end - start;
+                    assert!(result_width > 0);
+                    let result_width = result_width as u64;
+
+                    let result_ty = UnresolvedType::BuiltinBits {
+                        width: result_width,
+                    };
+                    let result_id = resolve_type_late(&result_ty, known_types);
+
+                    let checked_indexer = CheckedIndexKind::Range(start..end);
+                    Ok((checked_indexer, result_id))
+                }
+                ResolvedType::Array { .. } => Err(TypecheckError::InvalidRangeIndexing {
+                    indexer,
+                    base_ty: base_ty.to_string(known_types),
+                }),
+                _ => Err(TypecheckError::InvalidIndexing {
+                    indexer,
+                    base_ty: base_ty.to_string(known_types),
+                }),
+            }
+        }
+    }
+}
+
+fn typecheck_index_expr<'a>(
+    expr: &'a IndexExpr,
+    parent_module: &ResolvedModule,
+    mode: TypecheckMode,
+    scope: &Scope,
+    known_types: &mut HashMap<TypeId, ResolvedType>,
+    resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
+    args: &TypecheckArgs,
+) -> TypecheckResult<'a, CheckedIndexExpr> {
+    let base = typecheck_expr(
+        expr.base(),
+        parent_module,
+        mode,
+        scope,
+        known_types,
+        resolved_types,
+        args,
+    )?;
+    let base = merge_expr(base, args)?;
+
+    let (indexer, ty) = typecheck_indexer(
+        expr.indexer(),
+        base.ty(),
+        parent_module,
+        mode,
+        scope,
+        known_types,
+        resolved_types,
+        args,
+    )?;
+
+    Ok(CheckedIndexExpr::new(base, indexer, ty))
+}
+
+fn typecheck_member_access_expr<'a>(
+    expr: &'a MemberAccessExpr,
+    parent_module: &ResolvedModule,
+    mode: TypecheckMode,
+    scope: &Scope,
+    known_types: &mut HashMap<TypeId, ResolvedType>,
+    resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
+    args: &TypecheckArgs,
+) -> TypecheckResult<'a, CheckedMemberAccessExpr> {
+    let base = typecheck_expr(
+        expr.base(),
+        parent_module,
+        mode,
+        scope,
+        known_types,
+        resolved_types,
+        args,
+    )?;
+    let base = merge_expr(base, args)?;
+
+    let ty = find_member_type(
+        expr.member().member(),
+        base.ty(),
+        known_types,
+        resolved_types,
+    )?;
+
+    Ok(CheckedMemberAccessExpr::new(
+        base,
+        expr.member().member().clone(),
+        ty,
+    ))
+}
+
+fn typecheck_if_expr<'a>(
+    expr: &'a IfExpr,
+    parent_module: &ResolvedModule,
+    mode: TypecheckMode,
+    scope: &Scope,
+    known_types: &mut HashMap<TypeId, ResolvedType>,
+    resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
+    args: &TypecheckArgs,
+) -> TypecheckResult<'a, CheckedIfExpr> {
+    let mut errors = Vec::new();
+
+    let cond = match typecheck_expr(
+        expr.condition(),
+        parent_module,
+        mode,
+        scope,
+        known_types,
+        resolved_types,
+        args,
+    ) {
+        Ok(cond) => match merge_expr(cond, args) {
+            Ok(cond) => {
+                let cond_ty = &known_types[&cond.ty()];
+                match cond_ty {
+                    ResolvedType::Const | ResolvedType::BuiltinBits { width: 1 } => Some(cond),
+                    _ => {
+                        errors.push(TypecheckError::InvalidConditionType {
+                            cond: expr.condition(),
+                            cond_ty: cond_ty.to_string(known_types),
+                        });
+                        None
+                    }
+                }
+            }
+            Err(err) => {
+                errors.push(err);
+                None
+            }
+        },
+        Err(err) => {
+            errors.push(err);
+            None
+        }
+    };
+
+    let body = match typecheck_expr_block(
+        expr.body(),
+        parent_module,
+        mode,
+        scope,
+        known_types,
+        resolved_types,
+        args,
+    ) {
+        Ok(body) => Some(body),
+        Err(err) => {
+            errors.push(err);
+            None
+        }
+    };
+
+    let mut else_if_blocks = Vec::with_capacity(expr.else_if_blocks().len());
+    for else_if_block in expr.else_if_blocks().iter() {
+        let cond = match typecheck_expr(
+            else_if_block.condition(),
+            parent_module,
+            mode,
+            scope,
+            known_types,
+            resolved_types,
+            args,
+        ) {
+            Ok(cond) => match merge_expr(cond, args) {
+                Ok(cond) => {
+                    let cond_ty = &known_types[&cond.ty()];
+                    match cond_ty {
+                        ResolvedType::Const | ResolvedType::BuiltinBits { width: 1 } => Some(cond),
+                        _ => {
+                            errors.push(TypecheckError::InvalidConditionType {
+                                cond: expr.condition(),
+                                cond_ty: cond_ty.to_string(known_types),
+                            });
+                            None
+                        }
+                    }
+                }
+                Err(err) => {
+                    errors.push(err);
+                    None
+                }
+            },
+            Err(err) => {
+                errors.push(err);
+                None
+            }
+        };
+
+        let body = match typecheck_expr_block(
+            else_if_block.body(),
+            parent_module,
+            mode,
+            scope,
+            known_types,
+            resolved_types,
+            args,
+        ) {
+            Ok(body) => Some(body),
+            Err(err) => {
+                errors.push(err);
+                None
+            }
+        };
+
+        if let Some(cond) = cond && let Some(body) = body {
+            else_if_blocks.push(CheckedIfExprElseIfBlock::new(cond, body));
+        }
+    }
+
+    let else_block = if let Some(else_block) = expr.else_block() {
+        match typecheck_expr_block(
+            else_block.body(),
+            parent_module,
+            mode,
+            scope,
+            known_types,
+            resolved_types,
+            args,
+        ) {
+            Ok(body) => Some(CheckedIfExprElseBlock::new(body)),
+            Err(err) => {
+                errors.push(err);
+                None
+            }
+        }
+    } else {
+        errors.push(TypecheckError::MissingElseBlock { if_expr: expr });
+        None
+    };
+
+    if errors.len() > 0 {
+        Err(TypecheckError::new_list(errors))
+    } else {
+        let cond = cond.unwrap();
+        let body = body.unwrap();
+        let else_block = else_block.unwrap();
+
+        let ty_id = body.ty();
+        let ty = &known_types[&ty_id];
+
+        for (i, else_if_block) in else_if_blocks.iter().enumerate() {
+            let else_if_ty_id = else_if_block.body().ty();
+            if else_if_ty_id != ty_id {
+                let else_if_ty = &known_types[&else_if_ty_id];
+
+                errors.push(TypecheckError::ElseIfTypeMismatch {
+                    if_ty: ty.to_string(known_types),
+                    else_if_ty: else_if_ty.to_string(known_types),
+                    else_if_block: &expr.else_if_blocks()[i],
+                })
+            }
+        }
+
+        if else_block.body().ty() != ty_id {
+            let else_ty_id = else_block.body().ty();
+            if else_ty_id != ty_id {
+                let else_ty = &known_types[&else_ty_id];
+
+                errors.push(TypecheckError::ElseTypeMismatch {
+                    if_ty: ty.to_string(known_types),
+                    else_ty: else_ty.to_string(known_types),
+                    else_block: expr.else_block().unwrap(),
+                })
+            }
+        }
+
+        wrap_errors!(
+            CheckedIfExpr::new(cond, body, else_if_blocks, else_block, ty_id),
+            errors
+        )
+    }
+}
+
+fn typecheck_numeric_match_expr<'a>(
+    expr: &'a MatchExpr,
+    value_ty: &ResolvedType,
+    width: u64,
+    scope: &Scope,
+    known_types: &HashMap<TypeId, ResolvedType>,
+    args: &TypecheckArgs,
+) -> TypecheckResult<'a, ()> {
+    let mut errors = Vec::new();
+
+    let full_range = InclusiveRange::n_bit(width);
+    let mut covered_ranges = RangeCollection::new();
+
+    for branch in expr.branches().iter() {
+        'inner: for pattern in branch.patterns().iter() {
+            match pattern {
+                MatchPattern::Literal(l) => {
+                    if full_range.contains(l.value() as u64) {
+                        if covered_ranges.contains(l.value() as u64) {
+                            errors.push(TypecheckError::UnreachablePattern { pattern });
+                        } else {
+                            covered_ranges.insert(l.value() as u64);
+                        }
+                    } else {
+                        errors.push(TypecheckError::PatternOutOfRange {
+                            pattern,
+                            value_ty: value_ty.to_string(known_types),
+                        });
+                    }
+
+                    continue 'inner;
+                }
+                MatchPattern::Range(start, end) => {
+                    let range = (start.value() as u64)..(end.value() as u64);
+                    if full_range.contains(&range) {
+                        if covered_ranges.contains(&range) {
+                            errors.push(TypecheckError::UnreachablePattern { pattern });
+                        } else {
+                            covered_ranges.insert(range);
+                        }
+                    } else {
+                        errors.push(TypecheckError::PatternOutOfRange {
+                            pattern,
+                            value_ty: value_ty.to_string(known_types),
+                        });
+                    }
+
+                    continue 'inner;
+                }
+                MatchPattern::RangeInclusive(start, end) => {
+                    let range = (start.value() as u64)..=(end.value() as u64);
+                    if full_range.contains(&range) {
+                        if covered_ranges.contains(&range) {
+                            errors.push(TypecheckError::UnreachablePattern { pattern });
+                        } else {
+                            covered_ranges.insert(range);
+                        }
+                    } else {
+                        errors.push(TypecheckError::PatternOutOfRange {
+                            pattern,
+                            value_ty: value_ty.to_string(known_types),
+                        });
+                    }
+
+                    continue 'inner;
+                }
+                MatchPattern::Path(p) => {
+                    if let Some(ident) = p.as_ident() {
+                        if ident.as_ref() == "_" {
+                            if covered_ranges.contains(full_range) {
+                                errors.push(TypecheckError::UnreachablePattern { pattern });
+                            } else {
+                                covered_ranges.insert(full_range);
+                            }
+                        } else {
+                            match scope.contains_const(ident) {
+                                Ok(_) => {
+                                    let value = *args
+                                        .global_const_values
+                                        .get(ident.as_ref())
+                                        .or_else(|| args.local_const_values.get(ident.as_ref()))
+                                        .unwrap()
+                                        as u64;
+
+                                    if full_range.contains(value) {
+                                        if covered_ranges.contains(value) {
+                                            errors.push(TypecheckError::UnreachablePattern {
+                                                pattern,
+                                            });
+                                        } else {
+                                            covered_ranges.insert(value);
+                                        }
+                                    } else {
+                                        errors.push(TypecheckError::PatternOutOfRange {
+                                            pattern,
+                                            value_ty: value_ty.to_string(known_types),
+                                        });
+                                    }
+                                }
+                                Err(err) => errors.push(err),
+                            }
+                        }
+
+                        continue 'inner;
+                    }
+                }
+            }
+
+            errors.push(TypecheckError::IncompatiblePattern {
+                pattern,
+                value_ty: value_ty.to_string(known_types),
+            });
+        }
+    }
+
+    if !covered_ranges.contains(full_range) {
+        errors.push(TypecheckError::NonExhaustiveMatch { match_expr: expr })
+    }
+
+    wrap_errors!((), errors)
+}
+
+fn typecheck_enum_match_expr<'a>(
+    expr: &'a MatchExpr,
+    value_ty: &ResolvedType,
+    enum_item: &ResolvedEnum,
+    known_types: &HashMap<TypeId, ResolvedType>,
+) -> TypecheckResult<'a, ()> {
+    let ResolvedType::Named { name: enum_name, .. } = value_ty else {
+        unreachable!("enums must be named types");
+    };
+    let mut errors = Vec::new();
+
+    let mut unused_variants = HashSet::default();
+    unused_variants.extend(enum_item.variants().keys().cloned());
+
+    for branch in expr.branches().iter() {
+        'inner: for pattern in branch.patterns().iter() {
+            if let MatchPattern::Path(p) = pattern {
+                if let Some(ident) = p.as_ident() && (ident.as_ref() == "_") {
+                    unused_variants.clear();
+                    continue 'inner;
+                } else if (p.head().as_ref() == enum_name.as_ref()) && (p.tail().len() == 1) {
+                    let variant_name = p.tail()[0].ident();
+                    if enum_item.variants().contains_key(variant_name.as_ref()) {
+                        if unused_variants.contains(variant_name.as_ref()) {
+                            unused_variants.remove(variant_name.as_ref());
+                            continue 'inner;
+                        } else {
+                            errors.push(TypecheckError::UnreachablePattern { pattern });
+                            continue 'inner;
+                        }
+                    } else {
+                        errors.push(TypecheckError::InvalidEnumVariant {
+                            enum_name: SharedString::clone(enum_name),
+                            variant_name: variant_name.clone()
+                        });
+                        continue 'inner;
+                    }
+                }
+            }
+
+            errors.push(TypecheckError::IncompatiblePattern {
+                pattern,
+                value_ty: value_ty.to_string(known_types),
+            });
+        }
+    }
+
+    if !unused_variants.is_empty() {
+        errors.push(TypecheckError::NonExhaustiveMatch { match_expr: expr })
+    }
+
+    wrap_errors!((), errors)
+}
+
+fn typecheck_match_expr<'a>(
+    expr: &'a MatchExpr,
+    parent_module: &ResolvedModule,
+    mode: TypecheckMode,
+    scope: &Scope,
+    known_types: &mut HashMap<TypeId, ResolvedType>,
+    resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
+    args: &TypecheckArgs,
+) -> TypecheckResult<'a, CheckedMatchExpr> {
+    let mut errors = Vec::new();
+
+    let value = match typecheck_expr(
+        expr.value(),
+        parent_module,
+        mode,
+        scope,
+        known_types,
+        resolved_types,
+        args,
+    ) {
+        Ok(value) => match merge_expr(value, args) {
+            Ok(value) => Some(value),
+            Err(err) => {
+                errors.push(err);
+                None
+            }
+        },
+        Err(err) => {
+            errors.push(err);
+            None
+        }
+    };
+
+    let mut branches = Vec::with_capacity(expr.branches().len());
+    let mut ty_id = None;
+    for branch in expr.branches().iter() {
+        let checked_branch = match branch.body() {
+            MatchBody::Expr(body_expr) => {
+                match typecheck_expr(
+                    body_expr,
+                    parent_module,
+                    mode,
+                    scope,
+                    known_types,
+                    resolved_types,
+                    args,
+                ) {
+                    Ok(body_expr) => match merge_expr(body_expr, args) {
+                        Ok(body_expr) => CheckedMatchExprBranch::new(
+                            branch.patterns().to_vec(),
+                            CheckedMatchExprBody::Expr(body_expr),
+                        ),
+                        Err(err) => {
+                            errors.push(err);
+                            continue;
+                        }
+                    },
+                    Err(err) => {
+                        errors.push(err);
+                        continue;
+                    }
+                }
+            }
+            MatchBody::Block(body) => {
+                match typecheck_expr_block(
+                    body,
+                    parent_module,
+                    mode,
+                    scope,
+                    known_types,
+                    resolved_types,
+                    args,
+                ) {
+                    Ok(body) => CheckedMatchExprBranch::new(
+                        branch.patterns().to_vec(),
+                        CheckedMatchExprBody::Block(body),
+                    ),
+                    Err(err) => {
+                        errors.push(err);
+                        continue;
+                    }
+                }
+            }
+        };
+
+        let branch_ty_id = checked_branch.body().ty();
+        if let Some(ty_id) = ty_id {
+            if branch_ty_id != ty_id {
+                let ty = &known_types[&ty_id];
+                let branch_ty = &known_types[&branch_ty_id];
+                errors.push(TypecheckError::MatchBranchTypeMismatch {
+                    match_ty: ty.to_string(known_types),
+                    branch_ty: branch_ty.to_string(known_types),
+                    branch,
+                })
+            }
+        } else {
+            ty_id = Some(branch_ty_id);
+        }
+
+        branches.push(checked_branch);
+    }
+
+    if let Some(value) = &value {
+        let value_ty = &known_types[&value.ty()];
+        match value_ty {
+            ResolvedType::Const => {
+                if let Err(err) =
+                    typecheck_numeric_match_expr(expr, value_ty, 64, scope, known_types, args)
+                {
+                    errors.push(err);
+                }
+            }
+            ResolvedType::BuiltinBits { width } => {
+                if let Err(err) =
+                    typecheck_numeric_match_expr(expr, value_ty, *width, scope, known_types, args)
+                {
+                    errors.push(err);
+                }
+            }
+            ResolvedType::Named { .. } => {
+                let value_ty_item = &resolved_types[&value.ty()];
+                match value_ty_item {
+                    ResolvedTypeItem::Enum(enum_item) => {
+                        if let Err(err) =
+                            typecheck_enum_match_expr(expr, value_ty, enum_item, known_types)
+                        {
+                            errors.push(err);
+                        }
+                    }
+                    _ => {
+                        errors.push(TypecheckError::InvalidMatchType {
+                            value: expr.value(),
+                            value_ty: value_ty.to_string(known_types),
+                        });
+                    }
+                }
+            }
+            _ => {
+                errors.push(TypecheckError::InvalidMatchType {
+                    value: expr.value(),
+                    value_ty: value_ty.to_string(known_types),
+                });
+            }
+        }
+    }
+
+    wrap_errors!(
+        CheckedMatchExpr::new(value.unwrap(), branches, ty_id.unwrap()),
+        errors
+    )
+}
+
+fn typecheck_expr<'a>(
+    expr: &'a Expr,
+    parent_module: &ResolvedModule,
+    mode: TypecheckMode,
+    scope: &Scope,
+    known_types: &mut HashMap<TypeId, ResolvedType>,
+    resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
+    args: &TypecheckArgs,
+) -> TypecheckResult<'a, Either<ConstExpr, CheckedExpr>> {
+    macro_rules! wrap_expr {
+        ($inner:expr, $variant:ident) => {
+            $inner.map(
+                |inner| ConstExpr::$variant(inner),
+                |inner| CheckedExpr::$variant(inner),
+            )
+        };
+    }
+
+    macro_rules! unary_expr {
+        ($expr:expr, $op:ident) => {{
+            let inner = typecheck_unary_expr(
+                $expr,
+                parent_module,
+                mode,
+                scope,
+                known_types,
+                resolved_types,
+                args,
+            )?;
+            Ok(wrap_expr!(inner, $op))
+        }};
+    }
+
+    macro_rules! binary_expr {
+        ($expr:expr, $op:ident) => {{
+            let inner = typecheck_binary_expr(
+                $expr,
+                parent_module,
+                mode,
+                scope,
+                known_types,
+                resolved_types,
+                args,
+            )?;
+            Ok(wrap_expr!(inner, $op))
+        }};
+    }
+
+    macro_rules! cmp_expr {
+        ($expr:expr, $op:ident) => {{
+            let inner = typecheck_compare_expr(
+                $expr,
+                parent_module,
+                mode,
+                scope,
+                known_types,
+                resolved_types,
+                args,
+            )?;
+            Ok(wrap_expr!(inner, $op))
+        }};
+    }
+
+    macro_rules! checked_only_cmp_expr {
+        ($expr:expr, $op:ident) => {{
+            let inner = typecheck_compare_expr(
+                $expr,
+                parent_module,
+                mode,
+                scope,
+                known_types,
+                resolved_types,
+                args,
+            )?;
+            match inner {
+                Either::Const(_) => Err(TypecheckError::InvalidConstOp { op: *$expr.op() }),
+                Either::Checked(inner) => Ok(Either::Checked(CheckedExpr::$op(inner))),
+            }
+        }};
+    }
+
+    match expr {
+        Expr::Literal(l) => Ok(Either::Const(ConstExpr::Literal(*l))),
+        Expr::Path(path) => {
+            let path = typecheck_path(path, parent_module, known_types, resolved_types, args)?;
+            Ok(path.map(
+                |ident| ConstExpr::Ident(ident),
+                |path| CheckedExpr::Path(path),
+            ))
+        }
+        Expr::If(expr) => {
+            let if_expr = typecheck_if_expr(
+                expr,
+                parent_module,
+                mode,
+                scope,
+                known_types,
+                resolved_types,
+                args,
+            )?;
+            Ok(Either::Checked(CheckedExpr::If(if_expr)))
+        }
+        Expr::Match(expr) => {
+            let match_expr = typecheck_match_expr(
+                expr,
+                parent_module,
+                mode,
+                scope,
+                known_types,
+                resolved_types,
+                args,
+            )?;
+            Ok(Either::Checked(CheckedExpr::Match(match_expr)))
+        }
+        Expr::Block(block) => {
+            let block = typecheck_expr_block(
+                block,
+                parent_module,
+                mode,
+                scope,
+                known_types,
+                resolved_types,
+                args,
+            )?;
+            Ok(Either::Checked(CheckedExpr::Block(block)))
+        }
+        Expr::Index(expr) => {
+            let index_expr = typecheck_index_expr(
+                expr,
+                parent_module,
+                mode,
+                scope,
+                known_types,
+                resolved_types,
+                args,
+            )?;
+            Ok(Either::Checked(CheckedExpr::Index(index_expr)))
+        }
+        Expr::MemberAccess(expr) => {
+            let member_access_expr = typecheck_member_access_expr(
+                expr,
+                parent_module,
+                mode,
+                scope,
+                known_types,
+                resolved_types,
+                args,
+            )?;
+            Ok(Either::Checked(CheckedExpr::MemberAccess(
+                member_access_expr,
+            )))
+        }
+        Expr::Call(expr) => {
+            let call_expr = transform_const_call_expr(expr, scope)?;
+            Ok(Either::Const(ConstExpr::Call(call_expr)))
+        }
+        Expr::Construct(expr) => {
+            let construct_expr = typecheck_construct_expr(
+                expr,
+                parent_module,
+                mode,
+                scope,
+                known_types,
+                resolved_types,
+                args,
+            )?;
+            Ok(Either::Checked(CheckedExpr::Construct(construct_expr)))
+        }
+        Expr::Cast(expr) => {
+            let cast_expr = typecheck_cast_expr(
+                expr,
+                parent_module,
+                mode,
+                scope,
+                known_types,
+                resolved_types,
+                args,
+            )?;
+            Ok(Either::Checked(CheckedExpr::Cast(cast_expr)))
+        }
+        Expr::Concat(expr) => {
+            let concat_expr = typecheck_concat_expr(
+                expr,
+                parent_module,
+                mode,
+                scope,
+                known_types,
+                resolved_types,
+                args,
+            )?;
+            Ok(Either::Checked(CheckedExpr::Concat(concat_expr)))
+        }
+        Expr::Pos(expr) => typecheck_expr(
+            expr.inner(),
+            parent_module,
+            mode,
+            scope,
+            known_types,
+            resolved_types,
+            args,
+        ),
+        Expr::Paren(expr) => typecheck_expr(
+            expr.inner(),
+            parent_module,
+            mode,
+            scope,
+            known_types,
+            resolved_types,
+            args,
+        ),
+        Expr::Neg(expr) => unary_expr!(expr, Neg),
+        Expr::Not(expr) => unary_expr!(expr, Not),
+        Expr::Lt(expr) => cmp_expr!(expr, Lt),
+        Expr::Lte(expr) => cmp_expr!(expr, Lte),
+        Expr::Gt(expr) => cmp_expr!(expr, Gt),
+        Expr::Gte(expr) => cmp_expr!(expr, Gte),
+        Expr::Slt(expr) => checked_only_cmp_expr!(expr, Slt),
+        Expr::Slte(expr) => checked_only_cmp_expr!(expr, Slte),
+        Expr::Sgt(expr) => checked_only_cmp_expr!(expr, Sgt),
+        Expr::Sgte(expr) => checked_only_cmp_expr!(expr, Sgte),
+        Expr::Eq(expr) => cmp_expr!(expr, Eq),
+        Expr::Ne(expr) => cmp_expr!(expr, Ne),
+        Expr::Add(expr) => binary_expr!(expr, Add),
+        Expr::Sub(expr) => binary_expr!(expr, Sub),
+        Expr::Mul(expr) => binary_expr!(expr, Mul),
+        Expr::Div(expr) => binary_expr!(expr, Div),
+        Expr::Rem(expr) => binary_expr!(expr, Rem),
+        Expr::And(expr) => binary_expr!(expr, And),
+        Expr::Xor(expr) => binary_expr!(expr, Xor),
+        Expr::Or(expr) => binary_expr!(expr, Or),
+        Expr::Shl(expr) => binary_expr!(expr, Shl),
+        Expr::Lsr(expr) => binary_expr!(expr, Lsr),
+        Expr::Asr(expr) => binary_expr!(expr, Asr),
+    }
+}
+
+fn typecheck_if_statement<'a>(
+    expr: &'a IfExpr,
+    parent_module: &ResolvedModule,
+    mode: TypecheckMode,
+    scope: &Scope,
+    known_types: &mut HashMap<TypeId, ResolvedType>,
+    resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
+    args: &TypecheckArgs,
+) -> TypecheckResult<'a, CheckedIfStatement> {
+    let mut errors = Vec::new();
+
+    let cond = match typecheck_expr(
+        expr.condition(),
+        parent_module,
+        mode,
+        scope,
+        known_types,
+        resolved_types,
+        args,
+    ) {
+        Ok(cond) => match merge_expr(cond, args) {
+            Ok(cond) => {
+                let cond_ty = &known_types[&cond.ty()];
+                match cond_ty {
+                    ResolvedType::Const | ResolvedType::BuiltinBits { width: 1 } => Some(cond),
+                    _ => {
+                        errors.push(TypecheckError::InvalidConditionType {
+                            cond: expr.condition(),
+                            cond_ty: cond_ty.to_string(known_types),
+                        });
+                        None
+                    }
+                }
+            }
+            Err(err) => {
+                errors.push(err);
+                None
+            }
+        },
+        Err(err) => {
+            errors.push(err);
+            None
+        }
+    };
+
+    let body = match typecheck_block(
+        expr.body(),
+        parent_module,
+        mode,
+        scope,
+        known_types,
+        resolved_types,
+        args,
+    ) {
+        Ok(body) => Some(body),
+        Err(err) => {
+            errors.push(err);
+            None
+        }
+    };
+
+    let mut else_if_blocks = Vec::with_capacity(expr.else_if_blocks().len());
+    for else_if_block in expr.else_if_blocks().iter() {
+        let cond = match typecheck_expr(
+            else_if_block.condition(),
+            parent_module,
+            mode,
+            scope,
+            known_types,
+            resolved_types,
+            args,
+        ) {
+            Ok(cond) => match merge_expr(cond, args) {
+                Ok(cond) => {
+                    let cond_ty = &known_types[&cond.ty()];
+                    match cond_ty {
+                        ResolvedType::Const | ResolvedType::BuiltinBits { width: 1 } => Some(cond),
+                        _ => {
+                            errors.push(TypecheckError::InvalidConditionType {
+                                cond: expr.condition(),
+                                cond_ty: cond_ty.to_string(known_types),
+                            });
+                            None
+                        }
+                    }
+                }
+                Err(err) => {
+                    errors.push(err);
+                    None
+                }
+            },
+            Err(err) => {
+                errors.push(err);
+                None
+            }
+        };
+
+        let body = match typecheck_block(
+            else_if_block.body(),
+            parent_module,
+            mode,
+            scope,
+            known_types,
+            resolved_types,
+            args,
+        ) {
+            Ok(body) => Some(body),
+            Err(err) => {
+                errors.push(err);
+                None
+            }
+        };
+
+        if let Some(cond) = cond && let Some(body) = body {
+            else_if_blocks.push(CheckedIfStatementElseIfBlock::new(cond, body));
+        }
+    }
+
+    let else_block = if let Some(else_block) = expr.else_block() {
+        match typecheck_block(
+            else_block.body(),
+            parent_module,
+            mode,
+            scope,
+            known_types,
+            resolved_types,
+            args,
+        ) {
+            Ok(body) => Some(CheckedIfStatementElseBlock::new(body)),
+            Err(err) => {
+                errors.push(err);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    wrap_errors!(
+        CheckedIfStatement::new(cond.unwrap(), body.unwrap(), else_if_blocks, else_block),
+        errors
+    )
+}
+
+fn typecheck_match_statement<'a>(
+    expr: &'a MatchExpr,
+    parent_module: &ResolvedModule,
+    mode: TypecheckMode,
+    scope: &Scope,
+    known_types: &mut HashMap<TypeId, ResolvedType>,
+    resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
+    args: &TypecheckArgs,
+) -> TypecheckResult<'a, CheckedMatchStatement> {
+    let mut errors = Vec::new();
+
+    let value = match typecheck_expr(
+        expr.value(),
+        parent_module,
+        mode,
+        scope,
+        known_types,
+        resolved_types,
+        args,
+    ) {
+        Ok(value) => match merge_expr(value, args) {
+            Ok(value) => Some(value),
+            Err(err) => {
+                errors.push(err);
+                None
+            }
+        },
+        Err(err) => {
+            errors.push(err);
+            None
+        }
+    };
+
+    let mut branches = Vec::with_capacity(expr.branches().len());
+    for branch in expr.branches().iter() {
+        match branch.body() {
+            MatchBody::Expr(body_expr) => {
+                errors.push(TypecheckError::UnexpectedReturnValue { value: body_expr });
+
+                match typecheck_expr(
+                    body_expr,
+                    parent_module,
+                    mode,
+                    scope,
+                    known_types,
+                    resolved_types,
+                    args,
+                ) {
+                    Ok(_) => {}
+                    Err(err) => errors.push(err),
+                }
+            }
+            MatchBody::Block(body) => {
+                match typecheck_block(
+                    body,
+                    parent_module,
+                    mode,
+                    scope,
+                    known_types,
+                    resolved_types,
+                    args,
+                ) {
+                    Ok(body) => {
+                        branches.push(CheckedMatchStatementBranch::new(
+                            branch.patterns().to_vec(),
+                            body,
+                        ));
+                    }
+                    Err(err) => errors.push(err),
                 }
             }
         }
     }
 
-    for (id, ty) in known_types.iter() {
-        println!("{}: {}", id, ty.to_string(&known_types));
+    if errors.len() > 0 {
+        Err(TypecheckError::new_list(errors))
+    } else {
+        let value = value.unwrap();
+        let value_ty = &known_types[&value.ty()];
+        match value_ty {
+            ResolvedType::Const => {
+                typecheck_numeric_match_expr(expr, value_ty, 64, scope, known_types, args)?;
+            }
+            ResolvedType::BuiltinBits { width } => {
+                typecheck_numeric_match_expr(expr, value_ty, *width, scope, known_types, args)?;
+            }
+            ResolvedType::Named { .. } => {
+                let value_ty_item = &resolved_types[&value.ty()];
+                match value_ty_item {
+                    ResolvedTypeItem::Enum(enum_item) => {
+                        typecheck_enum_match_expr(expr, value_ty, enum_item, known_types)?;
+                    }
+                    _ => {
+                        return Err(TypecheckError::InvalidMatchType {
+                            value: expr.value(),
+                            value_ty: value_ty.to_string(known_types),
+                        });
+                    }
+                }
+            }
+            _ => {
+                return Err(TypecheckError::InvalidMatchType {
+                    value: expr.value(),
+                    value_ty: value_ty.to_string(known_types),
+                });
+            }
+        }
+
+        wrap_errors!(CheckedMatchStatement::new(value, branches), errors)
+    }
+}
+
+fn typecheck_assignment<'a>(
+    assign: &'a Assignment,
+    parent_module: &ResolvedModule,
+    mode: TypecheckMode,
+    scope: &Scope,
+    known_types: &mut HashMap<TypeId, ResolvedType>,
+    resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
+    args: &TypecheckArgs,
+) -> TypecheckResult<'a, CheckedAssignment> {
+    let mut errors = Vec::new();
+
+    if assign.op().kind() != AssignKind::Assign {
+        errors.push(TypecheckError::InvalidAssignOp { assign });
     }
 
-    wrap_errors!(resolved_type_items, errors)
+    if !assign.target().path().is_ident() {
+        errors.push(TypecheckError::InvalidPath {
+            path: assign.target().path(),
+        });
+    }
+
+    let base = assign.target().path().head();
+
+    let value = match typecheck_expr(
+        assign.value(),
+        parent_module,
+        mode,
+        scope,
+        known_types,
+        resolved_types,
+        args,
+    ) {
+        Ok(value) => match merge_expr(value, args) {
+            Ok(value) => Some(value),
+            Err(err) => {
+                errors.push(err);
+                None
+            }
+        },
+        Err(err) => {
+            errors.push(err);
+            None
+        }
+    };
+
+    match find_module_member_type(base, parent_module, None, known_types) {
+        Ok((mut ty, kind)) => {
+            match (mode, kind) {
+                (TypecheckMode::Sequential, LogicKind::Signal) => {
+                    errors.push(TypecheckError::InvalidSeqAssignSig { assign })
+                }
+                (TypecheckMode::Sequential, LogicKind::Module) => {
+                    errors.push(TypecheckError::InvalidSeqAssignMod { assign })
+                }
+                (TypecheckMode::Combinatoric, LogicKind::Register) => {
+                    errors.push(TypecheckError::InvalidCombAssignReg { assign })
+                }
+                _ => { /* valid */ }
+            }
+
+            let mut suffixes = Vec::new();
+            for suffix in assign.target().suffixes().iter() {
+                match suffix {
+                    SuffixOp::Indexer(indexer) => {
+                        let checked_indexer;
+                        (checked_indexer, ty) = match typecheck_indexer(
+                            indexer,
+                            ty,
+                            parent_module,
+                            mode,
+                            scope,
+                            known_types,
+                            resolved_types,
+                            args,
+                        ) {
+                            Ok(val) => val,
+                            Err(err) => {
+                                errors.push(err);
+                                break;
+                            }
+                        };
+
+                        suffixes.push(CheckedSuffixOp::Indexer(checked_indexer));
+                    }
+                    SuffixOp::MemberAccess(member) => {
+                        ty = match find_member_type(
+                            member.member(),
+                            ty,
+                            known_types,
+                            resolved_types,
+                        ) {
+                            Ok(ty) => ty,
+                            Err(err) => {
+                                errors.push(err);
+                                break;
+                            }
+                        };
+
+                        suffixes.push(CheckedSuffixOp::MemberAccess(member.member().clone()));
+                    }
+                }
+            }
+
+            let target = CheckedAssignTarget::new(base.clone(), suffixes, ty);
+            wrap_errors!(CheckedAssignment::new(target, value.unwrap()), errors)
+        }
+        Err(err) => {
+            errors.push(err);
+            Err(TypecheckError::new_list(errors))
+        }
+    }
+}
+
+fn typecheck_statement<'a>(
+    statement: &'a Statement,
+    parent_module: &ResolvedModule,
+    mode: TypecheckMode,
+    scope: &Scope,
+    known_types: &mut HashMap<TypeId, ResolvedType>,
+    resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
+    args: &TypecheckArgs,
+) -> TypecheckResult<'a, CheckedStatement> {
+    match statement {
+        Statement::Expr(expr) => match expr {
+            Expr::If(if_expr) => {
+                let checked_if_statement = typecheck_if_statement(
+                    if_expr,
+                    parent_module,
+                    mode,
+                    scope,
+                    known_types,
+                    resolved_types,
+                    args,
+                )?;
+                Ok(CheckedStatement::If(checked_if_statement))
+            }
+            Expr::Match(match_expr) => {
+                let checked_match_statement = typecheck_match_statement(
+                    match_expr,
+                    parent_module,
+                    mode,
+                    scope,
+                    known_types,
+                    resolved_types,
+                    args,
+                )?;
+                Ok(CheckedStatement::Match(checked_match_statement))
+            }
+            Expr::Block(block) => {
+                let checked_block = typecheck_block(
+                    block,
+                    parent_module,
+                    mode,
+                    scope,
+                    known_types,
+                    resolved_types,
+                    args,
+                )?;
+                Ok(CheckedStatement::Block(checked_block))
+            }
+            expr => {
+                let checked_expr = typecheck_expr(
+                    expr,
+                    parent_module,
+                    mode,
+                    scope,
+                    known_types,
+                    resolved_types,
+                    args,
+                )?;
+                let checked_expr = merge_expr(checked_expr, args)?;
+                Ok(CheckedStatement::Expr(checked_expr))
+            }
+        },
+        Statement::Declaration(decl) => Err(TypecheckError::UnsupportedDeclaration { decl }),
+        Statement::Assignment(assign) => {
+            let checked_assign = typecheck_assignment(
+                assign,
+                parent_module,
+                mode,
+                scope,
+                known_types,
+                resolved_types,
+                args,
+            )?;
+            Ok(CheckedStatement::Assignment(checked_assign))
+        }
+        Statement::WhileLoop(while_loop) => {
+            Err(TypecheckError::UnsupportedWhileLoop { while_loop })
+        }
+        Statement::ForLoop(for_loop) => Err(TypecheckError::UnsupportedForLoop { for_loop }),
+    }
+}
+
+fn typecheck_expr_block<'a>(
+    block: &'a Block,
+    parent_module: &ResolvedModule,
+    mode: TypecheckMode,
+    parent_scope: &Scope,
+    known_types: &mut HashMap<TypeId, ResolvedType>,
+    resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
+    args: &TypecheckArgs,
+) -> TypecheckResult<'a, CheckedExprBlock> {
+    let mut errors = Vec::new();
+    let scope = Scope::new(parent_scope);
+
+    let mut statements = Vec::new();
+    for statement in block.statements().iter() {
+        match typecheck_statement(
+            statement,
+            parent_module,
+            mode,
+            &scope,
+            known_types,
+            resolved_types,
+            args,
+        ) {
+            Ok(statement) => statements.push(statement),
+            Err(err) => errors.push(err),
+        }
+    }
+
+    let result = {
+        if let Some(result) = block.result() {
+            let result = typecheck_expr(
+                result,
+                parent_module,
+                mode,
+                &scope,
+                known_types,
+                resolved_types,
+                args,
+            );
+
+            match result {
+                Ok(result) => match merge_expr(result, args) {
+                    Ok(result) => Some(result),
+                    Err(err) => {
+                        errors.push(err);
+                        None
+                    }
+                },
+                Err(err) => {
+                    errors.push(err);
+                    None
+                }
+            }
+        } else {
+            errors.push(TypecheckError::MissingReturnValue { block });
+            None
+        }
+    };
+
+    wrap_errors!(CheckedExprBlock::new(statements, result.unwrap()), errors)
+}
+
+fn typecheck_block<'a>(
+    block: &'a Block,
+    parent_module: &ResolvedModule,
+    mode: TypecheckMode,
+    parent_scope: &Scope,
+    known_types: &mut HashMap<TypeId, ResolvedType>,
+    resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
+    args: &TypecheckArgs,
+) -> TypecheckResult<'a, CheckedBlock> {
+    let mut errors = Vec::new();
+    let scope = Scope::new(parent_scope);
+
+    let mut statements = Vec::new();
+    for statement in block.statements().iter() {
+        match typecheck_statement(
+            statement,
+            parent_module,
+            mode,
+            &scope,
+            known_types,
+            resolved_types,
+            args,
+        ) {
+            Ok(statement) => statements.push(statement),
+            Err(err) => errors.push(err),
+        }
+    }
+
+    if let Some(result) = block.result() {
+        // Check if the result expression can also be considered a statement
+        match result {
+            Expr::If(result_if_expr) => {
+                match typecheck_if_statement(
+                    result_if_expr,
+                    parent_module,
+                    mode,
+                    &scope,
+                    known_types,
+                    resolved_types,
+                    args,
+                ) {
+                    Ok(result_if_statement) => {
+                        statements.push(CheckedStatement::If(result_if_statement))
+                    }
+                    Err(err) => errors.push(err),
+                }
+            }
+            Expr::Match(result_match_expr) => {
+                match typecheck_match_statement(
+                    result_match_expr,
+                    parent_module,
+                    mode,
+                    &scope,
+                    known_types,
+                    resolved_types,
+                    args,
+                ) {
+                    Ok(result_match_statement) => {
+                        statements.push(CheckedStatement::Match(result_match_statement))
+                    }
+                    Err(err) => errors.push(err),
+                }
+            }
+            Expr::Block(result_block) => {
+                match typecheck_block(
+                    result_block,
+                    parent_module,
+                    mode,
+                    &scope,
+                    known_types,
+                    resolved_types,
+                    args,
+                ) {
+                    Ok(result_block) => statements.push(CheckedStatement::Block(result_block)),
+                    Err(err) => errors.push(err),
+                }
+            }
+            _ => {
+                if let Err(err) = typecheck_expr(
+                    result,
+                    parent_module,
+                    mode,
+                    &scope,
+                    known_types,
+                    resolved_types,
+                    args,
+                ) {
+                    errors.push(err);
+                }
+
+                errors.push(TypecheckError::UnexpectedReturnValue { value: result });
+            }
+        }
+    }
+
+    wrap_errors!(CheckedBlock::new(statements), errors)
+}
+
+pub fn typecheck_module<'a>(
+    module_item: &'a ResolvedModule,
+    global_scope: &Scope,
+    known_types: &mut HashMap<TypeId, ResolvedType>,
+    resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
+    global_const_values: &HashMap<SharedString, i64>,
+    funcs: &HashMap<SharedString, ConstFunc>,
+) -> TypecheckResult<'a, CheckedModule> {
+    // The scope is only for const evaluation, so no ports/logic members belong in it
+    let mut module_scope = Scope::new(global_scope);
+    for name in module_item.local_consts().keys() {
+        module_scope.add_const(SharedString::clone(name))
+    }
+
+    let args = TypecheckArgs {
+        global_const_values,
+        local_const_values: module_item.local_consts(),
+        funcs,
+    };
+
+    let mut errors = Vec::new();
+
+    let mut proc_members = Vec::with_capacity(module_item.proc_members().len());
+    for proc_member in module_item.proc_members().iter() {
+        // FIXME: typecheck sensitivities
+
+        match typecheck_block(
+            proc_member.body(),
+            module_item,
+            TypecheckMode::Sequential,
+            &module_scope,
+            known_types,
+            resolved_types,
+            &args,
+        ) {
+            Ok(body) => {
+                proc_members.push(CheckedProcMember::new(proc_member.sens().to_vec(), body));
+            }
+            Err(err) => errors.push(err),
+        }
+    }
+
+    let mut comb_members = Vec::with_capacity(module_item.comb_members().len());
+    for comb_member in module_item.comb_members().iter() {
+        match typecheck_block(
+            comb_member.body(),
+            module_item,
+            TypecheckMode::Combinatoric,
+            &module_scope,
+            known_types,
+            resolved_types,
+            &args,
+        ) {
+            Ok(body) => {
+                comb_members.push(CheckedCombMember::new(body));
+            }
+            Err(err) => errors.push(err),
+        }
+    }
+
+    wrap_errors!(CheckedModule::new(proc_members, comb_members), errors)
 }
