@@ -1,3 +1,4 @@
+#![allow(clippy::too_many_arguments)]
 #![feature(trait_alias)]
 #![feature(int_log)]
 #![feature(let_chains)]
@@ -15,6 +16,7 @@ mod parser;
 mod pretty_printing;
 mod range_collection;
 mod small_vec;
+mod transpile;
 mod typecheck;
 
 use const_eval::{eval, VarScope};
@@ -84,7 +86,7 @@ struct Args {
     #[arg(short, long, value_name = "NAME")]
     top: Option<String>,
 
-    /// Output Verilog file [default: out.v]
+    /// Output SystemVerilog file [default: out.sv]
     #[arg(short, long, value_name = "FILE")]
     output: Option<PathBuf>,
 
@@ -105,15 +107,9 @@ fn tokenize(
 
     let mut tokens = Vec::new();
     for file in files.into_iter() {
-        let lexer = QuartzLexer::new(file, &file_server);
+        let lexer = QuartzLexer::new(file, file_server);
 
-        tokens.extend(lexer.filter(|t| {
-            if let QuartzToken::Comment(_) = &t.kind {
-                false
-            } else {
-                true
-            }
-        }));
+        tokens.extend(lexer.filter(|t| !matches!(&t.kind, QuartzToken::Comment(_))));
     }
 
     Ok(tokens)
@@ -121,24 +117,19 @@ fn tokenize(
 
 fn main() -> std::io::Result<()> {
     const DEFAULT_TOP_MODULE_NAME: &str = "Top";
-    const DEFAULT_OUTPUT_FILE: &str = "out.v";
+    const DEFAULT_OUTPUT_FILE: &str = "out.sv";
 
     let args = <Args as clap::Parser>::parse();
-    let top_module_name = args
-        .top
-        .as_ref()
-        .map(|s| s.as_str())
-        .unwrap_or(DEFAULT_TOP_MODULE_NAME);
-    let output_file = args
+    let top_module_name = args.top.as_deref().unwrap_or(DEFAULT_TOP_MODULE_NAME);
+    let output_path = args
         .output
-        .as_ref()
-        .map(|p| p.as_path())
-        .unwrap_or(DEFAULT_OUTPUT_FILE.as_ref());
+        .as_deref()
+        .unwrap_or_else(|| DEFAULT_OUTPUT_FILE.as_ref());
     let input_files = args.inputs.as_slice();
 
     let stderr = StandardStream::stderr(termcolor::ColorChoice::Auto);
 
-    if input_files.len() == 0 {
+    if input_files.is_empty() {
         let mut stderr = stderr.lock();
         return write_error("no input files specified", &mut stderr);
     }
@@ -172,7 +163,7 @@ fn main() -> std::io::Result<()> {
             for item in design.iter() {
                 match item {
                     ast::Item::Const(const_item) => {
-                        match transform_const_expr(const_item.value(), &mut global_scope, false) {
+                        match transform_const_expr(const_item.value(), &global_scope, false) {
                             Ok(expr) => {
                                 if !global_consts.contains_key(const_item.name().as_ref())
                                     && !funcs.contains_key(const_item.name().as_ref())
@@ -184,7 +175,7 @@ fn main() -> std::io::Result<()> {
                         }
                     }
                     ast::Item::Func(func_item) => {
-                        match transform_const_func(func_item, &mut global_scope) {
+                        match transform_const_func(func_item, &global_scope) {
                             Ok(func) => {
                                 if !global_consts.contains_key(func_item.name().as_ref())
                                     && !funcs.contains_key(func_item.name().as_ref())
@@ -217,7 +208,7 @@ fn main() -> std::io::Result<()> {
             let type_items = collect_type_items(design);
             if let Some(top_item) = type_items.get(top_module_name) {
                 if let ir::TypeItem::Module(top_module) = top_item {
-                    if let Some(generic_args) = top_module.generic_args() && (generic_args.args().len() > 0) {
+                    if let Some(generic_args) = top_module.generic_args() && !generic_args.args().is_empty() {
                         let mut stderr = stderr.lock();
                         return write_error("modules with generic arguments cannot be used as top module", &mut stderr);
                     }
@@ -233,22 +224,34 @@ fn main() -> std::io::Result<()> {
                     match result {
                         Ok((mut known_types, resolved_types, mut type_order)) => {
                             let mut errors = Vec::new();
-                            let mut module_items = Vec::new();
+                            let mut checked_modules = Vec::new();
                             while let Some(ty_id) = type_order.pop() {
-                                if let Some(ir::ResolvedTypeItem::Module(module_item)) =
-                                    &resolved_types.get(&ty_id)
-                                {
-                                    match typecheck_module(
-                                        module_item,
-                                        &global_scope,
-                                        &mut known_types,
-                                        &resolved_types,
-                                        &global_const_values,
-                                        &funcs,
-                                    ) {
-                                        Ok(module_item) => module_items.push((ty_id, module_item)),
-                                        Err(err) => errors.push(err),
+                                match &resolved_types.get(&ty_id) {
+                                    Some(ir::ResolvedTypeItem::Struct(struct_item)) => {
+                                        if let Err(err) = struct_contains_module(
+                                            struct_item,
+                                            &known_types,
+                                            &resolved_types,
+                                        ) {
+                                            errors.push(err);
+                                        }
                                     }
+                                    Some(ir::ResolvedTypeItem::Module(module_item)) => {
+                                        match typecheck_module(
+                                            module_item,
+                                            &global_scope,
+                                            &mut known_types,
+                                            &resolved_types,
+                                            &global_const_values,
+                                            &funcs,
+                                        ) {
+                                            Ok(module_item) => {
+                                                checked_modules.push((ty_id, module_item))
+                                            }
+                                            Err(err) => errors.push(err),
+                                        }
+                                    }
+                                    _ => {}
                                 }
                             }
 
@@ -262,6 +265,18 @@ fn main() -> std::io::Result<()> {
                                     &mut stderr,
                                 );
                             }
+
+                            if let Some(parent) = output_path.parent() {
+                                std::fs::create_dir_all(parent)?;
+                            }
+                            let mut output_file = std::fs::File::create(output_path)?;
+                            transpile::transpile(
+                                &mut output_file,
+                                &known_types,
+                                &resolved_types,
+                                &checked_modules,
+                            )?;
+                            output_file.sync_all()?;
                         }
                         Err(err) => {
                             let mut stderr = stderr.lock();

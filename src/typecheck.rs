@@ -3,6 +3,7 @@ use crate::const_eval::*;
 use crate::ir::*;
 use crate::range_collection::*;
 use crate::{Clog2, HashMap, HashSet, SharedString};
+use langbox::TextSpan;
 use std::borrow::Cow;
 use std::collections::hash_map;
 use std::collections::VecDeque;
@@ -186,6 +187,25 @@ pub enum TypecheckError<'a> {
     },
     InvalidCombAssignReg {
         assign: &'a Assignment,
+    },
+    InvalidPortKind {
+        port_span: TextSpan,
+        port_dir: Direction,
+        port_kind: LogicKind,
+    },
+    PortKindMismatch {
+        port_span: TextSpan,
+        port_ty: Cow<'a, str>,
+    },
+    PortModuleType {
+        port_span: TextSpan,
+    },
+    MemberKindMismatch {
+        member_span: TextSpan,
+        member_ty: Cow<'a, str>,
+    },
+    StructModuleField {
+        field_span: TextSpan,
     },
     ArithmeticError(ArithmeticError),
     List(Vec<TypecheckError<'a>>),
@@ -1231,7 +1251,7 @@ fn resolve_struct<'a>(
         match result {
             Ok(ty_id) => {
                 registry.type_order.add_dependency(ty_id, this_id);
-                fields.insert(field.name().as_string(), ty_id);
+                fields.insert(field.name().as_string(), (ty_id, field.span()));
             }
             Err(err) => errors.push(err),
         }
@@ -1596,7 +1616,12 @@ fn resolve_module<'a>(
                 registry.type_order.add_dependency(ty_id, this_id);
                 ports.insert(
                     port.name().as_string(),
-                    ResolvedPort::new(port.mode().dir(), port.logic_mode().kind(), ty_id),
+                    ResolvedPort::new(
+                        port.mode().dir(),
+                        port.logic_mode().kind(),
+                        port.span(),
+                        ty_id,
+                    ),
                 );
             }
             Err(err) => errors.push(err),
@@ -1624,7 +1649,11 @@ fn resolve_module<'a>(
                         registry.type_order.add_dependency(ty_id, this_id);
                         logic_members.insert(
                             logic_member.name().as_string(),
-                            ResolvedLogicMember::new(logic_member.mode().kind(), ty_id),
+                            ResolvedLogicMember::new(
+                                logic_member.mode().kind(),
+                                logic_member.span(),
+                                ty_id,
+                            ),
                         );
                     }
                     Err(err) => errors.push(err),
@@ -2228,7 +2257,7 @@ fn typecheck_construct_expr<'a>(
                     }
 
                     let mut fields = HashMap::default();
-                    for (name, &field_id) in struct_item.fields().iter() {
+                    for (name, &(field_id, _)) in struct_item.fields().iter() {
                         let assign = expr
                             .fields()
                             .iter()
@@ -2321,7 +2350,7 @@ fn find_member_type<'a>(
 ) -> TypecheckResult<'a, TypeId> {
     match resolved_types.get(&parent_id) {
         Some(ResolvedTypeItem::Struct(struct_item)) => {
-            if let Some(field_ty) = struct_item.fields().get(ident.as_ref()).copied() {
+            if let Some((field_ty, _)) = struct_item.fields().get(ident.as_ref()).copied() {
                 Ok(field_ty)
             } else {
                 Err(TypecheckError::UndefinedMember {
@@ -4001,6 +4030,38 @@ fn typecheck_block<'a>(
     wrap_errors!(CheckedBlock::new(statements), errors)
 }
 
+fn type_contains_module(
+    id: TypeId,
+    known_types: &HashMap<TypeId, ResolvedType>,
+    resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
+) -> bool {
+    match &known_types[&id] {
+        ResolvedType::Const | ResolvedType::BuiltinBits { .. } => false,
+        ResolvedType::Named { .. } => match &resolved_types[&id] {
+            // Structs are checked beforehand to not contain any modules
+            ResolvedTypeItem::Struct(_) | ResolvedTypeItem::Enum(_) => false,
+            ResolvedTypeItem::Module(_) => true,
+        },
+        ResolvedType::Array { item_ty, .. } => {
+            type_contains_module(*item_ty, known_types, resolved_types)
+        }
+    }
+}
+
+pub fn struct_contains_module<'a>(
+    struct_item: &ResolvedStruct,
+    known_types: &HashMap<TypeId, ResolvedType>,
+    resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
+) -> TypecheckResult<'a, ()> {
+    for (_, &(field_ty, field_span)) in struct_item.fields().iter() {
+        if type_contains_module(field_ty, known_types, resolved_types) {
+            return Err(TypecheckError::StructModuleField { field_span });
+        }
+    }
+
+    Ok(())
+}
+
 pub fn typecheck_module<'a>(
     module_item: &'a ResolvedModule,
     global_scope: &Scope,
@@ -4024,29 +4085,46 @@ pub fn typecheck_module<'a>(
     let mut errors = Vec::new();
 
     for (_, port) in module_item.ports().iter() {
-        if let ResolvedType::Array { .. } = &known_types[&port.ty()] {
-            // TODO:
-        } else if let Some(port_ty) = resolved_types.get(&port.ty()) {
-            match (port.kind(), port_ty) {
-                (LogicKind::Signal, ResolvedTypeItem::Module(_)) => { /* TODO: */ }
-                (LogicKind::Register, ResolvedTypeItem::Module(_)) => { /* TODO: */ }
-                (LogicKind::Module, ResolvedTypeItem::Struct(_)) => { /* TODO: */ }
-                (LogicKind::Module, ResolvedTypeItem::Enum(_)) => { /* TODO: */ }
-                (LogicKind::Module, ResolvedTypeItem::Module(_)) => { /* TODO: */ }
-                _ => { /* valid */ }
+        match (port.dir(), port.kind()) {
+            (Direction::In, LogicKind::Register)
+            | (Direction::In, LogicKind::Module)
+            | (Direction::Out, LogicKind::Module)
+            | (Direction::InOut, LogicKind::Register)
+            | (Direction::InOut, LogicKind::Module) => {
+                errors.push(TypecheckError::InvalidPortKind {
+                    port_span: port.span(),
+                    port_dir: port.dir(),
+                    port_kind: port.kind(),
+                });
             }
+            _ => { /* valid */ }
+        }
+
+        let ty_is_mod = type_contains_module(port.ty(), known_types, resolved_types);
+        match (port.kind(), ty_is_mod) {
+            (LogicKind::Signal, true)
+            | (LogicKind::Register, true)
+            | (LogicKind::Module, false) => errors.push(TypecheckError::PortKindMismatch {
+                port_span: port.span(),
+                port_ty: known_types[&port.ty()].to_string(known_types),
+            }),
+            (LogicKind::Module, true) => errors.push(TypecheckError::PortModuleType {
+                port_span: port.span(),
+            }),
+            _ => { /* valid */ }
         }
     }
 
     for (_, logic_member) in module_item.logic_members().iter() {
-        if let Some(member_ty) = resolved_types.get(&logic_member.ty()) {
-            match (logic_member.kind(), member_ty) {
-                (LogicKind::Signal, ResolvedTypeItem::Module(_)) => { /* TODO: */ }
-                (LogicKind::Register, ResolvedTypeItem::Module(_)) => { /* TODO: */ }
-                (LogicKind::Module, ResolvedTypeItem::Struct(_)) => { /* TODO: */ }
-                (LogicKind::Module, ResolvedTypeItem::Enum(_)) => { /* TODO: */ }
-                _ => { /* valid */ }
-            }
+        let ty_is_mod = type_contains_module(logic_member.ty(), known_types, resolved_types);
+        match (logic_member.kind(), ty_is_mod) {
+            (LogicKind::Signal, true)
+            | (LogicKind::Register, true)
+            | (LogicKind::Module, false) => errors.push(TypecheckError::MemberKindMismatch {
+                member_span: logic_member.span(),
+                member_ty: known_types[&logic_member.ty()].to_string(known_types),
+            }),
+            _ => { /* valid */ }
         }
     }
 

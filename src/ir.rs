@@ -647,17 +647,17 @@ pub static CONST_TYPE_ID: Lazy<TypeId> = Lazy::new(|| TypeId::from_type(&Resolve
 
 #[derive(Debug, Clone)]
 pub struct ResolvedStruct {
-    fields: HashMap<SharedString, TypeId>,
+    fields: HashMap<SharedString, (TypeId, TextSpan)>,
 }
 
 impl ResolvedStruct {
     #[inline]
-    pub fn new(fields: HashMap<SharedString, TypeId>) -> Self {
+    pub fn new(fields: HashMap<SharedString, (TypeId, TextSpan)>) -> Self {
         Self { fields }
     }
 
     #[inline]
-    pub fn fields(&self) -> &HashMap<SharedString, TypeId> {
+    pub fn fields(&self) -> &HashMap<SharedString, (TypeId, TextSpan)> {
         &self.fields
     }
 }
@@ -689,13 +689,19 @@ impl ResolvedEnum {
 pub struct ResolvedPort {
     dir: Direction,
     kind: LogicKind,
+    span: TextSpan,
     ty: TypeId,
 }
 
 impl ResolvedPort {
     #[inline]
-    pub fn new(dir: Direction, kind: LogicKind, ty: TypeId) -> Self {
-        Self { dir, kind, ty }
+    pub fn new(dir: Direction, kind: LogicKind, span: TextSpan, ty: TypeId) -> Self {
+        Self {
+            dir,
+            kind,
+            span,
+            ty,
+        }
     }
 
     #[inline]
@@ -714,16 +720,19 @@ impl ResolvedPort {
     }
 }
 
+default_spanned_impl!(ResolvedPort);
+
 #[derive(Debug, Clone)]
 pub struct ResolvedLogicMember {
     kind: LogicKind,
+    span: TextSpan,
     ty: TypeId,
 }
 
 impl ResolvedLogicMember {
     #[inline]
-    pub fn new(kind: LogicKind, ty: TypeId) -> Self {
-        Self { kind, ty }
+    pub fn new(kind: LogicKind, span: TextSpan, ty: TypeId) -> Self {
+        Self { kind, span, ty }
     }
 
     #[inline]
@@ -736,6 +745,8 @@ impl ResolvedLogicMember {
         self.ty
     }
 }
+
+default_spanned_impl!(ResolvedLogicMember);
 
 #[derive(Debug, Clone)]
 pub struct ResolvedModule {

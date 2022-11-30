@@ -503,6 +503,47 @@ impl WriteColored for crate::typecheck::TypecheckError<'_> {
                 "cannot assign to register in combinatoric context",
                 assign.target().span().join(&assign.op().span()),
             ),
+            Self::InvalidPortKind {
+                port_span,
+                port_dir,
+                port_kind,
+            } => {
+                use crate::ast::Direction;
+                let dir_str = match port_dir {
+                    Direction::In => "input",
+                    Direction::Out => "output",
+                    Direction::InOut => "bi-directional",
+                };
+
+                use crate::ast::LogicKind;
+                let kind_str = match port_kind {
+                    LogicKind::Signal => "signals",
+                    LogicKind::Register => "registers",
+                    LogicKind::Module => "modules",
+                };
+
+                ErrorInfo::new(
+                    format!("{} ports cannot be {}", dir_str, kind_str),
+                    *port_span,
+                )
+            }
+            Self::PortKindMismatch { port_span, port_ty } => ErrorInfo::new(
+                format!("type `{}` is not valid for this port", port_ty),
+                *port_span,
+            ),
+            Self::PortModuleType { port_span } => {
+                ErrorInfo::new("ports cannot contain module types", *port_span)
+            }
+            Self::MemberKindMismatch {
+                member_span,
+                member_ty,
+            } => ErrorInfo::new(
+                format!("type `{}` is not valid for this member", member_ty),
+                *member_span,
+            ),
+            Self::StructModuleField { field_span } => {
+                ErrorInfo::new("structs cannot contain module types", *field_span)
+            }
             Self::ArithmeticError(err) => {
                 return err.write_colored(stream, file_server);
             }
