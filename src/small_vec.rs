@@ -35,7 +35,6 @@ impl<T, const N: usize> StackVec<T, N> {
     }
 
     #[inline]
-    #[must_use]
     fn try_push(&mut self, value: T) -> Result<(), T> {
         if self.len() < self.capacity() {
             unsafe {
@@ -145,6 +144,11 @@ impl<T, const N: usize> SmallVec<T, N> {
         }
     }
 
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn capacity(&self) -> usize {
         match &self.inner {
             SmallVecInternal::Stack(data) => data.capacity(),
@@ -192,12 +196,12 @@ impl<T, const N: usize> SmallVec<T, N> {
     }
 
     #[inline]
-    pub fn iter<'a>(&'a self) -> impl Iterator<Item = &'a T> {
+    pub fn iter(&self) -> impl Iterator<Item = &T> {
         self.into_iter()
     }
 
     #[inline]
-    pub fn iter_mut<'a>(&'a mut self) -> impl Iterator<Item = &'a mut T> {
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut T> {
         self.into_iter()
     }
 
@@ -373,7 +377,7 @@ impl<'a, T, const N: usize> IntoIterator for &'a SmallVec<T, N> {
 
     #[inline]
     fn into_iter(self) -> Self::IntoIter {
-        self.as_slice().into_iter()
+        self.as_slice().iter()
     }
 }
 
@@ -383,6 +387,6 @@ impl<'a, T, const N: usize> IntoIterator for &'a mut SmallVec<T, N> {
 
     #[inline]
     fn into_iter(self) -> Self::IntoIter {
-        self.as_mut_slice().into_iter()
+        self.as_mut_slice().iter_mut()
     }
 }

@@ -169,7 +169,7 @@ impl RangeCollection {
         // by merging all ranges in `ranges[index_range]` into one by taking `start_inclusive` from the first
         // range and `end_inclusive` from the last range.
         self.ranges[*index_range.end()].start_inclusive =
-            self.ranges[*index_range.start()].start_inclusive.clone();
+            self.ranges[*index_range.start()].start_inclusive;
 
         // Using the exclusive range here leaves the last range in the list.
         self.ranges.drain(*index_range.start()..*index_range.end());

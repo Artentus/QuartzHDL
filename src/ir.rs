@@ -510,7 +510,7 @@ pub enum TypeItem {
     Module(Module),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum ResolvedType {
     Const,
     BuiltinBits {
@@ -564,6 +564,40 @@ impl ResolvedType {
         }
     }
 }
+
+impl PartialEq for ResolvedType {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Const, Self::Const) => true,
+            (Self::BuiltinBits { width: lhs_width }, Self::BuiltinBits { width: rhs_width }) => {
+                *lhs_width == *rhs_width
+            }
+            (
+                Self::Named {
+                    name: lhs_name,
+                    generic_args: lhs_args,
+                },
+                Self::Named {
+                    name: rhs_name,
+                    generic_args: rhs_args,
+                },
+            ) => lhs_name.eq(rhs_name) && lhs_args.eq(rhs_args),
+            (
+                Self::Array {
+                    item_ty: lhs_item_ty,
+                    len: lhs_len,
+                },
+                Self::Array {
+                    item_ty: rhs_item_ty,
+                    len: rhs_len,
+                },
+            ) => lhs_item_ty.eq(rhs_item_ty) && (*lhs_len == *rhs_len),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for ResolvedType {}
 
 impl std::hash::Hash for ResolvedType {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
@@ -1501,21 +1535,34 @@ impl CheckedMatchStatement {
 
 #[derive(Debug, Clone)]
 pub enum CheckedSuffixOp {
-    Indexer(CheckedIndexKind),
-    MemberAccess(Ident),
+    Indexer { index: CheckedIndexKind, ty: TypeId },
+    MemberAccess { member: Ident, ty: TypeId },
+}
+
+impl Typed for CheckedSuffixOp {
+    fn ty(&self) -> TypeId {
+        match self {
+            Self::Indexer { ty, .. } => *ty,
+            Self::MemberAccess { ty, .. } => *ty,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct CheckedAssignTarget {
     base: Ident,
+    base_ty: TypeId,
     suffixes: Vec<CheckedSuffixOp>,
-    ty: TypeId,
 }
 
 impl CheckedAssignTarget {
     #[inline]
-    pub fn new(base: Ident, suffixes: Vec<CheckedSuffixOp>, ty: TypeId) -> Self {
-        Self { base, suffixes, ty }
+    pub fn new(base: Ident, base_ty: TypeId, suffixes: Vec<CheckedSuffixOp>) -> Self {
+        Self {
+            base,
+            base_ty,
+            suffixes,
+        }
     }
 
     #[inline]
@@ -1530,9 +1577,12 @@ impl CheckedAssignTarget {
 }
 
 impl Typed for CheckedAssignTarget {
-    #[inline]
     fn ty(&self) -> TypeId {
-        self.ty
+        if let Some(last) = self.suffixes.last() {
+            last.ty()
+        } else {
+            self.base_ty
+        }
     }
 }
 

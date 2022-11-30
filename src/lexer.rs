@@ -168,10 +168,10 @@ impl DisplayScoped for PunctKind {
 
 default_display_impl!(PunctKind);
 
-impl Into<[PunctKind; 1]> for PunctKind {
+impl From<PunctKind> for [PunctKind; 1] {
     #[inline]
-    fn into(self) -> [PunctKind; 1] {
-        [self]
+    fn from(value: PunctKind) -> Self {
+        [value]
     }
 }
 
@@ -187,7 +187,7 @@ pub enum QuartzToken {
 }
 
 #[rustfmt::skip]
-const PUNCTUATION_MAP: &'static [(&'static str, PunctKind)] = &[
+const PUNCTUATION_MAP: &[(&str, PunctKind)] = &[
     ("("   , PunctKind::OpenParen    ),
     (")"   , PunctKind::CloseParen   ),
     ("["   , PunctKind::OpenBracket  ),
@@ -252,8 +252,8 @@ fn parse_comment(text: &str) -> Option<ReadTokenResult<QuartzToken>> {
             token: QuartzToken::Comment(false),
             consumed_bytes: end_index,
         })
-    } else if text.starts_with("/*") {
-        if let Some(len) = text[2..].find("*/") {
+    } else if let Some(text) = text.strip_prefix("/*") {
+        if let Some(len) = text.find("*/") {
             Some(ReadTokenResult {
                 token: QuartzToken::Comment(false),
                 consumed_bytes: len + "/**/".len(),
@@ -317,12 +317,12 @@ fn parse_literal(text: &str) -> Option<ReadTokenResult<QuartzToken>> {
             .unwrap(); // Ok because we know 'text' starts with a valid char
 
         let raw_literal = &text[..end_index];
-        let (literal, radix) = if raw_literal.starts_with("0x") {
-            (raw_literal[2..].replace('_', ""), 16)
-        } else if raw_literal.starts_with("0o") {
-            (raw_literal[2..].replace('_', ""), 8)
-        } else if raw_literal.starts_with("0b") {
-            (raw_literal[2..].replace('_', ""), 2)
+        let (literal, radix) = if let Some(raw_literal) = raw_literal.strip_prefix("0x") {
+            (raw_literal.replace('_', ""), 16)
+        } else if let Some(raw_literal) = raw_literal.strip_prefix("0o") {
+            (raw_literal.replace('_', ""), 8)
+        } else if let Some(raw_literal) = raw_literal.strip_prefix("0b") {
+            (raw_literal.replace('_', ""), 2)
         } else {
             (raw_literal.replace('_', ""), 10)
         };

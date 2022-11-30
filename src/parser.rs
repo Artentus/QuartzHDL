@@ -64,7 +64,7 @@ fn punct<const N: usize>(punct: impl Into<[PunctKind; N]>) -> impl QuartzParser<
     parse_fn!(|input| {
         if let Some(token) = input.peek() {
             if let QuartzToken::Punct(found_punct) = &token.kind
-              && punct.iter().find(|p| (*p).eq(found_punct)).is_some() {
+              && punct.iter().any(|p| (*p).eq(found_punct)) {
                 ParseResult::Match {
                     value: Punct::new(
                         *found_punct,
@@ -639,15 +639,13 @@ fn block() -> impl QuartzParser<Block> {
         ->[|(open_curl, mut statements, trailing_semis, last_expr, close_curl)| {
             if let Some(last_expr) = last_expr {
                 Block::new(open_curl, statements, Some(last_expr), close_curl)
+            } else if let Some(Statement::Expr(_)) = statements.last() && trailing_semis.is_empty() {
+                let Some(Statement::Expr(last_expr)) = statements.pop() else  {
+                    unreachable!();
+                };
+                Block::new(open_curl, statements, Some(last_expr), close_curl)
             } else {
-                if let Some(Statement::Expr(_)) = statements.last() && (trailing_semis.len() == 0) {
-                    let Some(Statement::Expr(last_expr)) = statements.pop() else  {
-                        unreachable!();
-                    };
-                    Block::new(open_curl, statements, Some(last_expr), close_curl)
-                } else {
-                    Block::new(open_curl, statements, None, close_curl)
-                }
+                Block::new(open_curl, statements, None, close_curl)
             }
         }]
     )

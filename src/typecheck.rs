@@ -4,6 +4,7 @@ use crate::ir::*;
 use crate::range_collection::*;
 use crate::{Clog2, HashMap, HashSet, SharedString};
 use std::borrow::Cow;
+use std::collections::hash_map;
 use std::collections::VecDeque;
 use topological_sort::TopologicalSort;
 
@@ -192,7 +193,7 @@ pub enum TypecheckError<'a> {
 
 impl TypecheckError<'_> {
     fn new_list(list: Vec<Self>) -> Self {
-        debug_assert!(list.len() > 0);
+        debug_assert!(!list.is_empty());
 
         if list.len() == 1 {
             list.into_iter().next().unwrap()
@@ -471,7 +472,7 @@ fn transform_const_if_expr<'a>(
     }
 }
 
-fn has_exhaustive_patterns<'a>(expr: &'a MatchExpr) -> TypecheckResult<'a, bool> {
+fn has_exhaustive_patterns(expr: &MatchExpr) -> TypecheckResult<bool> {
     let mut errors = Vec::new();
     let full_range = InclusiveRange::n_bit(64);
     let mut covered_ranges = RangeCollection::new();
@@ -623,7 +624,7 @@ pub fn transform_const_expr<'a>(
     }
 
     match expr {
-        Expr::Literal(l) => Ok(ConstExpr::Literal(l.clone())),
+        Expr::Literal(l) => Ok(ConstExpr::Literal(*l)),
         Expr::Path(p) => {
             if let Some(ident) = p.as_ident() {
                 scope.contains_var(ident)?;
@@ -692,7 +693,7 @@ pub fn transform_generic_arg<'a>(
     scope: &Scope,
 ) -> TypecheckResult<'a, ConstExpr> {
     match arg {
-        GenericTypeArg::Literal(l) => Ok(ConstExpr::Literal(l.clone())),
+        GenericTypeArg::Literal(l) => Ok(ConstExpr::Literal(*l)),
         GenericTypeArg::Ident(i) => {
             scope.contains_var(i)?;
             Ok(ConstExpr::Ident(i.clone()))
@@ -706,9 +707,9 @@ fn transform_const_assignment<'a>(
     scope: &mut Scope,
 ) -> TypecheckResult<'a, ConstAssignment> {
     if let Some(target) = assign.target().path().as_ident()
-        && (assign.target().suffixes().len() == 0)
+        && assign.target().suffixes().is_empty()
     {
-        let err1 = match scope.contains_mut_var(&target) {
+        let err1 = match scope.contains_mut_var(target) {
             Ok(_) => None,
             Err(err1) => Some(err1),
         };
@@ -862,7 +863,7 @@ fn transform_const_block<'a>(
 
     let result = if let Some(result) = block.result() {
         if needs_return {
-            match transform_const_expr(result, &mut scope, false) {
+            match transform_const_expr(result, &scope, false) {
                 Ok(result) => Some(result),
                 Err(err) => {
                     errors.push(err);
@@ -1062,8 +1063,8 @@ fn resolve_named_type<'a>(
     };
 
     let id = TypeId::from_type(&resolved_ty);
-    if !registry.known_types.contains_key(&id) {
-        registry.known_types.insert(id, resolved_ty);
+    if let hash_map::Entry::Vacant(entry) = registry.known_types.entry(id) {
+        entry.insert(resolved_ty);
         registry.type_queue.push_back(id);
     }
 
@@ -1118,8 +1119,8 @@ fn resolve_type<'a>(
                 len: len as u64,
             };
             let id = TypeId::from_type(&resolved_ty);
-            if !registry.known_types.contains_key(&id) {
-                registry.known_types.insert(id, resolved_ty);
+            if let hash_map::Entry::Vacant(entry) = registry.known_types.entry(id) {
+                entry.insert(resolved_ty);
                 registry.type_queue.push_back(id);
             }
 
@@ -1278,7 +1279,7 @@ fn resolve_enum<'a>(
     let mut next_variant_value = 0;
     for (name, expr) in enum_item.variants().iter().map(|v| (v.name(), v.value())) {
         if let Some(expr) = expr {
-            match transform_const_expr(expr, &mut scope, false) {
+            match transform_const_expr(expr, &scope, false) {
                 Ok(expr) => {
                     let result = eval::<_, i64>(
                         &expr,
@@ -1553,7 +1554,7 @@ fn resolve_module<'a>(
     for member in module_item.members().iter() {
         if let Member::Const(const_member) = member {
             if !local_consts.contains_key(const_member.name().as_ref()) {
-                let const_expr = transform_const_expr(const_member.value(), &mut scope, false)?;
+                let const_expr = transform_const_expr(const_member.value(), &scope, false)?;
                 local_consts.insert(const_member.name().as_string(), const_expr);
                 scope.add_const(const_member.name());
             }
@@ -1675,20 +1676,19 @@ fn resolve_module<'a>(
     )
 }
 
+pub type ResolvedTypes = (
+    HashMap<TypeId, ResolvedType>,
+    HashMap<TypeId, ResolvedTypeItem>,
+    TopologicalSort<TypeId>,
+);
+
 pub fn resolve_types<'a>(
     top_module: &'a Module,
     type_items: &'a HashMap<SharedString, TypeItem>,
     global_scope: &Scope,
     global_const_values: &HashMap<SharedString, i64>,
     funcs: &HashMap<SharedString, ConstFunc>,
-) -> TypecheckResult<
-    'a,
-    (
-        HashMap<TypeId, ResolvedType>,
-        HashMap<TypeId, ResolvedTypeItem>,
-        TopologicalSort<TypeId>,
-    ),
-> {
+) -> TypecheckResult<'a, ResolvedTypes> {
     let mut known_types = HashMap::default();
     let mut type_order = TopologicalSort::new();
     let mut type_queue = VecDeque::new();
@@ -1712,9 +1712,9 @@ pub fn resolve_types<'a>(
             if let Some(item) = type_items.get(name.as_ref()) {
                 let args = ResolveArgs {
                     type_items,
-                    global_scope: &global_scope,
-                    global_const_values: &global_const_values,
-                    funcs: &funcs,
+                    global_scope,
+                    global_const_values,
+                    funcs,
                 };
 
                 let mut registry = TypeRegistry {
@@ -1778,8 +1778,8 @@ fn resolve_type_late(
             let resolved_ty = ResolvedType::BuiltinBits { width: *width };
             let id = TypeId::from_type(&resolved_ty);
 
-            if !known_types.contains_key(&id) {
-                known_types.insert(id, resolved_ty);
+            if let hash_map::Entry::Vacant(entry) = known_types.entry(id) {
+                entry.insert(resolved_ty);
             }
 
             id
@@ -1904,7 +1904,7 @@ fn typecheck_binary_expr<'a>(
         }
     };
 
-    if errors.len() > 0 {
+    if !errors.is_empty() {
         return Err(TypecheckError::new_list(errors));
     }
 
@@ -1984,7 +1984,7 @@ fn typecheck_compare_expr<'a>(
         }
     };
 
-    if errors.len() > 0 {
+    if !errors.is_empty() {
         return Err(TypecheckError::new_list(errors));
     }
 
@@ -2077,7 +2077,7 @@ fn typecheck_concat_expr<'a>(
         }
     };
 
-    if errors.len() > 0 {
+    if !errors.is_empty() {
         return Err(TypecheckError::new_list(errors));
     }
 
@@ -2092,18 +2092,16 @@ fn typecheck_concat_expr<'a>(
             let lhs_ty = &known_types[&lhs_id];
             let rhs_ty = &known_types[&rhs_id];
 
-            match (lhs_ty, rhs_ty) {
-                (
-                    ResolvedType::BuiltinBits { width: lhs_width },
-                    ResolvedType::BuiltinBits { width: rhs_width },
-                ) => {
-                    let result_ty = UnresolvedType::BuiltinBits {
-                        width: lhs_width + rhs_width,
-                    };
-                    let result_id = resolve_type_late(&result_ty, known_types);
-                    return Ok(CheckedConcatExpr::new(lhs, rhs, result_id));
-                }
-                _ => {}
+            if let (
+                ResolvedType::BuiltinBits { width: lhs_width },
+                ResolvedType::BuiltinBits { width: rhs_width },
+            ) = (lhs_ty, rhs_ty)
+            {
+                let result_ty = UnresolvedType::BuiltinBits {
+                    width: lhs_width + rhs_width,
+                };
+                let result_id = resolve_type_late(&result_ty, known_types);
+                return Ok(CheckedConcatExpr::new(lhs, rhs, result_id));
             }
 
             (Either::Checked(lhs), Either::Checked(rhs))
@@ -2163,12 +2161,9 @@ fn typecheck_cast_expr<'a>(
                     }
                     ResolvedType::Named { .. } => {
                         let value_ty_item = &resolved_types[&value.ty()];
-                        match value_ty_item {
-                            ResolvedTypeItem::Enum(_) => {
-                                // Enums can be converted into any bits<N>, but not the other way around
-                                return Ok(CheckedCastExpr::new(value, target_id));
-                            }
-                            _ => {}
+                        if let ResolvedTypeItem::Enum(_) = value_ty_item {
+                            // Enums can be converted into any bits<N>, but not the other way around
+                            return Ok(CheckedCastExpr::new(value, target_id));
                         }
                     }
                     _ => {}
@@ -2306,17 +2301,15 @@ fn find_module_member_type<'a>(
         Ok((port.ty(), port.kind()))
     } else if let Some(member) = module.logic_members().get(ident.as_ref()) {
         Ok((member.ty(), member.kind()))
+    } else if let Some(module_id) = module_id {
+        Err(TypecheckError::UndefinedMember {
+            ty: known_types[&module_id].to_string(known_types),
+            name: ident.clone(),
+        })
     } else {
-        if let Some(module_id) = module_id {
-            Err(TypecheckError::UndefinedMember {
-                ty: known_types[&module_id].to_string(known_types),
-                name: ident.clone(),
-            })
-        } else {
-            Err(TypecheckError::UndefinedIdent {
-                name: ident.clone(),
-            })
-        }
+        Err(TypecheckError::UndefinedIdent {
+            name: ident.clone(),
+        })
     }
 }
 
@@ -2786,7 +2779,7 @@ fn typecheck_if_expr<'a>(
         None
     };
 
-    if errors.len() > 0 {
+    if !errors.is_empty() {
         Err(TypecheckError::new_list(errors))
     } else {
         let cond = cond.unwrap();
@@ -3243,10 +3236,7 @@ fn typecheck_expr<'a>(
         Expr::Literal(l) => Ok(Either::Const(ConstExpr::Literal(*l))),
         Expr::Path(path) => {
             let path = typecheck_path(path, parent_module, known_types, resolved_types, args)?;
-            Ok(path.map(
-                |ident| ConstExpr::Ident(ident),
-                |path| CheckedExpr::Path(path),
-            ))
+            Ok(path.map(ConstExpr::Ident, CheckedExpr::Path))
         }
         Expr::If(expr) => {
             let if_expr = typecheck_if_expr(
@@ -3612,7 +3602,7 @@ fn typecheck_match_statement<'a>(
         }
     }
 
-    if errors.len() > 0 {
+    if !errors.is_empty() {
         Err(TypecheckError::new_list(errors))
     } else {
         let value = value.unwrap();
@@ -3696,7 +3686,7 @@ fn typecheck_assignment<'a>(
     };
 
     match find_module_member_type(base, parent_module, None, known_types) {
-        Ok((mut ty, kind)) => {
+        Ok((base_ty, kind)) => {
             match (mode, kind) {
                 (TypecheckMode::Sequential, LogicKind::Signal) => {
                     errors.push(TypecheckError::InvalidSeqAssignSig { assign })
@@ -3710,6 +3700,7 @@ fn typecheck_assignment<'a>(
                 _ => { /* valid */ }
             }
 
+            let mut ty = base_ty;
             let mut suffixes = Vec::new();
             for suffix in assign.target().suffixes().iter() {
                 match suffix {
@@ -3732,7 +3723,10 @@ fn typecheck_assignment<'a>(
                             }
                         };
 
-                        suffixes.push(CheckedSuffixOp::Indexer(checked_indexer));
+                        suffixes.push(CheckedSuffixOp::Indexer {
+                            index: checked_indexer,
+                            ty,
+                        });
                     }
                     SuffixOp::MemberAccess(member) => {
                         ty = match find_member_type(
@@ -3748,12 +3742,15 @@ fn typecheck_assignment<'a>(
                             }
                         };
 
-                        suffixes.push(CheckedSuffixOp::MemberAccess(member.member().clone()));
+                        suffixes.push(CheckedSuffixOp::MemberAccess {
+                            member: member.member().clone(),
+                            ty,
+                        });
                     }
                 }
             }
 
-            let target = CheckedAssignTarget::new(base.clone(), suffixes, ty);
+            let target = CheckedAssignTarget::new(base.clone(), base_ty, suffixes);
             wrap_errors!(CheckedAssignment::new(target, value.unwrap()), errors)
         }
         Err(err) => {
@@ -4025,6 +4022,33 @@ pub fn typecheck_module<'a>(
     };
 
     let mut errors = Vec::new();
+
+    for (_, port) in module_item.ports().iter() {
+        if let ResolvedType::Array { .. } = &known_types[&port.ty()] {
+            // TODO:
+        } else if let Some(port_ty) = resolved_types.get(&port.ty()) {
+            match (port.kind(), port_ty) {
+                (LogicKind::Signal, ResolvedTypeItem::Module(_)) => { /* TODO: */ }
+                (LogicKind::Register, ResolvedTypeItem::Module(_)) => { /* TODO: */ }
+                (LogicKind::Module, ResolvedTypeItem::Struct(_)) => { /* TODO: */ }
+                (LogicKind::Module, ResolvedTypeItem::Enum(_)) => { /* TODO: */ }
+                (LogicKind::Module, ResolvedTypeItem::Module(_)) => { /* TODO: */ }
+                _ => { /* valid */ }
+            }
+        }
+    }
+
+    for (_, logic_member) in module_item.logic_members().iter() {
+        if let Some(member_ty) = resolved_types.get(&logic_member.ty()) {
+            match (logic_member.kind(), member_ty) {
+                (LogicKind::Signal, ResolvedTypeItem::Module(_)) => { /* TODO: */ }
+                (LogicKind::Register, ResolvedTypeItem::Module(_)) => { /* TODO: */ }
+                (LogicKind::Module, ResolvedTypeItem::Struct(_)) => { /* TODO: */ }
+                (LogicKind::Module, ResolvedTypeItem::Enum(_)) => { /* TODO: */ }
+                _ => { /* valid */ }
+            }
+        }
+    }
 
     let mut proc_members = Vec::with_capacity(module_item.proc_members().len());
     for proc_member in module_item.proc_members().iter() {

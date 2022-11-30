@@ -21,7 +21,7 @@ impl<'a, 'f: 'a> ScopedFormatter<'a, 'f> {
 
 impl<'a, 'f: 'a> fmt::Write for ScopedFormatter<'a, 'f> {
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        if s.len() > 0 {
+        if !s.is_empty() {
             let indent_width = self.level * 4;
 
             for (i, line) in s.lines().enumerate() {
@@ -29,7 +29,7 @@ impl<'a, 'f: 'a> fmt::Write for ScopedFormatter<'a, 'f> {
                     writeln!(self.inner)?;
                 }
 
-                if line.len() > 0 {
+                if !line.is_empty() {
                     if (i > 0) || self.at_line_start {
                         write!(self.inner, "{:width$}", "", width = indent_width)?;
                     }

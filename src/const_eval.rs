@@ -69,11 +69,7 @@ impl<'p> VarScope<'p> {
     pub fn var_mut(&mut self, name: &Ident) -> &mut i64 {
         self.vars
             .get_mut(name.as_ref())
-            .or_else(|| {
-                self.parent
-                    .as_mut()
-                    .and_then(|parent| Some(parent.var_mut(name)))
-            })
+            .or_else(|| self.parent.as_mut().map(|parent| parent.var_mut(name)))
             .expect("variable not found")
     }
 }
@@ -331,7 +327,7 @@ pub fn eval<G: Evaluatable, L: Evaluatable>(
             unreachable!("unhandled match case");
         }
         ConstExpr::Block(block) => {
-            eval_expr_block(&block, scope, global_consts, local_consts, funcs)
+            eval_expr_block(block, scope, global_consts, local_consts, funcs)
         }
         ConstExpr::Neg(expr) => {
             let inner = eval(expr.inner(), scope, global_consts, local_consts, funcs)?;
@@ -439,7 +435,7 @@ fn eval_statement<G: Evaluatable, L: Evaluatable>(
                 unreachable!("unhandled match case");
             }
             ConstExpr::Block(block) => {
-                eval_statement_block(&block, scope, global_consts, local_consts, funcs)
+                eval_statement_block(block, scope, global_consts, local_consts, funcs)
             }
             _ => eval(expr, scope, global_consts, local_consts, funcs).map(|_| ()),
         },

@@ -151,17 +151,17 @@ impl AsRef<str> for Ident {
     }
 }
 
-impl Into<SharedString> for Ident {
+impl From<Ident> for SharedString {
     #[inline]
-    fn into(self) -> SharedString {
-        self.as_string()
+    fn from(value: Ident) -> Self {
+        value.as_string()
     }
 }
 
-impl Into<SharedString> for &Ident {
+impl From<&Ident> for SharedString {
     #[inline]
-    fn into(self) -> SharedString {
-        self.as_string()
+    fn from(value: &Ident) -> Self {
+        value.as_string()
     }
 }
 
@@ -291,7 +291,7 @@ impl Path {
 
     #[inline]
     pub fn is_ident(&self) -> bool {
-        self.tail.len() == 0
+        self.tail.is_empty()
     }
 
     #[inline]
