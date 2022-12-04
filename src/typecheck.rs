@@ -1970,6 +1970,18 @@ fn typecheck_assignment<'a>(
                 }
             }
 
+            if let Some(value) = &value {
+                if value.ty() != ty {
+                    let target_ty = &known_types[&ty];
+                    let value_ty = &known_types[&value.ty()];
+                    errors.push(QuartzError::IncompatibleAssignType {
+                        assign,
+                        target_ty: target_ty.to_string(known_types),
+                        value_ty: value_ty.to_string(known_types),
+                    })
+                }
+            }
+
             let target = CheckedAssignTarget::new(base.clone(), base_ty, suffixes);
             wrap_errors!(CheckedAssignment::new(target, value.unwrap()), errors)
         }

@@ -544,6 +544,17 @@ impl WriteColored for crate::error::QuartzError<'_> {
             Self::StructModuleField { field_span } => {
                 ErrorInfo::new("structs cannot contain module types", *field_span)
             }
+            Self::IncompatibleAssignType {
+                assign,
+                target_ty,
+                value_ty,
+            } => ErrorInfo::new(
+                format!(
+                    "assignment target is of type `{}` but found type `{}`",
+                    target_ty, value_ty
+                ),
+                assign.span(),
+            ),
             Self::ArithmeticError(err) => {
                 return err.write_colored(stream, file_server);
             }

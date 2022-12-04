@@ -202,6 +202,11 @@ pub enum QuartzError<'a> {
     StructModuleField {
         field_span: TextSpan,
     },
+    IncompatibleAssignType {
+        assign: &'a Assignment,
+        target_ty: Cow<'a, str>,
+        value_ty: Cow<'a, str>,
+    },
     ArithmeticError(ArithmeticError),
     List(Vec<QuartzError<'a>>),
 }
