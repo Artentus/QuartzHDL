@@ -1,0 +1,25 @@
+{
+    "name": "quartz-hdl",
+    "displayName": "QuartzHDL",
+    "description": "Syntax highlighting for the Quartz hardware description language",
+    "version": "0.0.1",
+    "engines": {
+        "vscode": "^1.60.0"
+    },
+    "categories": [
+        "Programming Languages"
+    ],
+    "contributes": {
+        "languages": [{
+            "id": "quartz-hdl",
+            "aliases": ["Quartz", "QuartzHDL"],
+            "extensions": [".qrz"],
+            "configuration": "./language-configuration.json"
+        }],
+        "grammars": [{
+            "language": "quartz-hdl",
+            "scopeName": "source.quartz-hdl",
+            "path": "./syntaxes/quartz_hdl.tmLanguage.json"
+        }]
+    }
+}
