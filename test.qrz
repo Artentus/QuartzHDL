@@ -1,172 +1,189 @@
-fn clog2(bits) {
-    bits -= 1;
-    let log = 0;
-    while bits != 0 {
-        bits >>= 1;
-        log += 1;
-    }
-    log
-}
+//fn clog2(n_bits) {
+//    n_bits -= 1;
+//    let log = 0;
+//    while n_bits != 0 {
+//        n_bits >>= 1;
+//        log += 1;
+//    }
+//    log
+//}
+//
+//struct WritePort<ADDR_BITS, DATA_BITS> {
+//    clk: bit,
+//    en: bit,
+//    addr: bits<ADDR_BITS>,
+//    data: bits<DATA_BITS>,
+//}
+//
+//struct ReadPort<ADDR_BITS> {
+//    clk: bit,
+//    en: bit,
+//    addr: bits<ADDR_BITS>,
+//}
+//
+//mod Bram<ADDR_BITS, DATA_BITS>(
+//    in sig wport: WritePort<ADDR_BITS, DATA_BITS>,
+//    
+//    in sig rport: ReadPort<ADDR_BITS>,
+//    out reg rdata: bits<DATA_BITS>,
+//) {
+//    reg mem: [bits<DATA_BITS>; 1 << ADDR_BITS];
+//    
+//    proc rising(wport.clk) {
+//        if wport.en {
+//            mem[wport.addr] = wport.data;
+//        }
+//    }
+//    
+//    proc rising(rport.clk) {
+//        if rport.en {
+//            rdata = mem[rport.addr];
+//        }
+//    }
+//}
+//
+//enum AluOp: bits<4> {
+//    Add,
+//    AddC,
+//    Sub,
+//    SubB,
+//    And,
+//    Or,
+//    Xor,
+//    Shl,
+//    Lsr,
+//    Asr,
+//    Mul,
+//}
+//
+//struct Flags {
+//    c: bit,
+//    z: bit,
+//    s: bit,
+//    o: bit,
+//}
+//
+//mod Adder<BITS>(
+//    in sig lhs: bits<BITS>,
+//    in sig rhs: bits<BITS>,
+//    out sig result: bits<BITS>,
+//    
+//    in sig c_in: bit,
+//    out sig c_out: bit,
+//) {
+//    sig sum: bits<{BITS + 1}>;
+//    
+//    comb {
+//        sum = (0 as bit)@lhs + (0 as bit)@rhs + (0 as bits::<BITS>)@c_in;
+//        result = sum[0..BITS];
+//        c_out = sum[BITS];
+//    }
+//}
+//
+//mod Alu<BITS>(
+//    in sig lhs: bits<BITS>,
+//    in sig rhs: bits<BITS>,
+//    out sig result: bits<BITS>,
+//    
+//    in sig flags_in: Flags,
+//    out sig flags_out: Flags,
+//    
+//    in sig op: AluOp,
+//) {
+//    let adder: Adder<BITS>;
+//    comb {
+//        adder.lhs = lhs;
+//        adder.rhs = if (op == AluOp::Sub) | (op == AluOp::SubB) {
+//            !rhs
+//        } else {
+//            rhs
+//        };
+//        adder.c_in = match op {
+//            AluOp::Add => 0 as bit,
+//            AluOp::AddC => flags_in.c,
+//            AluOp::Sub => 1 as bit,
+//            AluOp::SubB => flags_in.c,
+//            _ => 0 as bit,
+//        };
+//    }
+//    
+//    const SHIFT_AMT_BITS = clog2(BITS);
+//    sig shift_amt: bits<SHIFT_AMT_BITS>;
+//    
+//    comb {
+//        shift_amt = rhs[0..SHIFT_AMT_BITS];
+//        
+//        result = match op {
+//            AluOp::Add => adder.result,
+//            AluOp::AddC => adder.result,
+//            AluOp::Sub => adder.result,
+//            AluOp::SubB => adder.result,
+//            AluOp::And => lhs & rhs,
+//            AluOp::Or => lhs | rhs,
+//            AluOp::Xor => lhs ^ rhs,
+//            AluOp::Shl => lhs << (shift_amt as bits::<BITS>),
+//            AluOp::Lsr => lhs >> (shift_amt as bits::<BITS>),
+//            AluOp::Asr => lhs >>> (shift_amt as bits::<BITS>),
+//            AluOp::Mul => lhs * rhs,
+//        };
+//    }
+//    
+//    sig lhs_s: bit;
+//    sig rhs_s: bit;
+//    
+//    sig z: bit;
+//    sig s: bit;
+//    sig o: bit;
+//    
+//    comb {
+//        lhs_s = lhs[BITS - 1];
+//        rhs_s = rhs[BITS - 1];
+//
+//        z = result == 0 as bits::<BITS>;
+//        s = result[BITS - 1];
+//        o = (lhs_s == rhs_s) & (lhs_s == s);
+//
+//        flags_out = match op {
+//            AluOp::Add | AluOp::AddC | AluOp::Sub | AluOp::SubB => Flags {
+//                c: adder.c_out,
+//                z: z,
+//                s: s,
+//                o: o,
+//            },
+//            AluOp::And | AluOp::Or | AluOp::Xor | AluOp::Shl | AluOp::Lsr | AluOp::Asr => Flags {
+//                c: flags_in.c,
+//                z: z,
+//                s: flags_in.s,
+//                o: flags_in.o,
+//            },
+//            AluOp::Mul => Flags {
+//                c: flags_in.c,
+//                z: z,
+//                s: s,
+//                o: o,
+//            },
+//        };
+//    }
+//}
+//
+//mod Top() {
+//    let bram: Bram<20, 32>;
+//    let alu: Alu<32>;
+//}
 
-struct WritePort<ADDR_BITS, DATA_BITS> {
-    clk: bit,
-    en: bit,
-    addr: bits<ADDR_BITS>,
-    data: bits<DATA_BITS>,
-}
-
-struct ReadPort<ADDR_BITS> {
-    clk: bit,
-    en: bit,
-    addr: bits<ADDR_BITS>,
-}
-
-mod Bram<ADDR_BITS, DATA_BITS>(
-    in sig wport: WritePort<ADDR_BITS, DATA_BITS>,
-    
-    in sig rport: ReadPort<ADDR_BITS>,
-    out reg rdata: bits<DATA_BITS>,
+mod Top(
+    in sig c: bit,
+    in sig x: bit,
+    out reg a: bit,
+    out reg b: bit,
 ) {
-    reg mem: [bits<DATA_BITS>; 1 << ADDR_BITS];
-    
-    proc rising(wport.clk) {
-        if wport.en {
-            mem[wport.addr] = wport.data;
-        }
-    }
-    
-    proc rising(rport.clk) {
-        if rport.en {
-            rdata = mem[rport.addr];
-        }
-    }
-}
-
-enum AluOp: bits<4> {
-    Add,
-    AddC,
-    Sub,
-    SubB,
-    And,
-    Or,
-    Xor,
-    Shl,
-    Lsr,
-    Asr,
-    Mul,
-}
-
-struct Flags {
-    c: bit,
-    z: bit,
-    s: bit,
-    o: bit,
-}
-
-mod Adder<BITS>(
-    in sig lhs: bits<BITS>,
-    in sig rhs: bits<BITS>,
-    out sig result: bits<BITS>,
-    
-    in sig c_in: bit,
-    out sig c_out: bit,
-) {
-    sig sum: bits<{BITS + 1}>;
-    
-    comb {
-        sum = (0 as bit)@lhs + (0 as bit)@rhs + (0 as bits::<BITS>)@c_in;
-        result = sum[0..BITS];
-        c_out = sum[BITS];
-    }
-}
-
-mod Alu<BITS>(
-    in sig lhs: bits<BITS>,
-    in sig rhs: bits<BITS>,
-    out sig result: bits<BITS>,
-    
-    in sig flags_in: Flags,
-    out sig flags_out: Flags,
-    
-    in sig op: AluOp,
-) {
-    let adder: Adder<BITS>;
-    comb {
-        adder.lhs = lhs;
-        adder.rhs = if (op == AluOp::Sub) | (op == AluOp::SubB) {
-            !rhs
+    proc rising(c) {
+        a = if x {
+            b = 1 as bit;
+            0 as bit
         } else {
-            rhs
-        };
-        adder.c_in = match op {
-            AluOp::Add => 0 as bit,
-            AluOp::AddC => flags_in.c,
-            AluOp::Sub => 1 as bit,
-            AluOp::SubB => flags_in.c,
-            _ => 0 as bit,
+            b = 0 as bit;
+            1 as bit
         };
     }
-    
-    const SHIFT_AMT_BITS = clog2(BITS);
-    sig shift_amt: bits<SHIFT_AMT_BITS>;
-    
-    comb {
-        shift_amt = rhs[0..SHIFT_AMT_BITS];
-        
-        result = match op {
-            AluOp::Add => adder.result,
-            AluOp::AddC => adder.result,
-            AluOp::Sub => adder.result,
-            AluOp::SubB => adder.result,
-            AluOp::And => lhs & rhs,
-            AluOp::Or => lhs | rhs,
-            AluOp::Xor => lhs ^ rhs,
-            AluOp::Shl => lhs << (shift_amt as bits::<BITS>),
-            AluOp::Lsr => lhs >> (shift_amt as bits::<BITS>),
-            AluOp::Asr => lhs >>> (shift_amt as bits::<BITS>),
-            AluOp::Mul => lhs * rhs,
-        };
-    }
-    
-    sig lhs_s: bit;
-    sig rhs_s: bit;
-    
-    sig z: bit;
-    sig s: bit;
-    sig o: bit;
-    
-    comb {
-        lhs_s = lhs[BITS - 1];
-        rhs_s = rhs[BITS - 1];
-
-        z = result == 0 as bits::<BITS>;
-        s = result[BITS - 1];
-        o = (lhs_s == rhs_s) & (lhs_s == s);
-
-        flags_out = match op {
-            AluOp::Add | AluOp::AddC | AluOp::Sub | AluOp::SubB => Flags {
-                c: adder.c_out,
-                z: z,
-                s: s,
-                o: o,
-            },
-            AluOp::And | AluOp::Or | AluOp::Xor | AluOp::Shl | AluOp::Lsr | AluOp::Asr => Flags {
-                c: flags_in.c,
-                z: z,
-                s: flags_in.s,
-                o: flags_in.o,
-            },
-            AluOp::Mul => Flags {
-                c: flags_in.c,
-                z: z,
-                s: s,
-                o: o,
-            },
-        };
-    }
-}
-
-mod Top() {
-    let bram: Bram<20, 32>;
-    let alu: Alu<32>;
 }

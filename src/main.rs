@@ -7,18 +7,26 @@
 #![feature(maybe_uninit_slice)]
 #![feature(bigint_helper_methods)]
 
+#[macro_use]
+mod error;
+
 mod ast;
 mod const_eval;
 mod fmt;
 mod ir;
 mod lexer;
+mod lowering;
 mod parser;
 mod pretty_printing;
 mod range_collection;
+mod scope;
 mod small_vec;
 mod transpile;
+mod type_resolve;
 mod typecheck;
+mod vir;
 
+use crate::scope::*;
 use const_eval::{eval, VarScope};
 use langbox::*;
 use lexer::*;
@@ -26,6 +34,7 @@ use pretty_printing::{write_error, WriteColored};
 use std::path::PathBuf;
 use std::rc::Rc;
 use termcolor::StandardStream;
+use type_resolve::*;
 use typecheck::*;
 
 type SharedString = Rc<str>;
@@ -266,6 +275,13 @@ fn main() -> std::io::Result<()> {
                                 );
                             }
 
+                            let mut v_modules = Vec::with_capacity(checked_modules.len());
+                            for (module_ty, checked_module) in checked_modules.iter() {
+                                let v_module =
+                                    lowering::lower(checked_module, &known_types, &resolved_types);
+                                v_modules.push((*module_ty, v_module));
+                            }
+
                             if let Some(parent) = output_path.parent() {
                                 std::fs::create_dir_all(parent)?;
                             }
@@ -274,7 +290,7 @@ fn main() -> std::io::Result<()> {
                                 &mut output_file,
                                 &known_types,
                                 &resolved_types,
-                                &checked_modules,
+                                &v_modules,
                             )?;
                             output_file.sync_all()?;
                         }

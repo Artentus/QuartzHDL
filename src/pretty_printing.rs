@@ -223,7 +223,7 @@ pub trait WriteColored {
     ) -> Result<()>;
 }
 
-impl WriteColored for crate::typecheck::TypecheckError<'_> {
+impl WriteColored for crate::error::QuartzError<'_> {
     fn write_colored(
         &self,
         stream: &mut termcolor::StandardStreamLock,

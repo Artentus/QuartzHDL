@@ -1,1820 +1,12 @@
 use crate::ast::*;
 use crate::const_eval::*;
+use crate::error::*;
 use crate::ir::*;
 use crate::range_collection::*;
+use crate::scope::*;
+use crate::type_resolve::*;
 use crate::{Clog2, HashMap, HashSet, SharedString};
-use langbox::TextSpan;
 use std::borrow::Cow;
-use std::collections::hash_map;
-use std::collections::VecDeque;
-use topological_sort::TopologicalSort;
-
-#[derive(Debug)]
-pub enum TypecheckError<'a> {
-    DuplicateIdent {
-        name: Ident,
-    },
-    InvalidConstExpr {
-        expr: &'a Expr,
-    },
-    NonExhaustiveMatch {
-        match_expr: &'a MatchExpr,
-    },
-    InvalidConstOp {
-        op: Punct,
-    },
-    InvalidConstAssignTarget {
-        target: &'a AssignTarget,
-    },
-    MissingReturnValue {
-        block: &'a Block,
-    },
-    UnexpectedReturnValue {
-        value: &'a Expr,
-    },
-    UndefinedIdent {
-        name: Ident,
-    },
-    TargetNotAssignable {
-        name: Ident,
-    },
-    ValueNotConst {
-        name: Ident,
-    },
-    InvalidValueIdent {
-        name: Ident,
-    },
-    InvalidFuncIdent {
-        name: Ident,
-    },
-    MissingElseBlock {
-        if_expr: &'a IfExpr,
-    },
-    ArgumentCountMismatch {
-        call_expr: &'a CallExpr,
-        arg_count: usize,
-    },
-    GenericCountMismatch {
-        ty: &'a NamedType,
-        arg_count: usize,
-    },
-    InvalidEnumBaseType {
-        ty: &'a Type,
-    },
-    InvalidBitWidth {
-        width: i64,
-        arg: &'a GenericTypeArg,
-    },
-    UndefinedType {
-        ty: &'a NamedType,
-    },
-    IncompatibleType {
-        expr: &'a UnaryExpr,
-        ty: Cow<'a, str>,
-    },
-    IncompatibleTypes {
-        expr: &'a BinaryExpr,
-        lhs_ty: Cow<'a, str>,
-        rhs_ty: Cow<'a, str>,
-    },
-    InvalidCast {
-        value_ty: Cow<'a, str>,
-        expr: &'a CastExpr,
-    },
-    TypeNotConstructible {
-        ty: &'a NamedType,
-    },
-    UnknownField {
-        ty: &'a NamedType,
-        field: &'a Ident,
-    },
-    MissingField {
-        ty: &'a NamedType,
-        field: SharedString,
-    },
-    IncompatibleFieldType {
-        assign: &'a FieldAssign,
-        field_ty: Cow<'a, str>,
-        value_ty: Cow<'a, str>,
-    },
-    InvalidPath {
-        path: &'a Path,
-    },
-    InvalidEnumIdent {
-        name: Ident,
-    },
-    InvalidEnumVariant {
-        enum_name: SharedString,
-        variant_name: Ident,
-    },
-    UndefinedMember {
-        ty: Cow<'a, str>,
-        name: Ident,
-    },
-    InvalidIndexing {
-        indexer: &'a Indexer,
-        base_ty: Cow<'a, str>,
-    },
-    InvalidRangeIndexing {
-        indexer: &'a Indexer,
-        base_ty: Cow<'a, str>,
-    },
-    InvalidArrayLength {
-        ty: &'a ArrayType,
-        len: i64,
-    },
-    IndexOutOfRange {
-        index_expr: &'a Expr,
-        index: i64,
-        len: u64,
-    },
-    InvalidIndexType {
-        expr: &'a Expr,
-        expected_ty: Cow<'a, str>,
-        value_ty: Cow<'a, str>,
-    },
-    ElseIfTypeMismatch {
-        if_ty: Cow<'a, str>,
-        else_if_ty: Cow<'a, str>,
-        else_if_block: &'a ElseIfBlock,
-    },
-    ElseTypeMismatch {
-        if_ty: Cow<'a, str>,
-        else_ty: Cow<'a, str>,
-        else_block: &'a ElseBlock,
-    },
-    InvalidConditionType {
-        cond: &'a Expr,
-        cond_ty: Cow<'a, str>,
-    },
-    UnsupportedDeclaration {
-        decl: &'a Declaration,
-    },
-    UnsupportedWhileLoop {
-        while_loop: &'a WhileLoop,
-    },
-    UnsupportedForLoop {
-        for_loop: &'a ForLoop,
-    },
-    InvalidMatchType {
-        value: &'a Expr,
-        value_ty: Cow<'a, str>,
-    },
-    IncompatiblePattern {
-        pattern: &'a MatchPattern,
-        value_ty: Cow<'a, str>,
-    },
-    PatternOutOfRange {
-        pattern: &'a MatchPattern,
-        value_ty: Cow<'a, str>,
-    },
-    MatchBranchTypeMismatch {
-        match_ty: Cow<'a, str>,
-        branch_ty: Cow<'a, str>,
-        branch: &'a MatchBranch,
-    },
-    UnreachablePattern {
-        pattern: &'a MatchPattern,
-    },
-    InvalidAssignOp {
-        assign: &'a Assignment,
-    },
-    InvalidSeqAssignSig {
-        assign: &'a Assignment,
-    },
-    InvalidSeqAssignMod {
-        assign: &'a Assignment,
-    },
-    InvalidCombAssignReg {
-        assign: &'a Assignment,
-    },
-    InvalidPortKind {
-        port_span: TextSpan,
-        port_dir: Direction,
-        port_kind: LogicKind,
-    },
-    PortKindMismatch {
-        port_span: TextSpan,
-        port_ty: Cow<'a, str>,
-    },
-    PortModuleType {
-        port_span: TextSpan,
-    },
-    MemberKindMismatch {
-        member_span: TextSpan,
-        member_ty: Cow<'a, str>,
-    },
-    StructModuleField {
-        field_span: TextSpan,
-    },
-    ArithmeticError(ArithmeticError),
-    List(Vec<TypecheckError<'a>>),
-}
-
-impl TypecheckError<'_> {
-    fn new_list(list: Vec<Self>) -> Self {
-        debug_assert!(!list.is_empty());
-
-        if list.len() == 1 {
-            list.into_iter().next().unwrap()
-        } else {
-            Self::List(list)
-        }
-    }
-}
-
-impl From<ArithmeticError> for TypecheckError<'_> {
-    #[inline]
-    fn from(err: ArithmeticError) -> Self {
-        Self::ArithmeticError(err)
-    }
-}
-
-macro_rules! wrap_errors {
-    ($value:expr, $errors:expr) => {
-        if $errors.len() == 0 {
-            Ok($value)
-        } else {
-            Err(TypecheckError::new_list($errors))
-        }
-    };
-}
-
-pub type TypecheckResult<'a, T> = Result<T, TypecheckError<'a>>;
-
-pub struct Scope<'p> {
-    parent: Option<&'p Scope<'p>>,
-    consts: HashSet<SharedString>,
-    funcs: HashMap<SharedString, usize>,
-    vars: HashSet<SharedString>,
-}
-
-impl<'p> Scope<'p> {
-    pub fn empty() -> Self {
-        Self {
-            parent: None,
-            consts: HashSet::default(),
-            funcs: HashMap::default(),
-            vars: HashSet::default(),
-        }
-    }
-
-    pub fn new<'pp: 'p>(parent: &'p Scope<'pp>) -> Self {
-        Self {
-            parent: Some(parent),
-            consts: HashSet::default(),
-            funcs: HashMap::default(),
-            vars: HashSet::default(),
-        }
-    }
-
-    pub fn add_const(&mut self, name: impl Into<SharedString>) {
-        self.consts.insert(name.into());
-    }
-
-    pub fn add_func(&mut self, name: impl Into<SharedString>, arg_count: usize) {
-        self.funcs.insert(name.into(), arg_count);
-    }
-
-    pub fn add_var(&mut self, name: impl Into<SharedString>) {
-        self.vars.insert(name.into());
-    }
-
-    pub fn contains_const_exclusive(&self, name: impl AsRef<str>) -> bool {
-        self.consts.contains(name.as_ref())
-            || self
-                .parent
-                .map_or(false, |parent| parent.contains_const_exclusive(name))
-    }
-
-    pub fn contains_func_exclusive(&self, name: impl AsRef<str>) -> Option<usize> {
-        self.funcs.get(name.as_ref()).copied().or_else(|| {
-            self.parent
-                .and_then(|parent| parent.contains_func_exclusive(name))
-        })
-    }
-
-    pub fn contains_var_exclusive(&self, name: impl AsRef<str>) -> bool {
-        self.vars.contains(name.as_ref())
-            || self
-                .parent
-                .map_or(false, |parent| parent.contains_var_exclusive(name))
-    }
-
-    pub fn contains_func<'err>(&self, name: &Ident) -> TypecheckResult<'err, usize> {
-        if let Some(arg_count) = self.contains_func_exclusive(name) {
-            Ok(arg_count)
-        } else if self.contains_const_exclusive(name) || self.contains_var_exclusive(name) {
-            Err(TypecheckError::InvalidFuncIdent { name: name.clone() })
-        } else {
-            Err(TypecheckError::UndefinedIdent { name: name.clone() })
-        }
-    }
-
-    pub fn contains_const<'err>(&self, name: &Ident) -> TypecheckResult<'err, ()> {
-        if self.contains_const_exclusive(name) {
-            Ok(())
-        } else if self.contains_var_exclusive(name) {
-            Err(TypecheckError::ValueNotConst { name: name.clone() })
-        } else if self.contains_func_exclusive(name).is_some() {
-            Err(TypecheckError::InvalidValueIdent { name: name.clone() })
-        } else {
-            Err(TypecheckError::UndefinedIdent { name: name.clone() })
-        }
-    }
-
-    pub fn contains_var<'err>(&self, name: &Ident) -> TypecheckResult<'err, ()> {
-        if self.contains_const_exclusive(name) || self.contains_var_exclusive(name) {
-            Ok(())
-        } else if self.contains_func_exclusive(name).is_some() {
-            Err(TypecheckError::InvalidValueIdent { name: name.clone() })
-        } else {
-            Err(TypecheckError::UndefinedIdent { name: name.clone() })
-        }
-    }
-
-    pub fn contains_mut_var<'err>(&self, name: &Ident) -> TypecheckResult<'err, ()> {
-        if self.contains_var_exclusive(name) {
-            Ok(())
-        } else if self.contains_const_exclusive(name) {
-            Err(TypecheckError::TargetNotAssignable { name: name.clone() })
-        } else if self.contains_func_exclusive(name).is_some() {
-            Err(TypecheckError::InvalidValueIdent { name: name.clone() })
-        } else {
-            Err(TypecheckError::UndefinedIdent { name: name.clone() })
-        }
-    }
-}
-
-pub fn check_for_duplicate_items<'a>(
-    items: impl Iterator<Item = &'a Item>,
-) -> TypecheckResult<'static, ()> {
-    let mut errors = Vec::new();
-    let mut set = HashSet::default();
-
-    // Primitive types
-    set.insert("bit".into());
-    set.insert("bits".into());
-
-    for item in items {
-        if set.contains(item.name().as_ref()) {
-            errors.push(TypecheckError::DuplicateIdent {
-                name: item.name().clone(),
-            })
-        } else {
-            set.insert(item.name().as_string());
-        }
-    }
-
-    wrap_errors!((), errors)
-}
-
-fn transform_const_bin_expr<'a>(
-    expr: &'a BinaryExpr,
-    scope: &Scope,
-) -> TypecheckResult<'a, ConstBinaryExpr> {
-    let lhs = transform_const_expr(expr.lhs(), scope, false);
-    let rhs = transform_const_expr(expr.rhs(), scope, false);
-
-    match lhs {
-        Ok(lhs) => match rhs {
-            Ok(rhs) => Ok(ConstBinaryExpr::new(lhs, rhs, expr.span())),
-            Err(err) => Err(err),
-        },
-        Err(err1) => match rhs {
-            Ok(_) => Err(err1),
-            Err(err2) => Err(TypecheckError::List([err1, err2].into())),
-        },
-    }
-}
-
-fn transform_const_call_expr<'a>(
-    expr: &'a CallExpr,
-    scope: &Scope,
-) -> TypecheckResult<'a, ConstCallExpr> {
-    let mut errors = Vec::new();
-
-    match scope.contains_func(expr.func()) {
-        Ok(arg_count) => {
-            if arg_count != expr.args().len() {
-                errors.push(TypecheckError::ArgumentCountMismatch {
-                    call_expr: expr,
-                    arg_count,
-                })
-            }
-        }
-        Err(err) => errors.push(err),
-    }
-
-    let mut args = Vec::with_capacity(expr.args().len());
-    for arg in expr.args().iter() {
-        match transform_const_expr(arg, scope, false) {
-            Ok(arg) => args.push(arg),
-            Err(err) => errors.push(err),
-        }
-    }
-
-    wrap_errors!(
-        ConstCallExpr::new(expr.func().clone(), args, expr.span()),
-        errors
-    )
-}
-
-fn transform_const_if_expr<'a>(
-    expr: &'a IfExpr,
-    scope: &Scope,
-    needs_return: bool,
-) -> TypecheckResult<'a, ConstIfExpr> {
-    let mut errors = Vec::new();
-
-    let condition = transform_const_expr(expr.condition(), scope, false);
-    let body = transform_const_block(expr.body(), scope, needs_return);
-
-    let condition = match condition {
-        Ok(condition) => Some(condition),
-        Err(err) => {
-            errors.push(err);
-            None
-        }
-    };
-
-    let body = match body {
-        Ok(body) => Some(body),
-        Err(err) => {
-            errors.push(err);
-            None
-        }
-    };
-
-    let mut else_if_blocks = Vec::with_capacity(expr.else_if_blocks().len());
-    for else_if_block in expr.else_if_blocks().iter() {
-        let condition = transform_const_expr(else_if_block.condition(), scope, false);
-        let body = transform_const_block(else_if_block.body(), scope, needs_return);
-
-        match condition {
-            Ok(condition) => match body {
-                Ok(body) => else_if_blocks.push(ConstElseIfBlock::new(condition, body)),
-                Err(err2) => errors.push(err2),
-            },
-            Err(err1) => {
-                errors.push(err1);
-
-                if let Err(err2) = body {
-                    errors.push(err2);
-                }
-            }
-        }
-    }
-
-    let else_block = if let Some(else_block) = expr.else_block() {
-        match transform_const_block(else_block.body(), scope, needs_return) {
-            Ok(body) => Some(ConstElseBlock::new(body)),
-            Err(err) => {
-                errors.push(err);
-                None
-            }
-        }
-    } else {
-        None
-    };
-
-    if needs_return && else_block.is_none() {
-        errors.push(TypecheckError::MissingElseBlock { if_expr: expr })
-    }
-
-    if let Some(condition) = condition && let Some(body) = body {
-        wrap_errors!(
-            ConstIfExpr::new(condition, body, else_if_blocks, else_block, expr.span()),
-            errors
-        )
-    } else {
-        Err(TypecheckError::new_list(errors))
-    }
-}
-
-fn has_exhaustive_patterns(expr: &MatchExpr) -> TypecheckResult<bool> {
-    let mut errors = Vec::new();
-    let full_range = InclusiveRange::n_bit(64);
-    let mut covered_ranges = RangeCollection::new();
-
-    for branch in expr.branches().iter() {
-        for pattern in branch.patterns().iter() {
-            match pattern {
-                MatchPattern::Literal(literal) => {
-                    if covered_ranges.contains(literal.value() as u64) {
-                        errors.push(TypecheckError::UnreachablePattern { pattern });
-                    } else {
-                        covered_ranges.insert(literal.value() as u64);
-                    }
-                }
-                MatchPattern::Range(start, end) => {
-                    let range = (start.value() as u64)..(end.value() as u64);
-                    if covered_ranges.contains(&range) {
-                        errors.push(TypecheckError::UnreachablePattern { pattern });
-                    } else {
-                        covered_ranges.insert(range);
-                    }
-                }
-                MatchPattern::RangeInclusive(start, end) => {
-                    let range = (start.value() as u64)..=(end.value() as u64);
-                    if covered_ranges.contains(&range) {
-                        errors.push(TypecheckError::UnreachablePattern { pattern });
-                    } else {
-                        covered_ranges.insert(range);
-                    }
-                }
-                MatchPattern::Path(path) => {
-                    if let Some(ident) = path.as_ident() {
-                        if ident.as_ref() == "_" {
-                            if covered_ranges.contains(full_range) {
-                                errors.push(TypecheckError::UnreachablePattern { pattern });
-                            } else {
-                                covered_ranges.insert(full_range);
-                            }
-                        } else {
-                            // FIXME: get value of the constant to perform the range check on it
-                        }
-                    } else {
-                        // Invalid pattern, cought later
-                    }
-                }
-            }
-        }
-    }
-
-    wrap_errors!(covered_ranges.contains(full_range), errors)
-}
-
-fn transform_const_match_pattern<'a>(
-    pattern: &'a MatchPattern,
-    scope: &Scope,
-) -> TypecheckResult<'a, ConstMatchPattern> {
-    match pattern {
-        MatchPattern::Literal(l) => Ok(ConstMatchPattern::Literal(*l)),
-        MatchPattern::Range(s, e) => Ok(ConstMatchPattern::Range(*s, *e)),
-        MatchPattern::RangeInclusive(s, e) => Ok(ConstMatchPattern::RangeInclusive(*s, *e)),
-        MatchPattern::Path(p) => {
-            if let Some(ident) = p.as_ident() {
-                if ident.as_ref() != "_" {
-                    scope.contains_const(ident)?;
-                }
-
-                Ok(ConstMatchPattern::Ident(ident.clone()))
-            } else {
-                Err(TypecheckError::IncompatiblePattern {
-                    pattern,
-                    value_ty: "const int".into(),
-                })
-            }
-        }
-    }
-}
-
-fn transform_const_match_expr<'a>(
-    expr: &'a MatchExpr,
-    scope: &Scope,
-    needs_return: bool,
-) -> TypecheckResult<'a, ConstMatchExpr> {
-    let mut errors = Vec::new();
-
-    let value = transform_const_expr(expr.value(), scope, false);
-    let value = match value {
-        Ok(value) => Some(value),
-        Err(err) => {
-            errors.push(err);
-            None
-        }
-    };
-
-    match has_exhaustive_patterns(expr) {
-        Ok(true) => {}
-        Ok(false) => errors.push(TypecheckError::NonExhaustiveMatch { match_expr: expr }),
-        Err(err) => errors.push(err),
-    }
-
-    let mut branches = Vec::with_capacity(expr.branches().len());
-    for branch in expr.branches().iter() {
-        let mut patterns = Vec::with_capacity(branch.patterns().len());
-        for pattern in branch.patterns().iter() {
-            match transform_const_match_pattern(pattern, scope) {
-                Ok(pattern) => patterns.push(pattern),
-                Err(err) => errors.push(err),
-            }
-        }
-
-        match branch.body() {
-            MatchBody::Expr(expr) => {
-                if !needs_return {
-                    errors.push(TypecheckError::UnexpectedReturnValue { value: expr });
-                }
-
-                match transform_const_expr(expr, scope, false) {
-                    Ok(expr) => {
-                        branches.push(ConstMatchBranch::new(patterns, ConstMatchBody::Expr(expr)))
-                    }
-                    Err(err) => errors.push(err),
-                }
-            }
-            MatchBody::Block(block) => match transform_const_block(block, scope, needs_return) {
-                Ok(block) => branches.push(ConstMatchBranch::new(
-                    patterns,
-                    ConstMatchBody::Block(block),
-                )),
-                Err(err) => errors.push(err),
-            },
-        }
-    }
-
-    if let Some(value) = value {
-        wrap_errors!(ConstMatchExpr::new(value, branches, expr.span()), errors)
-    } else {
-        Err(TypecheckError::new_list(errors))
-    }
-}
-
-pub fn transform_const_expr<'a>(
-    expr: &'a Expr,
-    scope: &Scope,
-    is_statement: bool,
-) -> TypecheckResult<'a, ConstExpr> {
-    macro_rules! bin_expr {
-        ($expr:expr, $op:ident) => {
-            Ok(ConstExpr::$op(transform_const_bin_expr($expr, scope)?))
-        };
-    }
-
-    match expr {
-        Expr::Literal(l) => Ok(ConstExpr::Literal(*l)),
-        Expr::Path(p) => {
-            if let Some(ident) = p.as_ident() {
-                scope.contains_var(ident)?;
-                Ok(ConstExpr::Ident(ident.clone()))
-            } else {
-                Err(TypecheckError::InvalidConstExpr { expr })
-            }
-        }
-        Expr::Paren(expr) => transform_const_expr(expr.inner(), scope, is_statement),
-        Expr::Call(expr) => Ok(ConstExpr::Call(transform_const_call_expr(expr, scope)?)),
-        Expr::Construct(_) => Err(TypecheckError::InvalidConstExpr { expr }),
-        Expr::If(expr) => Ok(ConstExpr::If(transform_const_if_expr(
-            expr,
-            scope,
-            !is_statement,
-        )?)),
-        Expr::Match(expr) => Ok(ConstExpr::Match(transform_const_match_expr(
-            expr,
-            scope,
-            !is_statement,
-        )?)),
-        Expr::Block(block) => Ok(ConstExpr::Block(Box::new(transform_const_block(
-            block,
-            scope,
-            !is_statement,
-        )?))),
-        Expr::Index(_) => Err(TypecheckError::InvalidConstExpr { expr }),
-        Expr::MemberAccess(_) => Err(TypecheckError::InvalidConstExpr { expr }),
-        Expr::Pos(expr) => transform_const_expr(expr.inner(), scope, false),
-        Expr::Neg(expr) => Ok(ConstExpr::Neg(ConstUnaryExpr::new(
-            transform_const_expr(expr.inner(), scope, false)?,
-            expr.span(),
-        ))),
-        Expr::Not(expr) => Ok(ConstExpr::Not(ConstUnaryExpr::new(
-            transform_const_expr(expr.inner(), scope, false)?,
-            expr.span(),
-        ))),
-        Expr::Cast(_) => Err(TypecheckError::InvalidConstExpr { expr }),
-        Expr::Concat(_) => Err(TypecheckError::InvalidConstExpr { expr }),
-        Expr::Lt(expr) => bin_expr!(expr, Lt),
-        Expr::Lte(expr) => bin_expr!(expr, Lte),
-        Expr::Gt(expr) => bin_expr!(expr, Gt),
-        Expr::Gte(expr) => bin_expr!(expr, Gte),
-        Expr::Slt(expr) => Err(TypecheckError::InvalidConstOp { op: *expr.op() }),
-        Expr::Slte(expr) => Err(TypecheckError::InvalidConstOp { op: *expr.op() }),
-        Expr::Sgt(expr) => Err(TypecheckError::InvalidConstOp { op: *expr.op() }),
-        Expr::Sgte(expr) => Err(TypecheckError::InvalidConstOp { op: *expr.op() }),
-        Expr::Eq(expr) => bin_expr!(expr, Eq),
-        Expr::Ne(expr) => bin_expr!(expr, Ne),
-        Expr::Add(expr) => bin_expr!(expr, Add),
-        Expr::Sub(expr) => bin_expr!(expr, Sub),
-        Expr::Mul(expr) => bin_expr!(expr, Mul),
-        Expr::Div(expr) => bin_expr!(expr, Div),
-        Expr::Rem(expr) => bin_expr!(expr, Rem),
-        Expr::And(expr) => bin_expr!(expr, And),
-        Expr::Xor(expr) => bin_expr!(expr, Xor),
-        Expr::Or(expr) => bin_expr!(expr, Or),
-        Expr::Shl(expr) => bin_expr!(expr, Shl),
-        Expr::Lsr(expr) => bin_expr!(expr, Lsr),
-        Expr::Asr(expr) => bin_expr!(expr, Asr),
-    }
-}
-
-pub fn transform_generic_arg<'a>(
-    arg: &'a GenericTypeArg,
-    scope: &Scope,
-) -> TypecheckResult<'a, ConstExpr> {
-    match arg {
-        GenericTypeArg::Literal(l) => Ok(ConstExpr::Literal(*l)),
-        GenericTypeArg::Ident(i) => {
-            scope.contains_var(i)?;
-            Ok(ConstExpr::Ident(i.clone()))
-        }
-        GenericTypeArg::Expr(expr) => transform_const_expr(expr, scope, false),
-    }
-}
-
-fn transform_const_assignment<'a>(
-    assign: &'a Assignment,
-    scope: &mut Scope,
-) -> TypecheckResult<'a, ConstAssignment> {
-    if let Some(target) = assign.target().path().as_ident()
-        && assign.target().suffixes().is_empty()
-    {
-        let err1 = match scope.contains_mut_var(target) {
-            Ok(_) => None,
-            Err(err1) => Some(err1),
-        };
-
-        match transform_const_expr(assign.value(), scope, false) {
-            Ok(value) => {
-                if let Some(err1) = err1 {
-                    Err(err1)
-                } else {
-                    Ok(ConstAssignment::new(
-                        target.clone(),
-                        assign.op().kind(),
-                        value,
-                        assign.span(),
-                    ))
-                }
-            }
-            Err(err2) => {
-                if let Some(err1) = err1 {
-                    Err(TypecheckError::List([err1, err2].into()))
-                } else {
-                    Err(err2)
-                }
-            }
-        }
-    } else {
-        Err(TypecheckError::InvalidConstAssignTarget {
-            target: assign.target(),
-        })
-    }
-}
-
-fn transform_const_while_loop<'a>(
-    while_loop: &'a WhileLoop,
-    scope: &Scope,
-) -> TypecheckResult<'a, ConstWhileLoop> {
-    let condition = transform_const_expr(while_loop.condition(), scope, false);
-    let body = transform_const_block(while_loop.body(), scope, false);
-
-    match condition {
-        Ok(condition) => match body {
-            Ok(body) => Ok(ConstWhileLoop::new(condition, body)),
-            Err(err2) => Err(err2),
-        },
-        Err(err1) => match body {
-            Ok(_) => Err(err1),
-            Err(err2) => Err(TypecheckError::List([err1, err2].into())),
-        },
-    }
-}
-
-fn transform_const_for_loop<'a>(
-    for_loop: &'a ForLoop,
-    scope: &Scope,
-) -> TypecheckResult<'a, ConstForLoop> {
-    let mut errors = Vec::new();
-
-    let (start, end, inclusive) = match for_loop.range() {
-        ForLoopRange::Range(start, end) => (start, end, false),
-        ForLoopRange::RangeInclusive(start, end) => (start, end, true),
-    };
-
-    let start = transform_const_expr(start, scope, false);
-    let end = transform_const_expr(end, scope, false);
-
-    let start = match start {
-        Ok(start) => Some(start),
-        Err(err) => {
-            errors.push(err);
-            None
-        }
-    };
-
-    let end = match end {
-        Ok(end) => Some(end),
-        Err(err) => {
-            errors.push(err);
-            None
-        }
-    };
-
-    let mut inner_scope = Scope::new(scope);
-    inner_scope.add_var(for_loop.item_name());
-    let body = transform_const_block(for_loop.body(), &inner_scope, false);
-
-    let body = match body {
-        Ok(body) => Some(body),
-        Err(err) => {
-            errors.push(err);
-            None
-        }
-    };
-
-    wrap_errors!(
-        ConstForLoop::new(
-            for_loop.item_name().clone(),
-            if inclusive {
-                ConstForLoopRange::RangeInclusive(start.unwrap(), end.unwrap())
-            } else {
-                ConstForLoopRange::Range(start.unwrap(), end.unwrap())
-            },
-            body.unwrap()
-        ),
-        errors
-    )
-}
-
-fn transform_const_statement<'a>(
-    statement: &'a Statement,
-    scope: &mut Scope,
-) -> TypecheckResult<'a, ConstStatement> {
-    match statement {
-        Statement::Expr(expr) => Ok(ConstStatement::Expr(transform_const_expr(
-            expr, scope, true,
-        )?)),
-        Statement::Declaration(decl) => {
-            scope.add_var(decl.name());
-
-            Ok(ConstStatement::Declaration(ConstDeclaration::new(
-                decl.name().clone(),
-                transform_const_expr(decl.value(), scope, false)?,
-            )))
-        }
-        Statement::Assignment(assign) => Ok(ConstStatement::Assignment(
-            transform_const_assignment(assign, scope)?,
-        )),
-        Statement::WhileLoop(while_loop) => Ok(ConstStatement::WhileLoop(
-            transform_const_while_loop(while_loop, scope)?,
-        )),
-        Statement::ForLoop(for_loop) => Ok(ConstStatement::ForLoop(transform_const_for_loop(
-            for_loop, scope,
-        )?)),
-    }
-}
-
-fn transform_const_block<'a>(
-    block: &'a Block,
-    parent_scope: &Scope,
-    needs_return: bool,
-) -> TypecheckResult<'a, ConstBlock> {
-    let mut scope = Scope::new(parent_scope);
-
-    let mut errors = Vec::new();
-    let mut statements = Vec::with_capacity(block.statements().len());
-    for statement in block.statements().iter() {
-        match transform_const_statement(statement, &mut scope) {
-            Ok(statement) => statements.push(statement),
-            Err(err) => errors.push(err),
-        }
-    }
-
-    let result = if let Some(result) = block.result() {
-        if needs_return {
-            match transform_const_expr(result, &scope, false) {
-                Ok(result) => Some(result),
-                Err(err) => {
-                    errors.push(err);
-                    None
-                }
-            }
-        } else {
-            errors.push(TypecheckError::UnexpectedReturnValue { value: result });
-            None
-        }
-    } else {
-        if needs_return {
-            errors.push(TypecheckError::MissingReturnValue { block });
-        }
-
-        None
-    };
-
-    wrap_errors!(ConstBlock::new(statements, result, block.span()), errors)
-}
-
-pub fn transform_const_func<'a>(func: &'a Func, scope: &Scope) -> TypecheckResult<'a, ConstFunc> {
-    let mut inner_scope = Scope::new(scope);
-    for arg in func.args().iter() {
-        inner_scope.add_var(arg);
-    }
-
-    let body = transform_const_block(func.body(), &inner_scope, true)?;
-    Ok(ConstFunc::new(func.args().to_vec(), body))
-}
-
-pub fn collect_type_items(
-    items: impl IntoIterator<Item = Item>,
-) -> HashMap<SharedString, TypeItem> {
-    let mut type_items = HashMap::default();
-    for item in items.into_iter() {
-        match item {
-            Item::Struct(struct_item) => {
-                type_items.insert(
-                    struct_item.name().as_string(),
-                    TypeItem::Struct(struct_item),
-                );
-            }
-            Item::Enum(enum_item) => {
-                type_items.insert(enum_item.name().as_string(), TypeItem::Enum(enum_item));
-            }
-            Item::Module(module_item) => {
-                type_items.insert(
-                    module_item.name().as_string(),
-                    TypeItem::Module(module_item),
-                );
-            }
-            _ => {}
-        }
-    }
-    type_items
-}
-
-struct ResolveArgs<'a> {
-    type_items: &'a HashMap<SharedString, TypeItem>,
-    global_scope: &'a Scope<'a>,
-    global_const_values: &'a HashMap<SharedString, i64>,
-    funcs: &'a HashMap<SharedString, ConstFunc>,
-}
-
-impl<'a> ResolveArgs<'a> {
-    fn to_local(&self, local_const_values: &'a HashMap<SharedString, i64>) -> ResolveLocalArgs<'a> {
-        ResolveLocalArgs {
-            type_items: self.type_items,
-            global_const_values: self.global_const_values,
-            local_const_values,
-            funcs: self.funcs,
-        }
-    }
-}
-
-struct ResolveLocalArgs<'a> {
-    type_items: &'a HashMap<SharedString, TypeItem>,
-    global_const_values: &'a HashMap<SharedString, i64>,
-    local_const_values: &'a HashMap<SharedString, i64>,
-    funcs: &'a HashMap<SharedString, ConstFunc>,
-}
-
-struct TypeRegistry<'a> {
-    known_types: &'a mut HashMap<TypeId, ResolvedType>,
-    type_order: &'a mut TopologicalSort<TypeId>,
-    type_queue: &'a mut VecDeque<TypeId>,
-}
-
-fn resolve_named_type<'a>(
-    named_ty: &'a NamedType,
-    type_items: &HashMap<SharedString, TypeItem>,
-    scope: &mut Scope,
-    global_const_values: &HashMap<SharedString, i64>,
-    local_const_values: Option<&HashMap<SharedString, i64>>,
-    funcs: &HashMap<SharedString, ConstFunc>,
-    registry: &mut TypeRegistry,
-) -> TypecheckResult<'a, TypeId> {
-    let name = named_ty.name().as_ref();
-    let generic_arg_count = named_ty.generic_arg_count();
-
-    let resolved_ty = match name {
-        "bit" => {
-            if generic_arg_count == 0 {
-                ResolvedType::BuiltinBits { width: 1 }
-            } else {
-                return Err(TypecheckError::GenericCountMismatch {
-                    ty: named_ty,
-                    arg_count: 0,
-                });
-            }
-        }
-        "bits" => {
-            if generic_arg_count == 1 {
-                let width_arg = &named_ty.generic_args().unwrap().args()[0];
-                let width_expr = transform_generic_arg(width_arg, scope)?;
-
-                let width = eval(
-                    &width_expr,
-                    &mut VarScope::empty(),
-                    global_const_values,
-                    local_const_values,
-                    funcs,
-                )?;
-
-                if width <= 0 {
-                    return Err(TypecheckError::InvalidBitWidth {
-                        width,
-                        arg: width_arg,
-                    });
-                }
-
-                ResolvedType::BuiltinBits {
-                    width: width as u64,
-                }
-            } else {
-                return Err(TypecheckError::GenericCountMismatch {
-                    ty: named_ty,
-                    arg_count: 1,
-                });
-            }
-        }
-        _ => {
-            if let Some(type_item) = type_items.get(name) {
-                match type_item {
-                    TypeItem::Struct(struct_item) => {
-                        let struct_generic_count = struct_item.generic_arg_count();
-                        if generic_arg_count != struct_generic_count {
-                            return Err(TypecheckError::GenericCountMismatch {
-                                ty: named_ty,
-                                arg_count: struct_generic_count,
-                            });
-                        }
-                    }
-                    TypeItem::Enum(_) => {
-                        if generic_arg_count > 0 {
-                            return Err(TypecheckError::GenericCountMismatch {
-                                ty: named_ty,
-                                arg_count: 0,
-                            });
-                        }
-                    }
-                    TypeItem::Module(module_item) => {
-                        let module_generic_count = module_item.generic_arg_count();
-                        if generic_arg_count != module_generic_count {
-                            return Err(TypecheckError::GenericCountMismatch {
-                                ty: named_ty,
-                                arg_count: module_generic_count,
-                            });
-                        }
-                    }
-                }
-            } else {
-                return Err(TypecheckError::UndefinedType { ty: named_ty });
-            }
-
-            let mut generic_vals = Vec::with_capacity(generic_arg_count);
-            if let Some(generic_args) = named_ty.generic_args() {
-                for arg in generic_args.args().iter() {
-                    let arg_expr = transform_generic_arg(arg, scope)?;
-                    let arg_val = eval(
-                        &arg_expr,
-                        &mut VarScope::empty(),
-                        global_const_values,
-                        local_const_values,
-                        funcs,
-                    )?;
-                    generic_vals.push(arg_val);
-                }
-            }
-
-            ResolvedType::Named {
-                name: named_ty.name().as_string(),
-                generic_args: generic_vals.into(),
-            }
-        }
-    };
-
-    let id = TypeId::from_type(&resolved_ty);
-    if let hash_map::Entry::Vacant(entry) = registry.known_types.entry(id) {
-        entry.insert(resolved_ty);
-        registry.type_queue.push_back(id);
-    }
-
-    Ok(id)
-}
-
-fn resolve_type<'a>(
-    ty: &'a Type,
-    type_items: &HashMap<SharedString, TypeItem>,
-    scope: &mut Scope,
-    global_const_values: &HashMap<SharedString, i64>,
-    local_const_values: Option<&HashMap<SharedString, i64>>,
-    funcs: &HashMap<SharedString, ConstFunc>,
-    registry: &mut TypeRegistry,
-) -> TypecheckResult<'a, TypeId> {
-    match ty {
-        Type::Named(named_ty) => resolve_named_type(
-            named_ty,
-            type_items,
-            scope,
-            global_const_values,
-            local_const_values,
-            funcs,
-            registry,
-        ),
-        Type::Array(array_ty) => {
-            let item_ty = resolve_type(
-                array_ty.item_ty(),
-                type_items,
-                scope,
-                global_const_values,
-                local_const_values,
-                funcs,
-                registry,
-            )?;
-
-            let len_expr = transform_const_expr(array_ty.len(), scope, false)?;
-            let len = eval(
-                &len_expr,
-                &mut VarScope::empty(),
-                global_const_values,
-                local_const_values,
-                funcs,
-            )?;
-
-            if len <= 0 {
-                return Err(TypecheckError::InvalidArrayLength { ty: array_ty, len });
-            }
-
-            let resolved_ty = ResolvedType::Array {
-                item_ty,
-                len: len as u64,
-            };
-            let id = TypeId::from_type(&resolved_ty);
-            if let hash_map::Entry::Vacant(entry) = registry.known_types.entry(id) {
-                entry.insert(resolved_ty);
-                registry.type_queue.push_back(id);
-            }
-
-            registry.type_order.add_dependency(item_ty, id);
-            Ok(id)
-        }
-    }
-}
-
-fn check_for_duplicate_fields<'a>(
-    generic_args: Option<&'a GenericStructArgs>,
-    fields: impl Iterator<Item = &'a Field>,
-) -> TypecheckResult<'static, ()> {
-    let mut errors = Vec::new();
-    let mut set = HashSet::default();
-
-    if let Some(generic_args) = generic_args {
-        for arg in generic_args.args().iter() {
-            if set.contains(arg.as_ref()) {
-                errors.push(TypecheckError::DuplicateIdent { name: arg.clone() })
-            } else {
-                set.insert(arg.as_string());
-            }
-        }
-    }
-
-    for field in fields {
-        if set.contains(field.name().as_ref()) {
-            errors.push(TypecheckError::DuplicateIdent {
-                name: field.name().clone(),
-            })
-        } else {
-            set.insert(field.name().as_string());
-        }
-    }
-
-    wrap_errors!((), errors)
-}
-
-fn resolve_struct<'a>(
-    struct_item: &'a Struct,
-    generic_values: &[i64],
-    args: &ResolveArgs,
-    registry: &mut TypeRegistry,
-) -> TypecheckResult<'a, ResolvedStruct> {
-    debug_assert_eq!(
-        struct_item
-            .generic_args()
-            .map(|args| args.args().len())
-            .unwrap_or(0),
-        generic_values.len()
-    );
-
-    let this_ty = ResolvedType::Named {
-        name: struct_item.name().as_string(),
-        generic_args: generic_values.into(),
-    };
-    let this_id = TypeId::from_type(&this_ty);
-
-    let mut errors = Vec::new();
-    if let Err(err) =
-        check_for_duplicate_fields(struct_item.generic_args(), struct_item.fields().iter())
-    {
-        errors.push(err);
-    }
-
-    let mut local_consts = HashMap::default();
-    let mut scope = Scope::new(args.global_scope);
-    if let Some(args) = struct_item.generic_args() {
-        for (arg, value) in args.args().iter().zip(generic_values.iter().copied()) {
-            if !local_consts.contains_key(arg.as_ref()) {
-                local_consts.insert(arg.as_string(), ConstExpr::Value(value));
-                scope.add_const(arg);
-            }
-        }
-    }
-
-    let mut local_const_values = HashMap::default();
-    for (name, expr) in local_consts.iter() {
-        let result = eval(
-            expr,
-            &mut VarScope::empty(),
-            args.global_const_values,
-            Some(&local_consts),
-            args.funcs,
-        );
-
-        match result {
-            Ok(value) => {
-                local_const_values.insert(SharedString::clone(name), value);
-            }
-            Err(err) => errors.push(err.into()),
-        }
-    }
-
-    let mut fields = HashMap::default();
-    for field in struct_item.fields().iter() {
-        let result = resolve_type(
-            field.ty(),
-            args.type_items,
-            &mut scope,
-            args.global_const_values,
-            Some(&local_const_values),
-            args.funcs,
-            registry,
-        );
-
-        match result {
-            Ok(ty_id) => {
-                registry.type_order.add_dependency(ty_id, this_id);
-                fields.insert(field.name().as_string(), (ty_id, field.span()));
-            }
-            Err(err) => errors.push(err),
-        }
-    }
-
-    wrap_errors!(ResolvedStruct::new(fields), errors)
-}
-
-fn resolve_enum<'a>(
-    enum_item: &'a Enum,
-    args: &ResolveArgs,
-    registry: &mut TypeRegistry,
-) -> TypecheckResult<'a, ResolvedEnum> {
-    let this_ty = ResolvedType::Named {
-        name: enum_item.name().as_string(),
-        generic_args: [].as_slice().into(),
-    };
-    let this_id = TypeId::from_type(&this_ty);
-
-    let mut scope = Scope::new(args.global_scope);
-    let base_id = resolve_type(
-        enum_item.base_ty(),
-        args.type_items,
-        &mut scope,
-        args.global_const_values,
-        None,
-        args.funcs,
-        registry,
-    )?;
-
-    let mut errors = Vec::new();
-    let base_ty = &registry.known_types[&base_id];
-    match base_ty {
-        ResolvedType::BuiltinBits { .. } => {}
-        _ => {
-            errors.push(TypecheckError::InvalidEnumBaseType {
-                ty: enum_item.base_ty(),
-            });
-        }
-    }
-
-    registry.type_order.add_dependency(base_id, this_id);
-
-    let mut variants = HashMap::default();
-    let mut next_variant_value = 0;
-    for (name, expr) in enum_item.variants().iter().map(|v| (v.name(), v.value())) {
-        if let Some(expr) = expr {
-            match transform_const_expr(expr, &scope, false) {
-                Ok(expr) => {
-                    let result = eval::<_, i64>(
-                        &expr,
-                        &mut VarScope::empty(),
-                        args.global_const_values,
-                        None,
-                        args.funcs,
-                    );
-
-                    match result {
-                        Ok(value) => {
-                            variants.insert(name.as_string(), value);
-                            next_variant_value = value + 1;
-                        }
-                        Err(err) => errors.push(TypecheckError::ArithmeticError(err)),
-                    }
-                }
-                Err(err) => errors.push(err),
-            }
-        } else {
-            variants.insert(name.as_string(), next_variant_value);
-            next_variant_value += 1;
-        }
-    }
-
-    wrap_errors!(ResolvedEnum::new(base_id, variants), errors)
-}
-
-fn check_for_duplicate_members<'a>(
-    generic_args: Option<&'a GenericStructArgs>,
-    members: impl Iterator<Item = &'a Member>,
-) -> TypecheckResult<'static, ()> {
-    let mut errors = Vec::new();
-    let mut set = HashSet::default();
-
-    if let Some(generic_args) = generic_args {
-        for arg in generic_args.args().iter() {
-            if set.contains(arg.as_ref()) {
-                errors.push(TypecheckError::DuplicateIdent { name: arg.clone() })
-            } else {
-                set.insert(arg.as_string());
-            }
-        }
-    }
-
-    for member in members {
-        if let Some(name) = member.name() {
-            if set.contains(name.as_ref()) {
-                errors.push(TypecheckError::DuplicateIdent { name: name.clone() })
-            } else {
-                set.insert(name.as_string());
-            }
-        }
-    }
-
-    wrap_errors!((), errors)
-}
-
-fn resolve_expr<'a>(
-    expr: &'a Expr,
-    parent_id: TypeId,
-    scope: &mut Scope,
-    args: &ResolveLocalArgs,
-    registry: &mut TypeRegistry,
-) -> TypecheckResult<'a, ()> {
-    macro_rules! resolve_binary_expr {
-        ($expr:expr) => {{
-            resolve_expr($expr.lhs(), parent_id, scope, args, registry)?;
-            resolve_expr($expr.rhs(), parent_id, scope, args, registry)?;
-        }};
-    }
-
-    match expr {
-        Expr::Construct(expr) => {
-            let ty_id = resolve_named_type(
-                expr.ty(),
-                args.type_items,
-                scope,
-                args.global_const_values,
-                Some(args.local_const_values),
-                args.funcs,
-                registry,
-            )?;
-
-            expr.resolve(ty_id);
-            registry.type_order.add_dependency(ty_id, parent_id);
-        }
-        Expr::Cast(expr) => {
-            let ty_id = resolve_type(
-                expr.target_ty(),
-                args.type_items,
-                scope,
-                args.global_const_values,
-                Some(args.local_const_values),
-                args.funcs,
-                registry,
-            )?;
-
-            expr.resolve(ty_id);
-            registry.type_order.add_dependency(ty_id, parent_id);
-        }
-
-        Expr::Literal(_) => {}
-        Expr::Path(_) => {}
-        Expr::MemberAccess(_) => {}
-
-        Expr::Call(expr) => {
-            for arg in expr.args().iter() {
-                resolve_expr(arg, parent_id, scope, args, registry)?;
-            }
-        }
-
-        Expr::If(expr) => {
-            resolve_expr(expr.condition(), parent_id, scope, args, registry)?;
-            resolve_block(expr.body(), parent_id, scope, args, registry)?;
-
-            for else_if_block in expr.else_if_blocks().iter() {
-                resolve_expr(else_if_block.condition(), parent_id, scope, args, registry)?;
-                resolve_block(else_if_block.body(), parent_id, scope, args, registry)?;
-            }
-
-            if let Some(else_block) = expr.else_block() {
-                resolve_block(else_block.body(), parent_id, scope, args, registry)?;
-            }
-        }
-
-        Expr::Match(expr) => {
-            resolve_expr(expr.value(), parent_id, scope, args, registry)?;
-            for branch in expr.branches().iter() {
-                match branch.body() {
-                    MatchBody::Expr(expr) => resolve_expr(expr, parent_id, scope, args, registry)?,
-                    MatchBody::Block(block) => {
-                        resolve_block(block, parent_id, scope, args, registry)?
-                    }
-                }
-            }
-        }
-
-        Expr::Index(expr) => {
-            resolve_expr(expr.base(), parent_id, scope, args, registry)?;
-            match expr.indexer().index() {
-                IndexKind::Single(index) => resolve_expr(index, parent_id, scope, args, registry)?,
-                IndexKind::Range(range) => {
-                    resolve_expr(&range.start, parent_id, scope, args, registry)?;
-                    resolve_expr(&range.end, parent_id, scope, args, registry)?;
-                }
-            }
-        }
-
-        Expr::Paren(expr) => resolve_expr(expr.inner(), parent_id, scope, args, registry)?,
-        Expr::Block(block) => resolve_block(block, parent_id, scope, args, registry)?,
-        Expr::Pos(expr) => resolve_expr(expr.inner(), parent_id, scope, args, registry)?,
-        Expr::Neg(expr) => resolve_expr(expr.inner(), parent_id, scope, args, registry)?,
-        Expr::Not(expr) => resolve_expr(expr.inner(), parent_id, scope, args, registry)?,
-        Expr::Concat(expr) => resolve_binary_expr!(expr),
-        Expr::Lt(expr) => resolve_binary_expr!(expr),
-        Expr::Lte(expr) => resolve_binary_expr!(expr),
-        Expr::Gt(expr) => resolve_binary_expr!(expr),
-        Expr::Gte(expr) => resolve_binary_expr!(expr),
-        Expr::Slt(expr) => resolve_binary_expr!(expr),
-        Expr::Slte(expr) => resolve_binary_expr!(expr),
-        Expr::Sgt(expr) => resolve_binary_expr!(expr),
-        Expr::Sgte(expr) => resolve_binary_expr!(expr),
-        Expr::Eq(expr) => resolve_binary_expr!(expr),
-        Expr::Ne(expr) => resolve_binary_expr!(expr),
-        Expr::Add(expr) => resolve_binary_expr!(expr),
-        Expr::Sub(expr) => resolve_binary_expr!(expr),
-        Expr::Mul(expr) => resolve_binary_expr!(expr),
-        Expr::Div(expr) => resolve_binary_expr!(expr),
-        Expr::Rem(expr) => resolve_binary_expr!(expr),
-        Expr::And(expr) => resolve_binary_expr!(expr),
-        Expr::Xor(expr) => resolve_binary_expr!(expr),
-        Expr::Or(expr) => resolve_binary_expr!(expr),
-        Expr::Shl(expr) => resolve_binary_expr!(expr),
-        Expr::Lsr(expr) => resolve_binary_expr!(expr),
-        Expr::Asr(expr) => resolve_binary_expr!(expr),
-    }
-
-    Ok(())
-}
-
-fn resolve_statement<'a>(
-    statement: &'a Statement,
-    parent_id: TypeId,
-    scope: &mut Scope,
-    args: &ResolveLocalArgs,
-    registry: &mut TypeRegistry,
-) -> TypecheckResult<'a, ()> {
-    match statement {
-        Statement::Expr(expr) => resolve_expr(expr, parent_id, scope, args, registry),
-        Statement::Declaration(decl) => {
-            resolve_expr(decl.value(), parent_id, scope, args, registry)
-        }
-        Statement::Assignment(assign) => {
-            resolve_expr(assign.value(), parent_id, scope, args, registry)
-        }
-        Statement::WhileLoop(while_loop) => {
-            resolve_expr(while_loop.condition(), parent_id, scope, args, registry)?;
-            resolve_block(while_loop.body(), parent_id, scope, args, registry)
-        }
-        Statement::ForLoop(for_loop) => {
-            let (start, end) = match for_loop.range() {
-                ForLoopRange::Range(start, end) => (start, end),
-                ForLoopRange::RangeInclusive(start, end) => (start, end),
-            };
-
-            resolve_expr(start, parent_id, scope, args, registry)?;
-            resolve_expr(end, parent_id, scope, args, registry)?;
-            resolve_block(for_loop.body(), parent_id, scope, args, registry)
-        }
-    }
-}
-
-fn resolve_block<'a>(
-    block: &'a Block,
-    parent_id: TypeId,
-    parent_scope: &Scope,
-    args: &ResolveLocalArgs,
-    registry: &mut TypeRegistry,
-) -> TypecheckResult<'a, ()> {
-    let mut scope = Scope::new(parent_scope);
-
-    for statement in block.statements().iter() {
-        resolve_statement(statement, parent_id, &mut scope, args, registry)?;
-    }
-
-    if let Some(result) = block.result() {
-        resolve_expr(result, parent_id, &mut scope, args, registry)?;
-    }
-
-    Ok(())
-}
-
-fn resolve_module<'a>(
-    module_item: &'a Module,
-    generic_values: &[i64],
-    args: &ResolveArgs,
-    registry: &mut TypeRegistry,
-) -> TypecheckResult<'a, ResolvedModule> {
-    debug_assert_eq!(
-        module_item
-            .generic_args()
-            .map(|args| args.args().len())
-            .unwrap_or(0),
-        generic_values.len()
-    );
-
-    let this_ty = ResolvedType::Named {
-        name: module_item.name().as_string(),
-        generic_args: generic_values.into(),
-    };
-    let this_id = TypeId::from_type(&this_ty);
-
-    let mut errors = Vec::new();
-    if let Err(err) =
-        check_for_duplicate_members(module_item.generic_args(), module_item.members().iter())
-    {
-        errors.push(err);
-    }
-
-    let mut local_consts = HashMap::default();
-    let mut scope = Scope::new(args.global_scope);
-    if let Some(args) = module_item.generic_args() {
-        for (arg, value) in args.args().iter().zip(generic_values.iter().copied()) {
-            if !local_consts.contains_key(arg.as_ref()) {
-                local_consts.insert(arg.as_string(), ConstExpr::Value(value));
-                scope.add_const(arg);
-            }
-        }
-    }
-
-    for member in module_item.members().iter() {
-        if let Member::Const(const_member) = member {
-            if !local_consts.contains_key(const_member.name().as_ref()) {
-                let const_expr = transform_const_expr(const_member.value(), &scope, false)?;
-                local_consts.insert(const_member.name().as_string(), const_expr);
-                scope.add_const(const_member.name());
-            }
-        }
-    }
-
-    let mut local_const_values = HashMap::default();
-    for (name, expr) in local_consts.iter() {
-        let result = eval(
-            expr,
-            &mut VarScope::empty(),
-            args.global_const_values,
-            Some(&local_consts),
-            args.funcs,
-        );
-
-        match result {
-            Ok(value) => {
-                local_const_values.insert(SharedString::clone(name), value);
-            }
-            Err(err) => errors.push(err.into()),
-        }
-    }
-
-    let mut ports = HashMap::default();
-    for port in module_item.ports().iter() {
-        let result = resolve_type(
-            port.ty(),
-            args.type_items,
-            &mut scope,
-            args.global_const_values,
-            Some(&local_const_values),
-            args.funcs,
-            registry,
-        );
-
-        match result {
-            Ok(ty_id) => {
-                registry.type_order.add_dependency(ty_id, this_id);
-                ports.insert(
-                    port.name().as_string(),
-                    ResolvedPort::new(
-                        port.mode().dir(),
-                        port.logic_mode().kind(),
-                        port.span(),
-                        ty_id,
-                    ),
-                );
-            }
-            Err(err) => errors.push(err),
-        }
-    }
-
-    let mut logic_members = HashMap::default();
-    let mut proc_members = Vec::new();
-    let mut comb_members = Vec::new();
-    for member in module_item.members().iter() {
-        match member {
-            Member::Logic(logic_member) => {
-                let result = resolve_type(
-                    logic_member.ty(),
-                    args.type_items,
-                    &mut scope,
-                    args.global_const_values,
-                    Some(&local_const_values),
-                    args.funcs,
-                    registry,
-                );
-
-                match result {
-                    Ok(ty_id) => {
-                        registry.type_order.add_dependency(ty_id, this_id);
-                        logic_members.insert(
-                            logic_member.name().as_string(),
-                            ResolvedLogicMember::new(
-                                logic_member.mode().kind(),
-                                logic_member.span(),
-                                ty_id,
-                            ),
-                        );
-                    }
-                    Err(err) => errors.push(err),
-                }
-            }
-            Member::Proc(proc_member) => {
-                let result = resolve_block(
-                    proc_member.body(),
-                    this_id,
-                    &scope,
-                    &args.to_local(&local_const_values),
-                    registry,
-                );
-
-                if let Err(err) = result {
-                    errors.push(err);
-                } else {
-                    proc_members.push(proc_member.clone());
-                }
-            }
-            Member::Comb(comb_member) => {
-                let result = resolve_block(
-                    comb_member.body(),
-                    this_id,
-                    &scope,
-                    &args.to_local(&local_const_values),
-                    registry,
-                );
-
-                if let Err(err) = result {
-                    errors.push(err);
-                } else {
-                    comb_members.push(comb_member.clone());
-                }
-            }
-            _ => {}
-        }
-    }
-
-    wrap_errors!(
-        ResolvedModule::new(
-            ports,
-            local_const_values,
-            logic_members,
-            proc_members,
-            comb_members
-        ),
-        errors
-    )
-}
-
-pub type ResolvedTypes = (
-    HashMap<TypeId, ResolvedType>,
-    HashMap<TypeId, ResolvedTypeItem>,
-    TopologicalSort<TypeId>,
-);
-
-pub fn resolve_types<'a>(
-    top_module: &'a Module,
-    type_items: &'a HashMap<SharedString, TypeItem>,
-    global_scope: &Scope,
-    global_const_values: &HashMap<SharedString, i64>,
-    funcs: &HashMap<SharedString, ConstFunc>,
-) -> TypecheckResult<'a, ResolvedTypes> {
-    let mut known_types = HashMap::default();
-    let mut type_order = TopologicalSort::new();
-    let mut type_queue = VecDeque::new();
-
-    known_types.insert(*CONST_TYPE_ID, ResolvedType::Const);
-
-    let top_ty = ResolvedType::Named {
-        name: top_module.name().as_string(),
-        generic_args: [].as_slice().into(),
-    };
-    let top_id = TypeId::from_type(&top_ty);
-    known_types.insert(top_id, top_ty);
-    type_queue.push_back(top_id);
-
-    let mut errors = Vec::new();
-    let mut resolved_type_items = HashMap::default();
-    while let Some(ty_id) = type_queue.pop_front() {
-        let ty = known_types[&ty_id].clone();
-
-        if let ResolvedType::Named { name, generic_args } = ty {
-            if let Some(item) = type_items.get(name.as_ref()) {
-                let args = ResolveArgs {
-                    type_items,
-                    global_scope,
-                    global_const_values,
-                    funcs,
-                };
-
-                let mut registry = TypeRegistry {
-                    known_types: &mut known_types,
-                    type_order: &mut type_order,
-                    type_queue: &mut type_queue,
-                };
-
-                match item {
-                    TypeItem::Struct(struct_item) => {
-                        let result =
-                            resolve_struct(struct_item, &generic_args, &args, &mut registry);
-
-                        match result {
-                            Ok(resolved_struct) => {
-                                resolved_type_items
-                                    .insert(ty_id, ResolvedTypeItem::Struct(resolved_struct));
-                            }
-                            Err(err) => errors.push(err),
-                        }
-                    }
-                    TypeItem::Enum(enum_item) => {
-                        let result = resolve_enum(enum_item, &args, &mut registry);
-
-                        match result {
-                            Ok(resolved_enum) => {
-                                resolved_type_items
-                                    .insert(ty_id, ResolvedTypeItem::Enum(resolved_enum));
-                            }
-                            Err(err) => errors.push(err),
-                        }
-                    }
-                    TypeItem::Module(module_item) => {
-                        let result =
-                            resolve_module(module_item, &generic_args, &args, &mut registry);
-
-                        match result {
-                            Ok(resolved_module) => {
-                                resolved_type_items
-                                    .insert(ty_id, ResolvedTypeItem::Module(resolved_module));
-                            }
-                            Err(err) => errors.push(err),
-                        }
-                    }
-                }
-            } else {
-                unreachable!("invalid resolved type");
-            }
-        }
-    }
-
-    wrap_errors!((known_types, resolved_type_items, type_order), errors)
-}
-
-fn resolve_type_late(
-    ty: &UnresolvedType,
-    known_types: &mut HashMap<TypeId, ResolvedType>,
-) -> TypeId {
-    match ty {
-        UnresolvedType::BuiltinBits { width } => {
-            let resolved_ty = ResolvedType::BuiltinBits { width: *width };
-            let id = TypeId::from_type(&resolved_ty);
-
-            if let hash_map::Entry::Vacant(entry) = known_types.entry(id) {
-                entry.insert(resolved_ty);
-            }
-
-            id
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TypecheckMode {
@@ -1861,7 +53,7 @@ fn typecheck_unary_expr<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
-) -> TypecheckResult<'a, Either<ConstUnaryExpr, CheckedUnaryExpr>> {
+) -> QuartzResult<'a, Either<ConstUnaryExpr, CheckedUnaryExpr>> {
     let inner = typecheck_expr(
         expr.inner(),
         parent_module,
@@ -1881,7 +73,7 @@ fn typecheck_unary_expr<'a>(
                 ResolvedType::BuiltinBits { .. } => {
                     Ok(Either::Checked(CheckedUnaryExpr::new(inner)))
                 }
-                _ => Err(TypecheckError::IncompatibleType {
+                _ => Err(QuartzError::IncompatibleType {
                     expr,
                     ty: inner_ty.to_string(known_types),
                 }),
@@ -1898,7 +90,7 @@ fn typecheck_binary_expr<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
-) -> TypecheckResult<'a, Either<ConstBinaryExpr, CheckedBinaryExpr>> {
+) -> QuartzResult<'a, Either<ConstBinaryExpr, CheckedBinaryExpr>> {
     let mut errors = Vec::new();
 
     let lhs = match typecheck_expr(
@@ -1934,7 +126,7 @@ fn typecheck_binary_expr<'a>(
     };
 
     if !errors.is_empty() {
-        return Err(TypecheckError::new_list(errors));
+        return Err(QuartzError::new_list(errors));
     }
 
     let lhs = lhs.unwrap();
@@ -1963,7 +155,7 @@ fn typecheck_binary_expr<'a>(
         (lhs, rhs) => (lhs, rhs),
     };
 
-    Err(TypecheckError::IncompatibleTypes {
+    Err(QuartzError::IncompatibleTypes {
         expr,
         lhs_ty: lhs.ty_string(known_types),
         rhs_ty: rhs.ty_string(known_types),
@@ -1978,7 +170,7 @@ fn typecheck_compare_expr<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
-) -> TypecheckResult<'a, Either<ConstBinaryExpr, CheckedBinaryExpr>> {
+) -> QuartzResult<'a, Either<ConstBinaryExpr, CheckedBinaryExpr>> {
     let mut errors = Vec::new();
 
     let lhs = match typecheck_expr(
@@ -2014,7 +206,7 @@ fn typecheck_compare_expr<'a>(
     };
 
     if !errors.is_empty() {
-        return Err(TypecheckError::new_list(errors));
+        return Err(QuartzError::new_list(errors));
     }
 
     let lhs = lhs.unwrap();
@@ -2056,7 +248,7 @@ fn typecheck_compare_expr<'a>(
         (lhs, rhs) => (lhs, rhs),
     };
 
-    Err(TypecheckError::IncompatibleTypes {
+    Err(QuartzError::IncompatibleTypes {
         expr,
         lhs_ty: lhs.ty_string(known_types),
         rhs_ty: rhs.ty_string(known_types),
@@ -2071,7 +263,7 @@ fn typecheck_concat_expr<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
-) -> TypecheckResult<'a, CheckedConcatExpr> {
+) -> QuartzResult<'a, CheckedConcatExpr> {
     let mut errors = Vec::new();
 
     let lhs = match typecheck_expr(
@@ -2107,7 +299,7 @@ fn typecheck_concat_expr<'a>(
     };
 
     if !errors.is_empty() {
-        return Err(TypecheckError::new_list(errors));
+        return Err(QuartzError::new_list(errors));
     }
 
     let lhs = lhs.unwrap();
@@ -2138,7 +330,7 @@ fn typecheck_concat_expr<'a>(
         (lhs, rhs) => (lhs, rhs),
     };
 
-    Err(TypecheckError::IncompatibleTypes {
+    Err(QuartzError::IncompatibleTypes {
         expr,
         lhs_ty: lhs.ty_string(known_types),
         rhs_ty: rhs.ty_string(known_types),
@@ -2153,7 +345,7 @@ fn typecheck_cast_expr<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
-) -> TypecheckResult<'a, CheckedCastExpr> {
+) -> QuartzResult<'a, CheckedCastExpr> {
     let value = typecheck_expr(
         expr.value(),
         parent_module,
@@ -2204,7 +396,7 @@ fn typecheck_cast_expr<'a>(
         _ => value,
     };
 
-    Err(TypecheckError::InvalidCast {
+    Err(QuartzError::InvalidCast {
         value_ty: value.ty_string(known_types),
         expr,
     })
@@ -2213,7 +405,7 @@ fn typecheck_cast_expr<'a>(
 fn merge_expr<'a>(
     expr: Either<ConstExpr, CheckedExpr>,
     args: &TypecheckArgs,
-) -> TypecheckResult<'a, CheckedExpr> {
+) -> QuartzResult<'a, CheckedExpr> {
     match expr {
         Either::Const(expr) => {
             let value = eval(
@@ -2237,7 +429,7 @@ fn typecheck_construct_expr<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
-) -> TypecheckResult<'a, CheckedConstructExpr> {
+) -> QuartzResult<'a, CheckedConstructExpr> {
     let id = expr.resolved_ty().expect("type not properly resolved");
     let ty = &known_types[&id];
 
@@ -2249,7 +441,7 @@ fn typecheck_construct_expr<'a>(
                     let mut errors = Vec::new();
                     for field in expr.fields().iter().map(|f| f.field()) {
                         if !struct_item.fields().contains_key(field.as_ref()) {
-                            errors.push(TypecheckError::UnknownField {
+                            errors.push(QuartzError::UnknownField {
                                 ty: expr.ty(),
                                 field,
                             });
@@ -2286,7 +478,7 @@ fn typecheck_construct_expr<'a>(
                                                     let field_ty = &known_types[&field_id];
                                                     let value_ty = &known_types[&value.ty()];
                                                     errors.push(
-                                                        TypecheckError::IncompatibleFieldType {
+                                                        QuartzError::IncompatibleFieldType {
                                                             assign,
                                                             field_ty: field_ty
                                                                 .to_string(known_types),
@@ -2303,7 +495,7 @@ fn typecheck_construct_expr<'a>(
                                 }
                             }
                             None => {
-                                errors.push(TypecheckError::MissingField {
+                                errors.push(QuartzError::MissingField {
                                     ty: expr.ty(),
                                     field: SharedString::clone(name),
                                 });
@@ -2313,7 +505,7 @@ fn typecheck_construct_expr<'a>(
 
                     wrap_errors!(CheckedConstructExpr::new(id, fields), errors)
                 }
-                _ => Err(TypecheckError::TypeNotConstructible { ty: expr.ty() }),
+                _ => Err(QuartzError::TypeNotConstructible { ty: expr.ty() }),
             }
         }
         _ => unreachable!("type incorrectly resolved"),
@@ -2325,18 +517,18 @@ fn find_module_member_type<'a>(
     module: &ResolvedModule,
     module_id: Option<TypeId>,
     known_types: &HashMap<TypeId, ResolvedType>,
-) -> TypecheckResult<'a, (TypeId, LogicKind)> {
+) -> QuartzResult<'a, (TypeId, LogicKind)> {
     if let Some(port) = module.ports().get(ident.as_ref()) {
         Ok((port.ty(), port.kind()))
     } else if let Some(member) = module.logic_members().get(ident.as_ref()) {
         Ok((member.ty(), member.kind()))
     } else if let Some(module_id) = module_id {
-        Err(TypecheckError::UndefinedMember {
+        Err(QuartzError::UndefinedMember {
             ty: known_types[&module_id].to_string(known_types),
             name: ident.clone(),
         })
     } else {
-        Err(TypecheckError::UndefinedIdent {
+        Err(QuartzError::UndefinedIdent {
             name: ident.clone(),
         })
     }
@@ -2347,13 +539,13 @@ fn find_member_type<'a>(
     parent_id: TypeId,
     known_types: &HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
-) -> TypecheckResult<'a, TypeId> {
+) -> QuartzResult<'a, TypeId> {
     match resolved_types.get(&parent_id) {
         Some(ResolvedTypeItem::Struct(struct_item)) => {
             if let Some((field_ty, _)) = struct_item.fields().get(ident.as_ref()).copied() {
                 Ok(field_ty)
             } else {
-                Err(TypecheckError::UndefinedMember {
+                Err(QuartzError::UndefinedMember {
                     ty: known_types[&parent_id].to_string(known_types),
                     name: ident.clone(),
                 })
@@ -2362,7 +554,7 @@ fn find_member_type<'a>(
         Some(ResolvedTypeItem::Module(module_item)) => {
             Ok(find_module_member_type(ident, module_item, Some(parent_id), known_types)?.0)
         }
-        Some(_) => Err(TypecheckError::UndefinedMember {
+        Some(_) => Err(QuartzError::UndefinedMember {
             ty: known_types[&parent_id].to_string(known_types),
             name: ident.clone(),
         }),
@@ -2375,19 +567,19 @@ fn is_valid_enum_variant<'a>(
     enum_name: &'a Ident,
     variant_name: &'a Ident,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
-) -> TypecheckResult<'a, ()> {
+) -> QuartzResult<'a, ()> {
     match resolved_types.get(&enum_ty) {
         Some(ResolvedTypeItem::Enum(enum_item)) => {
             if enum_item.variants().contains_key(variant_name.as_ref()) {
                 Ok(())
             } else {
-                Err(TypecheckError::InvalidEnumVariant {
+                Err(QuartzError::InvalidEnumVariant {
                     enum_name: enum_name.as_string(),
                     variant_name: variant_name.clone(),
                 })
             }
         }
-        _ => Err(TypecheckError::InvalidEnumIdent {
+        _ => Err(QuartzError::InvalidEnumIdent {
             name: enum_name.clone(),
         }),
     }
@@ -2399,7 +591,7 @@ fn typecheck_path<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
-) -> TypecheckResult<'a, Either<Ident, CheckedPath>> {
+) -> QuartzResult<'a, Either<Ident, CheckedPath>> {
     if let Some(ident) = path.as_ident() {
         if args.global_const_values.contains_key(ident.as_ref())
             || args.local_const_values.contains_key(ident.as_ref())
@@ -2421,7 +613,7 @@ fn typecheck_path<'a>(
             is_valid_enum_variant(enum_id, path.head(), path.tail()[0].ident(), resolved_types)?;
             Ok(Either::Checked(CheckedPath::new(path.clone(), enum_id)))
         } else {
-            Err(TypecheckError::InvalidPath { path })
+            Err(QuartzError::InvalidPath { path })
         }
     }
 }
@@ -2435,7 +627,7 @@ fn typecheck_indexer<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
-) -> TypecheckResult<'a, (CheckedIndexKind, TypeId)> {
+) -> QuartzResult<'a, (CheckedIndexKind, TypeId)> {
     match indexer.index() {
         IndexKind::Single(index_expr) => {
             let index = typecheck_expr(
@@ -2463,7 +655,7 @@ fn typecheck_indexer<'a>(
                     match base_ty {
                         ResolvedType::BuiltinBits { width } => {
                             if (index < 0) || (index >= (*width as i64)) {
-                                return Err(TypecheckError::IndexOutOfRange {
+                                return Err(QuartzError::IndexOutOfRange {
                                     index_expr,
                                     index,
                                     len: *width,
@@ -2477,7 +669,7 @@ fn typecheck_indexer<'a>(
                         }
                         ResolvedType::Array { item_ty, len } => {
                             if (index < 0) || (index >= (*len as i64)) {
-                                return Err(TypecheckError::IndexOutOfRange {
+                                return Err(QuartzError::IndexOutOfRange {
                                     index_expr,
                                     index,
                                     len: *len,
@@ -2486,7 +678,7 @@ fn typecheck_indexer<'a>(
 
                             Ok((checked_indexer, *item_ty))
                         }
-                        _ => Err(TypecheckError::InvalidIndexing {
+                        _ => Err(QuartzError::InvalidIndexing {
                             indexer,
                             base_ty: base_ty.to_string(known_types),
                         }),
@@ -2498,7 +690,7 @@ fn typecheck_indexer<'a>(
                         ResolvedType::BuiltinBits { width } => width.clog2(),
                         ResolvedType::Array { len, .. } => len.clog2(),
                         _ => {
-                            return Err(TypecheckError::InvalidIndexing {
+                            return Err(QuartzError::InvalidIndexing {
                                 indexer,
                                 base_ty: base_ty.to_string(known_types),
                             });
@@ -2528,7 +720,7 @@ fn typecheck_indexer<'a>(
                             _ => unreachable!(),
                         }
                     } else {
-                        Err(TypecheckError::InvalidIndexType {
+                        Err(QuartzError::InvalidIndexType {
                             expr: index_expr,
                             expected_ty: required_ty.to_string(known_types),
                             value_ty: index_ty.to_string(known_types),
@@ -2561,7 +753,7 @@ fn typecheck_indexer<'a>(
             match base_ty {
                 ResolvedType::BuiltinBits { width } => {
                     if (start < 0) || (start >= (*width as i64)) {
-                        return Err(TypecheckError::IndexOutOfRange {
+                        return Err(QuartzError::IndexOutOfRange {
                             index_expr: &range.start,
                             index: start,
                             len: *width,
@@ -2569,7 +761,7 @@ fn typecheck_indexer<'a>(
                     }
 
                     if (end <= start) || (end >= (*width as i64)) {
-                        return Err(TypecheckError::IndexOutOfRange {
+                        return Err(QuartzError::IndexOutOfRange {
                             index_expr: &range.end,
                             index: end,
                             len: *width,
@@ -2588,11 +780,11 @@ fn typecheck_indexer<'a>(
                     let checked_indexer = CheckedIndexKind::Range(start..end);
                     Ok((checked_indexer, result_id))
                 }
-                ResolvedType::Array { .. } => Err(TypecheckError::InvalidRangeIndexing {
+                ResolvedType::Array { .. } => Err(QuartzError::InvalidRangeIndexing {
                     indexer,
                     base_ty: base_ty.to_string(known_types),
                 }),
-                _ => Err(TypecheckError::InvalidIndexing {
+                _ => Err(QuartzError::InvalidIndexing {
                     indexer,
                     base_ty: base_ty.to_string(known_types),
                 }),
@@ -2609,7 +801,7 @@ fn typecheck_index_expr<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
-) -> TypecheckResult<'a, CheckedIndexExpr> {
+) -> QuartzResult<'a, CheckedIndexExpr> {
     let base = typecheck_expr(
         expr.base(),
         parent_module,
@@ -2643,7 +835,7 @@ fn typecheck_member_access_expr<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
-) -> TypecheckResult<'a, CheckedMemberAccessExpr> {
+) -> QuartzResult<'a, CheckedMemberAccessExpr> {
     let base = typecheck_expr(
         expr.base(),
         parent_module,
@@ -2677,7 +869,7 @@ fn typecheck_if_expr<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
-) -> TypecheckResult<'a, CheckedIfExpr> {
+) -> QuartzResult<'a, CheckedIfExpr> {
     let mut errors = Vec::new();
 
     let cond = match typecheck_expr(
@@ -2695,7 +887,7 @@ fn typecheck_if_expr<'a>(
                 match cond_ty {
                     ResolvedType::Const | ResolvedType::BuiltinBits { width: 1 } => Some(cond),
                     _ => {
-                        errors.push(TypecheckError::InvalidConditionType {
+                        errors.push(QuartzError::InvalidConditionType {
                             cond: expr.condition(),
                             cond_ty: cond_ty.to_string(known_types),
                         });
@@ -2747,7 +939,7 @@ fn typecheck_if_expr<'a>(
                     match cond_ty {
                         ResolvedType::Const | ResolvedType::BuiltinBits { width: 1 } => Some(cond),
                         _ => {
-                            errors.push(TypecheckError::InvalidConditionType {
+                            errors.push(QuartzError::InvalidConditionType {
                                 cond: expr.condition(),
                                 cond_ty: cond_ty.to_string(known_types),
                             });
@@ -2804,12 +996,12 @@ fn typecheck_if_expr<'a>(
             }
         }
     } else {
-        errors.push(TypecheckError::MissingElseBlock { if_expr: expr });
+        errors.push(QuartzError::MissingElseBlock { if_expr: expr });
         None
     };
 
     if !errors.is_empty() {
-        Err(TypecheckError::new_list(errors))
+        Err(QuartzError::new_list(errors))
     } else {
         let cond = cond.unwrap();
         let body = body.unwrap();
@@ -2823,7 +1015,7 @@ fn typecheck_if_expr<'a>(
             if else_if_ty_id != ty_id {
                 let else_if_ty = &known_types[&else_if_ty_id];
 
-                errors.push(TypecheckError::ElseIfTypeMismatch {
+                errors.push(QuartzError::ElseIfTypeMismatch {
                     if_ty: ty.to_string(known_types),
                     else_if_ty: else_if_ty.to_string(known_types),
                     else_if_block: &expr.else_if_blocks()[i],
@@ -2836,7 +1028,7 @@ fn typecheck_if_expr<'a>(
             if else_ty_id != ty_id {
                 let else_ty = &known_types[&else_ty_id];
 
-                errors.push(TypecheckError::ElseTypeMismatch {
+                errors.push(QuartzError::ElseTypeMismatch {
                     if_ty: ty.to_string(known_types),
                     else_ty: else_ty.to_string(known_types),
                     else_block: expr.else_block().unwrap(),
@@ -2858,7 +1050,7 @@ fn typecheck_numeric_match_expr<'a>(
     scope: &Scope,
     known_types: &HashMap<TypeId, ResolvedType>,
     args: &TypecheckArgs,
-) -> TypecheckResult<'a, ()> {
+) -> QuartzResult<'a, ()> {
     let mut errors = Vec::new();
 
     let full_range = InclusiveRange::n_bit(width);
@@ -2870,12 +1062,12 @@ fn typecheck_numeric_match_expr<'a>(
                 MatchPattern::Literal(l) => {
                     if full_range.contains(l.value() as u64) {
                         if covered_ranges.contains(l.value() as u64) {
-                            errors.push(TypecheckError::UnreachablePattern { pattern });
+                            errors.push(QuartzError::UnreachablePattern { pattern });
                         } else {
                             covered_ranges.insert(l.value() as u64);
                         }
                     } else {
-                        errors.push(TypecheckError::PatternOutOfRange {
+                        errors.push(QuartzError::PatternOutOfRange {
                             pattern,
                             value_ty: value_ty.to_string(known_types),
                         });
@@ -2887,12 +1079,12 @@ fn typecheck_numeric_match_expr<'a>(
                     let range = (start.value() as u64)..(end.value() as u64);
                     if full_range.contains(&range) {
                         if covered_ranges.contains(&range) {
-                            errors.push(TypecheckError::UnreachablePattern { pattern });
+                            errors.push(QuartzError::UnreachablePattern { pattern });
                         } else {
                             covered_ranges.insert(range);
                         }
                     } else {
-                        errors.push(TypecheckError::PatternOutOfRange {
+                        errors.push(QuartzError::PatternOutOfRange {
                             pattern,
                             value_ty: value_ty.to_string(known_types),
                         });
@@ -2904,12 +1096,12 @@ fn typecheck_numeric_match_expr<'a>(
                     let range = (start.value() as u64)..=(end.value() as u64);
                     if full_range.contains(&range) {
                         if covered_ranges.contains(&range) {
-                            errors.push(TypecheckError::UnreachablePattern { pattern });
+                            errors.push(QuartzError::UnreachablePattern { pattern });
                         } else {
                             covered_ranges.insert(range);
                         }
                     } else {
-                        errors.push(TypecheckError::PatternOutOfRange {
+                        errors.push(QuartzError::PatternOutOfRange {
                             pattern,
                             value_ty: value_ty.to_string(known_types),
                         });
@@ -2921,7 +1113,7 @@ fn typecheck_numeric_match_expr<'a>(
                     if let Some(ident) = p.as_ident() {
                         if ident.as_ref() == "_" {
                             if covered_ranges.contains(full_range) {
-                                errors.push(TypecheckError::UnreachablePattern { pattern });
+                                errors.push(QuartzError::UnreachablePattern { pattern });
                             } else {
                                 covered_ranges.insert(full_range);
                             }
@@ -2937,14 +1129,13 @@ fn typecheck_numeric_match_expr<'a>(
 
                                     if full_range.contains(value) {
                                         if covered_ranges.contains(value) {
-                                            errors.push(TypecheckError::UnreachablePattern {
-                                                pattern,
-                                            });
+                                            errors
+                                                .push(QuartzError::UnreachablePattern { pattern });
                                         } else {
                                             covered_ranges.insert(value);
                                         }
                                     } else {
-                                        errors.push(TypecheckError::PatternOutOfRange {
+                                        errors.push(QuartzError::PatternOutOfRange {
                                             pattern,
                                             value_ty: value_ty.to_string(known_types),
                                         });
@@ -2959,7 +1150,7 @@ fn typecheck_numeric_match_expr<'a>(
                 }
             }
 
-            errors.push(TypecheckError::IncompatiblePattern {
+            errors.push(QuartzError::IncompatiblePattern {
                 pattern,
                 value_ty: value_ty.to_string(known_types),
             });
@@ -2967,7 +1158,7 @@ fn typecheck_numeric_match_expr<'a>(
     }
 
     if !covered_ranges.contains(full_range) {
-        errors.push(TypecheckError::NonExhaustiveMatch { match_expr: expr })
+        errors.push(QuartzError::NonExhaustiveMatch { match_expr: expr })
     }
 
     wrap_errors!((), errors)
@@ -2978,7 +1169,7 @@ fn typecheck_enum_match_expr<'a>(
     value_ty: &ResolvedType,
     enum_item: &ResolvedEnum,
     known_types: &HashMap<TypeId, ResolvedType>,
-) -> TypecheckResult<'a, ()> {
+) -> QuartzResult<'a, ()> {
     let ResolvedType::Named { name: enum_name, .. } = value_ty else {
         unreachable!("enums must be named types");
     };
@@ -3000,11 +1191,11 @@ fn typecheck_enum_match_expr<'a>(
                             unused_variants.remove(variant_name.as_ref());
                             continue 'inner;
                         } else {
-                            errors.push(TypecheckError::UnreachablePattern { pattern });
+                            errors.push(QuartzError::UnreachablePattern { pattern });
                             continue 'inner;
                         }
                     } else {
-                        errors.push(TypecheckError::InvalidEnumVariant {
+                        errors.push(QuartzError::InvalidEnumVariant {
                             enum_name: SharedString::clone(enum_name),
                             variant_name: variant_name.clone()
                         });
@@ -3013,7 +1204,7 @@ fn typecheck_enum_match_expr<'a>(
                 }
             }
 
-            errors.push(TypecheckError::IncompatiblePattern {
+            errors.push(QuartzError::IncompatiblePattern {
                 pattern,
                 value_ty: value_ty.to_string(known_types),
             });
@@ -3021,7 +1212,7 @@ fn typecheck_enum_match_expr<'a>(
     }
 
     if !unused_variants.is_empty() {
-        errors.push(TypecheckError::NonExhaustiveMatch { match_expr: expr })
+        errors.push(QuartzError::NonExhaustiveMatch { match_expr: expr })
     }
 
     wrap_errors!((), errors)
@@ -3035,7 +1226,7 @@ fn typecheck_match_expr<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
-) -> TypecheckResult<'a, CheckedMatchExpr> {
+) -> QuartzResult<'a, CheckedMatchExpr> {
     let mut errors = Vec::new();
 
     let value = match typecheck_expr(
@@ -3117,7 +1308,7 @@ fn typecheck_match_expr<'a>(
             if branch_ty_id != ty_id {
                 let ty = &known_types[&ty_id];
                 let branch_ty = &known_types[&branch_ty_id];
-                errors.push(TypecheckError::MatchBranchTypeMismatch {
+                errors.push(QuartzError::MatchBranchTypeMismatch {
                     match_ty: ty.to_string(known_types),
                     branch_ty: branch_ty.to_string(known_types),
                     branch,
@@ -3158,7 +1349,7 @@ fn typecheck_match_expr<'a>(
                         }
                     }
                     _ => {
-                        errors.push(TypecheckError::InvalidMatchType {
+                        errors.push(QuartzError::InvalidMatchType {
                             value: expr.value(),
                             value_ty: value_ty.to_string(known_types),
                         });
@@ -3166,7 +1357,7 @@ fn typecheck_match_expr<'a>(
                 }
             }
             _ => {
-                errors.push(TypecheckError::InvalidMatchType {
+                errors.push(QuartzError::InvalidMatchType {
                     value: expr.value(),
                     value_ty: value_ty.to_string(known_types),
                 });
@@ -3188,7 +1379,7 @@ fn typecheck_expr<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
-) -> TypecheckResult<'a, Either<ConstExpr, CheckedExpr>> {
+) -> QuartzResult<'a, Either<ConstExpr, CheckedExpr>> {
     macro_rules! wrap_expr {
         ($inner:expr, $variant:ident) => {
             $inner.map(
@@ -3255,7 +1446,7 @@ fn typecheck_expr<'a>(
                 args,
             )?;
             match inner {
-                Either::Const(_) => Err(TypecheckError::InvalidConstOp { op: *$expr.op() }),
+                Either::Const(_) => Err(QuartzError::InvalidConstOp { op: *$expr.op() }),
                 Either::Checked(inner) => Ok(Either::Checked(CheckedExpr::$op(inner))),
             }
         }};
@@ -3421,7 +1612,7 @@ fn typecheck_if_statement<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
-) -> TypecheckResult<'a, CheckedIfStatement> {
+) -> QuartzResult<'a, CheckedIfStatement> {
     let mut errors = Vec::new();
 
     let cond = match typecheck_expr(
@@ -3439,7 +1630,7 @@ fn typecheck_if_statement<'a>(
                 match cond_ty {
                     ResolvedType::Const | ResolvedType::BuiltinBits { width: 1 } => Some(cond),
                     _ => {
-                        errors.push(TypecheckError::InvalidConditionType {
+                        errors.push(QuartzError::InvalidConditionType {
                             cond: expr.condition(),
                             cond_ty: cond_ty.to_string(known_types),
                         });
@@ -3491,7 +1682,7 @@ fn typecheck_if_statement<'a>(
                     match cond_ty {
                         ResolvedType::Const | ResolvedType::BuiltinBits { width: 1 } => Some(cond),
                         _ => {
-                            errors.push(TypecheckError::InvalidConditionType {
+                            errors.push(QuartzError::InvalidConditionType {
                                 cond: expr.condition(),
                                 cond_ty: cond_ty.to_string(known_types),
                             });
@@ -3565,7 +1756,7 @@ fn typecheck_match_statement<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
-) -> TypecheckResult<'a, CheckedMatchStatement> {
+) -> QuartzResult<'a, CheckedMatchStatement> {
     let mut errors = Vec::new();
 
     let value = match typecheck_expr(
@@ -3594,7 +1785,7 @@ fn typecheck_match_statement<'a>(
     for branch in expr.branches().iter() {
         match branch.body() {
             MatchBody::Expr(body_expr) => {
-                errors.push(TypecheckError::UnexpectedReturnValue { value: body_expr });
+                errors.push(QuartzError::UnexpectedReturnValue { value: body_expr });
 
                 match typecheck_expr(
                     body_expr,
@@ -3632,7 +1823,7 @@ fn typecheck_match_statement<'a>(
     }
 
     if !errors.is_empty() {
-        Err(TypecheckError::new_list(errors))
+        Err(QuartzError::new_list(errors))
     } else {
         let value = value.unwrap();
         let value_ty = &known_types[&value.ty()];
@@ -3650,7 +1841,7 @@ fn typecheck_match_statement<'a>(
                         typecheck_enum_match_expr(expr, value_ty, enum_item, known_types)?;
                     }
                     _ => {
-                        return Err(TypecheckError::InvalidMatchType {
+                        return Err(QuartzError::InvalidMatchType {
                             value: expr.value(),
                             value_ty: value_ty.to_string(known_types),
                         });
@@ -3658,7 +1849,7 @@ fn typecheck_match_statement<'a>(
                 }
             }
             _ => {
-                return Err(TypecheckError::InvalidMatchType {
+                return Err(QuartzError::InvalidMatchType {
                     value: expr.value(),
                     value_ty: value_ty.to_string(known_types),
                 });
@@ -3677,15 +1868,15 @@ fn typecheck_assignment<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
-) -> TypecheckResult<'a, CheckedAssignment> {
+) -> QuartzResult<'a, CheckedAssignment> {
     let mut errors = Vec::new();
 
     if assign.op().kind() != AssignKind::Assign {
-        errors.push(TypecheckError::InvalidAssignOp { assign });
+        errors.push(QuartzError::InvalidAssignOp { assign });
     }
 
     if !assign.target().path().is_ident() {
-        errors.push(TypecheckError::InvalidPath {
+        errors.push(QuartzError::InvalidPath {
             path: assign.target().path(),
         });
     }
@@ -3718,13 +1909,13 @@ fn typecheck_assignment<'a>(
         Ok((base_ty, kind)) => {
             match (mode, kind) {
                 (TypecheckMode::Sequential, LogicKind::Signal) => {
-                    errors.push(TypecheckError::InvalidSeqAssignSig { assign })
+                    errors.push(QuartzError::InvalidSeqAssignSig { assign })
                 }
                 (TypecheckMode::Sequential, LogicKind::Module) => {
-                    errors.push(TypecheckError::InvalidSeqAssignMod { assign })
+                    errors.push(QuartzError::InvalidSeqAssignMod { assign })
                 }
                 (TypecheckMode::Combinatoric, LogicKind::Register) => {
-                    errors.push(TypecheckError::InvalidCombAssignReg { assign })
+                    errors.push(QuartzError::InvalidCombAssignReg { assign })
                 }
                 _ => { /* valid */ }
             }
@@ -3784,7 +1975,7 @@ fn typecheck_assignment<'a>(
         }
         Err(err) => {
             errors.push(err);
-            Err(TypecheckError::new_list(errors))
+            Err(QuartzError::new_list(errors))
         }
     }
 }
@@ -3797,7 +1988,7 @@ fn typecheck_statement<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
-) -> TypecheckResult<'a, CheckedStatement> {
+) -> QuartzResult<'a, CheckedStatement> {
     match statement {
         Statement::Expr(expr) => match expr {
             Expr::If(if_expr) => {
@@ -3850,7 +2041,7 @@ fn typecheck_statement<'a>(
                 Ok(CheckedStatement::Expr(checked_expr))
             }
         },
-        Statement::Declaration(decl) => Err(TypecheckError::UnsupportedDeclaration { decl }),
+        Statement::Declaration(decl) => Err(QuartzError::UnsupportedDeclaration { decl }),
         Statement::Assignment(assign) => {
             let checked_assign = typecheck_assignment(
                 assign,
@@ -3863,10 +2054,8 @@ fn typecheck_statement<'a>(
             )?;
             Ok(CheckedStatement::Assignment(checked_assign))
         }
-        Statement::WhileLoop(while_loop) => {
-            Err(TypecheckError::UnsupportedWhileLoop { while_loop })
-        }
-        Statement::ForLoop(for_loop) => Err(TypecheckError::UnsupportedForLoop { for_loop }),
+        Statement::WhileLoop(while_loop) => Err(QuartzError::UnsupportedWhileLoop { while_loop }),
+        Statement::ForLoop(for_loop) => Err(QuartzError::UnsupportedForLoop { for_loop }),
     }
 }
 
@@ -3878,7 +2067,7 @@ fn typecheck_expr_block<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
-) -> TypecheckResult<'a, CheckedExprBlock> {
+) -> QuartzResult<'a, CheckedExprBlock> {
     let mut errors = Vec::new();
     let scope = Scope::new(parent_scope);
 
@@ -3924,7 +2113,7 @@ fn typecheck_expr_block<'a>(
                 }
             }
         } else {
-            errors.push(TypecheckError::MissingReturnValue { block });
+            errors.push(QuartzError::MissingReturnValue { block });
             None
         }
     };
@@ -3940,7 +2129,7 @@ fn typecheck_block<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
-) -> TypecheckResult<'a, CheckedBlock> {
+) -> QuartzResult<'a, CheckedBlock> {
     let mut errors = Vec::new();
     let scope = Scope::new(parent_scope);
 
@@ -4022,7 +2211,7 @@ fn typecheck_block<'a>(
                     errors.push(err);
                 }
 
-                errors.push(TypecheckError::UnexpectedReturnValue { value: result });
+                errors.push(QuartzError::UnexpectedReturnValue { value: result });
             }
         }
     }
@@ -4052,10 +2241,10 @@ pub fn struct_contains_module<'a>(
     struct_item: &ResolvedStruct,
     known_types: &HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
-) -> TypecheckResult<'a, ()> {
+) -> QuartzResult<'a, ()> {
     for (_, &(field_ty, field_span)) in struct_item.fields().iter() {
         if type_contains_module(field_ty, known_types, resolved_types) {
-            return Err(TypecheckError::StructModuleField { field_span });
+            return Err(QuartzError::StructModuleField { field_span });
         }
     }
 
@@ -4069,7 +2258,7 @@ pub fn typecheck_module<'a>(
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     global_const_values: &HashMap<SharedString, i64>,
     funcs: &HashMap<SharedString, ConstFunc>,
-) -> TypecheckResult<'a, CheckedModule> {
+) -> QuartzResult<'a, CheckedModule> {
     // The scope is only for const evaluation, so no ports/logic members belong in it
     let mut module_scope = Scope::new(global_scope);
     for name in module_item.local_consts().keys() {
@@ -4091,7 +2280,7 @@ pub fn typecheck_module<'a>(
             | (Direction::Out, LogicKind::Module)
             | (Direction::InOut, LogicKind::Register)
             | (Direction::InOut, LogicKind::Module) => {
-                errors.push(TypecheckError::InvalidPortKind {
+                errors.push(QuartzError::InvalidPortKind {
                     port_span: port.span(),
                     port_dir: port.dir(),
                     port_kind: port.kind(),
@@ -4104,11 +2293,11 @@ pub fn typecheck_module<'a>(
         match (port.kind(), ty_is_mod) {
             (LogicKind::Signal, true)
             | (LogicKind::Register, true)
-            | (LogicKind::Module, false) => errors.push(TypecheckError::PortKindMismatch {
+            | (LogicKind::Module, false) => errors.push(QuartzError::PortKindMismatch {
                 port_span: port.span(),
                 port_ty: known_types[&port.ty()].to_string(known_types),
             }),
-            (LogicKind::Module, true) => errors.push(TypecheckError::PortModuleType {
+            (LogicKind::Module, true) => errors.push(QuartzError::PortModuleType {
                 port_span: port.span(),
             }),
             _ => { /* valid */ }
@@ -4120,7 +2309,7 @@ pub fn typecheck_module<'a>(
         match (logic_member.kind(), ty_is_mod) {
             (LogicKind::Signal, true)
             | (LogicKind::Register, true)
-            | (LogicKind::Module, false) => errors.push(TypecheckError::MemberKindMismatch {
+            | (LogicKind::Module, false) => errors.push(QuartzError::MemberKindMismatch {
                 member_span: logic_member.span(),
                 member_ty: known_types[&logic_member.ty()].to_string(known_types),
             }),
