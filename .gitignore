@@ -1,3 +1,4 @@
 /target
-out.v
-out.sv
+*.v
+*.sv
+.svlint.toml
