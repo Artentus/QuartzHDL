@@ -644,24 +644,25 @@ fn transpile_statement(
             for branch in case_statement.branches().iter() {
                 write!(writer, "{}    ", leading_ws)?;
 
-                for (i, pattern) in branch.patterns().iter().enumerate() {
-                    if i > 0 {
-                        write!(writer, ", ")?;
-                    }
+                let is_default = branch.patterns().iter().any(|pattern| {
+                    matches!(pattern, VCasePattern::Ident(ident) if ident.as_ref() == "_")
+                });
+                if is_default {
+                    writeln!(writer, "default: begin")?;
+                } else {
+                    for (i, pattern) in branch.patterns().iter().enumerate() {
+                        if i > 0 {
+                            write!(writer, ", ")?;
+                        }
 
-                    match pattern {
-                        VCasePattern::Literal(literal) => write!(writer, "{}", literal)?,
-                        VCasePattern::Ident(ident) => {
-                            if ident.as_ref() == "_" {
-                                write!(writer, "default")?;
-                            } else {
-                                write!(writer, "{}", ident)?;
-                            }
+                        match pattern {
+                            VCasePattern::Literal(literal) => write!(writer, "{}", literal)?,
+                            VCasePattern::Ident(ident) => write!(writer, "{}", ident)?,
                         }
                     }
-                }
 
-                writeln!(writer, ": begin")?;
+                    writeln!(writer, ": begin")?;
+                }
 
                 transpile_block(
                     writer,

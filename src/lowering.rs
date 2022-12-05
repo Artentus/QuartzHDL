@@ -206,7 +206,13 @@ fn lower_if_expr(
         );
         tmp_proc_statements.push(VStatement::If(if_statement_proc));
     } else if !else_if_blocks_proc.is_empty() {
-        // TODO:
+        let if_statement_proc = VIfStatement::new(
+            condition.clone(),
+            VBlock::new(Vec::new()),
+            else_if_blocks_proc,
+            else_block_proc,
+        );
+        tmp_proc_statements.push(VStatement::If(if_statement_proc));
     }
 
     let if_statement_comb = VIfStatement::new(
@@ -298,12 +304,151 @@ fn lower_match_expr(
             branches_comb.push(VCaseBranch::new(patterns, body_comb));
         }
 
-        let case_statement = VCaseStatement::new(value, branches_comb);
-        tmp_comb_statements.push(VStatement::Case(case_statement));
+        if !branches_proc.is_empty() {
+            let case_statement_proc = VCaseStatement::new(value.clone(), branches_proc);
+            tmp_proc_statements.push(VStatement::Case(case_statement_proc));
+        }
+
+        let case_statement_comb = VCaseStatement::new(value, branches_comb);
+        tmp_comb_statements.push(VStatement::Case(case_statement_comb));
 
         VExpr::Ident(tmp_member)
     } else {
-        todo!()
+        let value_name = add_tmp_member(match_expr.value().ty(), tmp_members);
+
+        let value = lower_expr(
+            match_expr.value(),
+            mode,
+            tmp_members,
+            tmp_comb_statements,
+            tmp_proc_statements,
+            known_types,
+            resolved_types,
+        );
+
+        let value_target = VAssignTarget::new(SharedString::clone(&value_name), Vec::new());
+        let value_assign = VAssignment::new(value_target, VAssignMode::Combinatoric, value);
+        tmp_comb_statements.push(VStatement::Assignment(value_assign));
+
+        let mut branch_to_cond_body =
+            |branch: &CheckedMatchExprBranch| -> (VExpr, VBlock, Option<VBlock>) {
+                macro_rules! value {
+                    () => {
+                        VExpr::Ident(SharedString::clone(&value_name))
+                    };
+                }
+
+                let mut cond_terms = Vec::with_capacity(branch.patterns().len());
+                for pattern in branch.patterns() {
+                    match pattern {
+                        MatchPattern::Literal(value) => {
+                            let value = VExpr::Value(value.value());
+                            let term = VExpr::Eq(VBinaryExpr::new(value!(), value));
+                            cond_terms.push(term);
+                        }
+                        MatchPattern::Range(start, end) => {
+                            let start = VExpr::Value(start.value());
+                            let end = VExpr::Value(end.value());
+
+                            let lower_bound = VExpr::Gte(VBinaryExpr::new(value!(), start));
+                            let upper_bound = VExpr::Lt(VBinaryExpr::new(value!(), end));
+
+                            let term = VExpr::And(VBinaryExpr::new(lower_bound, upper_bound));
+                            cond_terms.push(term);
+                        }
+                        MatchPattern::RangeInclusive(start, end) => {
+                            let start = VExpr::Value(start.value());
+                            let end = VExpr::Value(end.value());
+
+                            let lower_bound = VExpr::Gte(VBinaryExpr::new(value!(), start));
+                            let upper_bound = VExpr::Lte(VBinaryExpr::new(value!(), end));
+
+                            let term = VExpr::And(VBinaryExpr::new(lower_bound, upper_bound));
+                            cond_terms.push(term);
+                        }
+                        MatchPattern::Path(_) => {
+                            unreachable!("error in type-checking match expression")
+                        }
+                    }
+                }
+
+                let cond = cond_terms
+                    .into_iter()
+                    .reduce(|a, b| VExpr::Or(VBinaryExpr::new(a, b)))
+                    .expect("error in type-checking match expression");
+
+                let (body_comb, body_proc) = match branch.body() {
+                    CheckedMatchExprBody::Expr(body) => {
+                        let result = lower_expr(
+                            body,
+                            mode,
+                            tmp_members,
+                            tmp_comb_statements,
+                            tmp_proc_statements,
+                            known_types,
+                            resolved_types,
+                        );
+                        let assign_target =
+                            VAssignTarget::new(SharedString::clone(&tmp_member), Vec::new());
+
+                        let mut statements = Vec::with_capacity(1);
+                        statements.push(VStatement::Assignment(VAssignment::new(
+                            assign_target,
+                            mode,
+                            result,
+                        )));
+
+                        (VBlock::new(statements), None)
+                    }
+                    CheckedMatchExprBody::Block(body) => lower_expr_block(
+                        body,
+                        SharedString::clone(&tmp_member),
+                        mode,
+                        tmp_members,
+                        tmp_comb_statements,
+                        tmp_proc_statements,
+                        known_types,
+                        resolved_types,
+                    ),
+                };
+
+                (cond, body_comb, body_proc)
+            };
+
+        let Some(first) = match_expr.branches().first() else {
+            unreachable!("error in type-checking match expression");
+        };
+
+        let (condition, body_comb, body_proc) = branch_to_cond_body(first);
+
+        let mut else_if_blocks_comb = Vec::with_capacity(match_expr.branches().len() - 1);
+        let mut else_if_blocks_proc = Vec::with_capacity(match_expr.branches().len() - 1);
+        for branch in match_expr.branches().iter().skip(1) {
+            let (condition, body_comb, body_proc) = branch_to_cond_body(branch);
+            if let Some(body_proc) = body_proc {
+                else_if_blocks_proc.push((condition.clone(), body_proc));
+            }
+            else_if_blocks_comb.push((condition, body_comb));
+        }
+
+        if let Some(body_proc) = body_proc {
+            let if_statement_proc =
+                VIfStatement::new(condition.clone(), body_proc, else_if_blocks_proc, None);
+            tmp_proc_statements.push(VStatement::If(if_statement_proc));
+        } else if !else_if_blocks_proc.is_empty() {
+            let if_statement_proc = VIfStatement::new(
+                condition.clone(),
+                VBlock::new(Vec::new()),
+                else_if_blocks_proc,
+                None,
+            );
+            tmp_proc_statements.push(VStatement::If(if_statement_proc));
+        }
+
+        let if_statement_comb = VIfStatement::new(condition, body_comb, else_if_blocks_comb, None);
+        tmp_comb_statements.push(VStatement::If(if_statement_comb));
+
+        VExpr::Ident(tmp_member)
     }
 }
 
@@ -646,7 +791,95 @@ fn lower_match_statement(
 
         LoweredMatchStatement::Case(VCaseStatement::new(value, branches))
     } else {
-        todo!()
+        let value_name = add_tmp_member(match_statement.value().ty(), tmp_members);
+
+        let value = lower_expr(
+            match_statement.value(),
+            mode,
+            tmp_members,
+            tmp_comb_statements,
+            tmp_proc_statements,
+            known_types,
+            resolved_types,
+        );
+
+        let value_target = VAssignTarget::new(SharedString::clone(&value_name), Vec::new());
+        let value_assign = VAssignment::new(value_target, VAssignMode::Combinatoric, value);
+        tmp_comb_statements.push(VStatement::Assignment(value_assign));
+
+        let mut branch_to_cond_body = |branch: &CheckedMatchStatementBranch| -> (VExpr, VBlock) {
+            macro_rules! value {
+                () => {
+                    VExpr::Ident(SharedString::clone(&value_name))
+                };
+            }
+
+            let mut cond_terms = Vec::with_capacity(branch.patterns().len());
+            for pattern in branch.patterns() {
+                match pattern {
+                    MatchPattern::Literal(value) => {
+                        let value = VExpr::Value(value.value());
+                        let term = VExpr::Eq(VBinaryExpr::new(value!(), value));
+                        cond_terms.push(term);
+                    }
+                    MatchPattern::Range(start, end) => {
+                        let start = VExpr::Value(start.value());
+                        let end = VExpr::Value(end.value());
+
+                        let lower_bound = VExpr::Gte(VBinaryExpr::new(value!(), start));
+                        let upper_bound = VExpr::Lt(VBinaryExpr::new(value!(), end));
+
+                        let term = VExpr::And(VBinaryExpr::new(lower_bound, upper_bound));
+                        cond_terms.push(term);
+                    }
+                    MatchPattern::RangeInclusive(start, end) => {
+                        let start = VExpr::Value(start.value());
+                        let end = VExpr::Value(end.value());
+
+                        let lower_bound = VExpr::Gte(VBinaryExpr::new(value!(), start));
+                        let upper_bound = VExpr::Lte(VBinaryExpr::new(value!(), end));
+
+                        let term = VExpr::And(VBinaryExpr::new(lower_bound, upper_bound));
+                        cond_terms.push(term);
+                    }
+                    MatchPattern::Path(_) => {
+                        unreachable!("error in type-checking match expression")
+                    }
+                }
+            }
+
+            let cond = cond_terms
+                .into_iter()
+                .reduce(|a, b| VExpr::Or(VBinaryExpr::new(a, b)))
+                .expect("error in type-checking match expression");
+
+            let body = lower_block(
+                branch.body(),
+                mode,
+                emit_assignments,
+                tmp_members,
+                tmp_comb_statements,
+                tmp_proc_statements,
+                known_types,
+                resolved_types,
+            );
+
+            (cond, body)
+        };
+
+        let Some(first) = match_statement.branches().first() else {
+            unreachable!("error in type-checking match expression");
+        };
+
+        let (condition, body) = branch_to_cond_body(first);
+
+        let mut else_if_blocks = Vec::with_capacity(match_statement.branches().len() - 1);
+        for branch in match_statement.branches().iter().skip(1) {
+            let (condition, body) = branch_to_cond_body(branch);
+            else_if_blocks.push((condition, body));
+        }
+
+        LoweredMatchStatement::If(VIfStatement::new(condition, body, else_if_blocks, None))
     }
 }
 
