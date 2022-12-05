@@ -452,6 +452,84 @@ fn lower_match_expr(
     }
 }
 
+fn lower_cast_expr(
+    cast_expr: &CheckedCastExpr,
+    mode: VAssignMode,
+    tmp_members: &mut Vec<(SharedString, TypeId)>,
+    tmp_comb_statements: &mut Vec<VStatement>,
+    tmp_proc_statements: &mut Vec<VStatement>,
+    known_types: &HashMap<TypeId, ResolvedType>,
+    resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
+) -> VExpr {
+    match (
+        &known_types[&cast_expr.value().ty()],
+        &known_types[&cast_expr.target_ty()],
+    ) {
+        (ResolvedType::Const, &ResolvedType::BuiltinBits { width }) => {
+            let &CheckedExpr::Value(value) = cast_expr.value() else {
+                unreachable!();
+            };
+
+            VExpr::Literal(VLiteral::new(value, width))
+        }
+        (
+            &ResolvedType::BuiltinBits { width: value_width },
+            &ResolvedType::BuiltinBits {
+                width: target_width,
+            },
+        ) => {
+            let value = lower_expr(
+                cast_expr.value(),
+                mode,
+                tmp_members,
+                tmp_comb_statements,
+                tmp_proc_statements,
+                known_types,
+                resolved_types,
+            );
+
+            if target_width >= value_width {
+                value
+            } else {
+                let indexer = VIndexKind::Range(((target_width - 1) as i64)..0);
+                VExpr::Index(VIndexExpr::new(value, indexer))
+            }
+        }
+        (
+            ResolvedType::Named { .. },
+            &ResolvedType::BuiltinBits {
+                width: target_width,
+            },
+        ) => {
+            if let ResolvedTypeItem::Enum(enum_item) = &resolved_types[&cast_expr.value().ty()] {
+                let &ResolvedType::BuiltinBits { width: value_width } = &known_types[&enum_item.base_ty()] else {
+                    unreachable!();
+                };
+
+                let value = lower_expr(
+                    cast_expr.value(),
+                    mode,
+                    tmp_members,
+                    tmp_comb_statements,
+                    tmp_proc_statements,
+                    known_types,
+                    resolved_types,
+                );
+
+                if target_width >= value_width {
+                    value
+                } else {
+                    let indexer = VIndexKind::Range(((target_width - 1) as i64)..0);
+                    VExpr::Index(VIndexExpr::new(value, indexer))
+                }
+            } else {
+                unreachable!("error in type-checking cast expression");
+            }
+        }
+        _ => unreachable!("error in type-checking cast expression"),
+    }
+}
+
 fn lower_expr(
     expr: &CheckedExpr,
     mode: VAssignMode,
@@ -600,45 +678,15 @@ fn lower_expr(
             resolved_types,
         ))),
 
-        CheckedExpr::Cast(cast_expr) => {
-            // FIXME: handle casting enums
-            match (
-                &known_types[&cast_expr.value().ty()],
-                &known_types[&cast_expr.target_ty()],
-            ) {
-                (ResolvedType::Const, ResolvedType::BuiltinBits { width }) => {
-                    let CheckedExpr::Value(value) = cast_expr.value() else {
-                        unreachable!();
-                    };
-
-                    VExpr::Literal(VLiteral::new(*value, *width))
-                }
-                (
-                    ResolvedType::BuiltinBits { width: value_width },
-                    ResolvedType::BuiltinBits {
-                        width: target_width,
-                    },
-                ) => {
-                    let value = lower_expr(
-                        cast_expr.value(),
-                        mode,
-                        tmp_members,
-                        tmp_comb_statements,
-                        tmp_proc_statements,
-                        known_types,
-                        resolved_types,
-                    );
-
-                    if *target_width >= *value_width {
-                        value
-                    } else {
-                        let indexer = VIndexKind::Range(((*target_width - 1) as i64)..0);
-                        VExpr::Index(VIndexExpr::new(value, indexer))
-                    }
-                }
-                _ => unreachable!("error in type-checking cast expression"),
-            }
-        }
+        CheckedExpr::Cast(cast_expr) => lower_cast_expr(
+            cast_expr,
+            mode,
+            tmp_members,
+            tmp_comb_statements,
+            tmp_proc_statements,
+            known_types,
+            resolved_types,
+        ),
 
         CheckedExpr::Concat(bin_expr) => bin_expr!(bin_expr, Concat),
         CheckedExpr::Lt(bin_expr) => bin_expr!(bin_expr, Lt),
