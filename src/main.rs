@@ -275,98 +275,90 @@ fn main() -> std::io::Result<()> {
     abort_on_error!(errors, stderr, file_server);
 
     let type_items = collect_type_items(design);
-    if let Some(top_item) = type_items.get(top_module_name) {
-        if let ir::TypeItem::Module(top_module) = top_item {
-            if let Some(generic_args) = top_module.generic_args() && !generic_args.args().is_empty() {
-                let mut stderr = stderr.lock();
-                return write_error("modules with generic arguments cannot be used as top module", &mut stderr);
-            }
 
-            let result = resolve_types(
-                top_module,
-                &type_items,
-                &global_scope,
-                &global_const_values,
-                &funcs,
-            );
-
-            match result {
-                Ok((mut known_types, resolved_types, mut type_order)) => {
-                    let mut errors = Vec::new();
-                    let mut checked_modules = Vec::new();
-                    while let Some(ty_id) = type_order.pop() {
-                        match &resolved_types.get(&ty_id) {
-                            Some(ir::ResolvedTypeItem::Struct(struct_item)) => {
-                                if let Err(err) = struct_contains_module(
-                                    struct_item,
-                                    &known_types,
-                                    &resolved_types,
-                                ) {
-                                    errors.push(err);
-                                }
-                            }
-                            Some(ir::ResolvedTypeItem::Module(module_item)) => {
-                                match typecheck_module(
-                                    module_item,
-                                    &global_scope,
-                                    &mut known_types,
-                                    &resolved_types,
-                                    &global_const_values,
-                                    &funcs,
-                                ) {
-                                    Ok(module_item) => checked_modules.push((ty_id, module_item)),
-                                    Err(err) => errors.push(err),
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-
-                    abort_on_error!(errors, stderr, file_server);
-
-                    if !type_order.is_empty() {
-                        let mut stderr = stderr.lock();
-                        // TODO: find a way to report which types actually form a cycle
-                        return write_error("cyclic type definitions detected", &mut stderr);
-                    }
-
-                    let mut v_modules = Vec::with_capacity(checked_modules.len());
-                    for (module_ty, checked_module) in checked_modules.iter() {
-                        let v_module =
-                            lowering::lower(checked_module, &known_types, &resolved_types);
-                        v_modules.push((*module_ty, v_module));
-                    }
-
-                    if let Some(parent) = output_path.parent() {
-                        std::fs::create_dir_all(parent)?;
-                    }
-                    let mut output_file = std::fs::File::create(output_path)?;
-                    transpile::transpile(
-                        &mut output_file,
-                        &known_types,
-                        &resolved_types,
-                        &v_modules,
-                    )?;
-                    output_file.sync_all()?;
-                }
-                Err(err) => {
-                    let mut stderr = stderr.lock();
-                    err.write_colored(&mut stderr, &file_server)?;
-                }
-            }
-        } else {
-            let mut stderr = stderr.lock();
-            write_error(
-                &format!("`{}` is not a module", top_module_name),
-                &mut stderr,
-            )?;
-        }
-    } else {
+    let Some(top_item) = type_items.get(top_module_name) else {
         let mut stderr = stderr.lock();
-        write_error(
+        return write_error(
             &format!("top module `{}` not found", top_module_name),
             &mut stderr,
-        )?;
+        );
+    };
+    let ir::TypeItem::Module(top_module) = top_item else {
+        let mut stderr = stderr.lock();
+        return write_error(
+            &format!("`{}` is not a module", top_module_name),
+            &mut stderr,
+        );
+    };
+
+    if let Some(generic_args) = top_module.generic_args() && !generic_args.args().is_empty() {
+        let mut stderr = stderr.lock();
+        return write_error("modules with generic arguments cannot be used as top module", &mut stderr);
+    }
+
+    let resolve_result = resolve_types(
+        top_module,
+        &type_items,
+        &global_scope,
+        &global_const_values,
+        &funcs,
+    );
+
+    match resolve_result {
+        Ok((mut known_types, resolved_types, mut type_order)) => {
+            let mut errors = Vec::new();
+            let mut checked_modules = Vec::new();
+            while let Some(ty_id) = type_order.pop() {
+                match &resolved_types.get(&ty_id) {
+                    Some(ir::ResolvedTypeItem::Struct(struct_item)) => {
+                        if let Err(err) =
+                            struct_contains_module(struct_item, &known_types, &resolved_types)
+                        {
+                            errors.push(err);
+                        }
+                    }
+                    Some(ir::ResolvedTypeItem::Module(module_item)) => {
+                        match typecheck_module(
+                            module_item,
+                            &global_scope,
+                            &mut known_types,
+                            &resolved_types,
+                            &global_const_values,
+                            &funcs,
+                        ) {
+                            Ok(module_item) => checked_modules.push((ty_id, module_item)),
+                            Err(err) => errors.push(err),
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            abort_on_error!(errors, stderr, file_server);
+
+            if !type_order.is_empty() {
+                let mut stderr = stderr.lock();
+                // TODO: find a way to report which types actually form a cycle
+                return write_error("cyclic type definitions detected", &mut stderr);
+            }
+
+            let mut v_modules = Vec::with_capacity(checked_modules.len());
+            for (module_ty, checked_module) in checked_modules.iter() {
+                let v_module = lowering::lower(checked_module, &known_types, &resolved_types);
+                v_modules.push((*module_ty, v_module));
+            }
+
+            if let Some(parent) = output_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let mut output_file = std::fs::File::create(output_path)?;
+            transpile::transpile(&mut output_file, &known_types, &resolved_types, &v_modules)?;
+            output_file.sync_all()?;
+        }
+        Err(err) => {
+            let mut stderr = stderr.lock();
+            err.write_colored(&mut stderr, &file_server)?;
+        }
     }
 
     Ok(())
