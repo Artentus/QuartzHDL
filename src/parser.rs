@@ -42,16 +42,16 @@ const KEYWORDS: phf::Map<&'static str, KeywordKind> = phf_macros::phf_map!(
 );
 
 #[derive(Debug)]
-pub struct QuartzParserErrror {
+pub struct QuartzParserError {
     pub message: Cow<'static, str>,
     pub span: TextSpan,
 }
 
-pub trait QuartzParser<T> = Parser<QuartzToken, T, QuartzParserErrror>;
+pub trait QuartzParser<T> = Parser<QuartzToken, T, QuartzParserError>;
 
 macro_rules! err {
     ($msg:expr) => {
-        |input| QuartzParserErrror {
+        |input| QuartzParserError {
             message: $msg.into(),
             span: input.current_span(),
         }
@@ -88,7 +88,7 @@ fn ident() -> impl QuartzParser<Ident> {
             match &token.kind {
                 QuartzToken::Ident(name) => {
                     if KEYWORDS.contains_key(name) {
-                        ParseResult::Err(QuartzParserErrror {
+                        ParseResult::Err(QuartzParserError {
                             message: format!(
                                 "'{}' is a reserved keyword and cannot be used as an identifier",
                                 name
@@ -968,7 +968,7 @@ fn item() -> impl QuartzParser<Item> {
 
 pub fn parse(
     tokens: &[Token<QuartzToken>],
-) -> ParseResult<QuartzToken, Vec<Item>, QuartzParserErrror> {
+) -> ParseResult<QuartzToken, Vec<Item>, QuartzParserError> {
     let parser = parser!(*{ item() });
     let input = TokenStream::new(tokens);
     parser.run(input)

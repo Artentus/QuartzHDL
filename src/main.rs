@@ -104,10 +104,66 @@ struct Args {
     inputs: Vec<PathBuf>,
 }
 
-fn tokenize(
-    file_server: &mut FileServer,
-    input_files: &[PathBuf],
-) -> std::io::Result<Vec<Token<QuartzToken>>> {
+#[repr(transparent)]
+struct Tokens(Vec<Token<QuartzToken>>);
+
+impl<'a> IntoIterator for &'a Tokens {
+    type Item = &'a [Token<QuartzToken>];
+    type IntoIter = TokenSlices<'a>;
+
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        TokenSlices {
+            tokens: &self.0,
+            next: 0,
+        }
+    }
+}
+
+struct TokenSlices<'a> {
+    tokens: &'a [Token<QuartzToken>],
+    next: usize,
+}
+
+impl<'a> Iterator for TokenSlices<'a> {
+    type Item = &'a [Token<QuartzToken>];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.next == self.tokens.len() {
+            return None;
+        }
+
+        let start = self.next;
+
+        let mut depth: usize = 0;
+        while let Some(token) = self.tokens.get(self.next) {
+            self.next += 1;
+
+            if let QuartzToken::Punct(PunctKind::OpenCurl) = &token.kind {
+                depth = 1;
+                break;
+            }
+        }
+
+        while depth > 0 {
+            if let Some(token) = self.tokens.get(self.next) {
+                self.next += 1;
+
+                match &token.kind {
+                    QuartzToken::Punct(PunctKind::OpenCurl) => depth += 1,
+                    QuartzToken::Punct(PunctKind::CloseCurl) => depth -= 1,
+                    _ => {}
+                }
+            } else {
+                break;
+            }
+        }
+
+        Some(&self.tokens[start..self.next])
+    }
+}
+
+fn tokenize(file_server: &mut FileServer, input_files: &[PathBuf]) -> std::io::Result<Tokens> {
     let mut files = HashSet::default();
     for path in input_files.iter() {
         let file = file_server.register_file(path)?;
@@ -121,7 +177,7 @@ fn tokenize(
         tokens.extend(lexer.filter(|t| !matches!(&t.kind, QuartzToken::Comment(_))));
     }
 
-    Ok(tokens)
+    Ok(Tokens(tokens))
 }
 
 fn main() -> std::io::Result<()> {
@@ -146,182 +202,171 @@ fn main() -> std::io::Result<()> {
     let mut file_server = FileServer::new();
     let tokens = tokenize(&mut file_server, input_files)?;
 
-    // TODO: split tokens into ranges containing one item each to accumulate more parse errors.
+    let mut errors = Vec::new();
+    let mut design = Vec::new();
+    for tokens in tokens.into_iter() {
+        match parser::parse(tokens) {
+            ParseResult::Match { value, .. } => design.extend(value.into_iter()),
+            ParseResult::NoMatch => {}
+            ParseResult::Err(err) => errors.push(err.into()),
+        }
+    }
 
-    match parser::parse(&tokens) {
-        ParseResult::Match { value: design, .. } => {
-            let mut errors = Vec::new();
+    abort_on_error!(errors, stderr, file_server);
 
-            if let Err(err) = check_for_duplicate_items(design.iter()) {
-                errors.push(err);
+    if let Err(err) = check_for_duplicate_items(design.iter()) {
+        errors.push(err);
+    }
+
+    let mut global_scope = Scope::empty();
+    for item in design.iter() {
+        match item {
+            ast::Item::Const(const_item) => global_scope.add_const(const_item.name()),
+            ast::Item::Func(func_item) => {
+                global_scope.add_func(func_item.name(), func_item.args().len())
             }
+            _ => {}
+        }
+    }
 
-            let mut global_scope = Scope::empty();
-            for item in design.iter() {
-                match item {
-                    ast::Item::Const(const_item) => global_scope.add_const(const_item.name()),
-                    ast::Item::Func(func_item) => {
-                        global_scope.add_func(func_item.name(), func_item.args().len())
-                    }
-                    _ => {}
-                }
-            }
-
-            let mut global_consts = HashMap::default();
-            let mut funcs = HashMap::default();
-            for item in design.iter() {
-                match item {
-                    ast::Item::Const(const_item) => {
-                        match transform_const_expr(const_item.value(), &global_scope, false) {
-                            Ok(expr) => {
-                                if !global_consts.contains_key(const_item.name().as_ref())
-                                    && !funcs.contains_key(const_item.name().as_ref())
-                                {
-                                    global_consts.insert(const_item.name().as_string(), expr);
-                                }
-                            }
-                            Err(err) => errors.push(err),
+    let mut global_consts = HashMap::default();
+    let mut funcs = HashMap::default();
+    for item in design.iter() {
+        match item {
+            ast::Item::Const(const_item) => {
+                match transform_const_expr(const_item.value(), &global_scope, false) {
+                    Ok(expr) => {
+                        if !global_consts.contains_key(const_item.name().as_ref())
+                            && !funcs.contains_key(const_item.name().as_ref())
+                        {
+                            global_consts.insert(const_item.name().as_string(), expr);
                         }
-                    }
-                    ast::Item::Func(func_item) => {
-                        match transform_const_func(func_item, &global_scope) {
-                            Ok(func) => {
-                                if !global_consts.contains_key(func_item.name().as_ref())
-                                    && !funcs.contains_key(func_item.name().as_ref())
-                                {
-                                    funcs.insert(func_item.name().as_string(), func);
-                                }
-                            }
-                            Err(err) => errors.push(err),
-                        }
-                    }
-                    _ => {}
-                }
-            }
-
-            abort_on_error!(errors, stderr, file_server);
-
-            let mut errors = Vec::new();
-            let mut global_const_values = HashMap::default();
-            for (name, expr) in global_consts.iter() {
-                match eval::<_, i64>(expr, &mut VarScope::empty(), &global_consts, None, &funcs) {
-                    Ok(value) => {
-                        global_const_values.insert(SharedString::clone(name), value);
                     }
                     Err(err) => errors.push(err),
                 }
             }
-
-            abort_on_error!(errors, stderr, file_server);
-
-            let type_items = collect_type_items(design);
-            if let Some(top_item) = type_items.get(top_module_name) {
-                if let ir::TypeItem::Module(top_module) = top_item {
-                    if let Some(generic_args) = top_module.generic_args() && !generic_args.args().is_empty() {
-                        let mut stderr = stderr.lock();
-                        return write_error("modules with generic arguments cannot be used as top module", &mut stderr);
+            ast::Item::Func(func_item) => match transform_const_func(func_item, &global_scope) {
+                Ok(func) => {
+                    if !global_consts.contains_key(func_item.name().as_ref())
+                        && !funcs.contains_key(func_item.name().as_ref())
+                    {
+                        funcs.insert(func_item.name().as_string(), func);
                     }
+                }
+                Err(err) => errors.push(err),
+            },
+            _ => {}
+        }
+    }
 
-                    let result = resolve_types(
-                        top_module,
-                        &type_items,
-                        &global_scope,
-                        &global_const_values,
-                        &funcs,
-                    );
+    abort_on_error!(errors, stderr, file_server);
 
-                    match result {
-                        Ok((mut known_types, resolved_types, mut type_order)) => {
-                            let mut errors = Vec::new();
-                            let mut checked_modules = Vec::new();
-                            while let Some(ty_id) = type_order.pop() {
-                                match &resolved_types.get(&ty_id) {
-                                    Some(ir::ResolvedTypeItem::Struct(struct_item)) => {
-                                        if let Err(err) = struct_contains_module(
-                                            struct_item,
-                                            &known_types,
-                                            &resolved_types,
-                                        ) {
-                                            errors.push(err);
-                                        }
-                                    }
-                                    Some(ir::ResolvedTypeItem::Module(module_item)) => {
-                                        match typecheck_module(
-                                            module_item,
-                                            &global_scope,
-                                            &mut known_types,
-                                            &resolved_types,
-                                            &global_const_values,
-                                            &funcs,
-                                        ) {
-                                            Ok(module_item) => {
-                                                checked_modules.push((ty_id, module_item))
-                                            }
-                                            Err(err) => errors.push(err),
-                                        }
-                                    }
-                                    _ => {}
+    let mut errors = Vec::new();
+    let mut global_const_values = HashMap::default();
+    for (name, expr) in global_consts.iter() {
+        match eval::<_, i64>(expr, &mut VarScope::empty(), &global_consts, None, &funcs) {
+            Ok(value) => {
+                global_const_values.insert(SharedString::clone(name), value);
+            }
+            Err(err) => errors.push(err),
+        }
+    }
+
+    abort_on_error!(errors, stderr, file_server);
+
+    let type_items = collect_type_items(design);
+    if let Some(top_item) = type_items.get(top_module_name) {
+        if let ir::TypeItem::Module(top_module) = top_item {
+            if let Some(generic_args) = top_module.generic_args() && !generic_args.args().is_empty() {
+                let mut stderr = stderr.lock();
+                return write_error("modules with generic arguments cannot be used as top module", &mut stderr);
+            }
+
+            let result = resolve_types(
+                top_module,
+                &type_items,
+                &global_scope,
+                &global_const_values,
+                &funcs,
+            );
+
+            match result {
+                Ok((mut known_types, resolved_types, mut type_order)) => {
+                    let mut errors = Vec::new();
+                    let mut checked_modules = Vec::new();
+                    while let Some(ty_id) = type_order.pop() {
+                        match &resolved_types.get(&ty_id) {
+                            Some(ir::ResolvedTypeItem::Struct(struct_item)) => {
+                                if let Err(err) = struct_contains_module(
+                                    struct_item,
+                                    &known_types,
+                                    &resolved_types,
+                                ) {
+                                    errors.push(err);
                                 }
                             }
-
-                            abort_on_error!(errors, stderr, file_server);
-
-                            if !type_order.is_empty() {
-                                let mut stderr = stderr.lock();
-                                // TODO: find a way to report which types actually form a cycle
-                                return write_error(
-                                    "cyclic type definitions detected",
-                                    &mut stderr,
-                                );
+                            Some(ir::ResolvedTypeItem::Module(module_item)) => {
+                                match typecheck_module(
+                                    module_item,
+                                    &global_scope,
+                                    &mut known_types,
+                                    &resolved_types,
+                                    &global_const_values,
+                                    &funcs,
+                                ) {
+                                    Ok(module_item) => checked_modules.push((ty_id, module_item)),
+                                    Err(err) => errors.push(err),
+                                }
                             }
-
-                            let mut v_modules = Vec::with_capacity(checked_modules.len());
-                            for (module_ty, checked_module) in checked_modules.iter() {
-                                let v_module =
-                                    lowering::lower(checked_module, &known_types, &resolved_types);
-                                v_modules.push((*module_ty, v_module));
-                            }
-
-                            if let Some(parent) = output_path.parent() {
-                                std::fs::create_dir_all(parent)?;
-                            }
-                            let mut output_file = std::fs::File::create(output_path)?;
-                            transpile::transpile(
-                                &mut output_file,
-                                &known_types,
-                                &resolved_types,
-                                &v_modules,
-                            )?;
-                            output_file.sync_all()?;
-                        }
-                        Err(err) => {
-                            let mut stderr = stderr.lock();
-                            err.write_colored(&mut stderr, &file_server)?;
+                            _ => {}
                         }
                     }
-                } else {
-                    let mut stderr = stderr.lock();
-                    write_error(
-                        &format!("`{}` is not a module", top_module_name),
-                        &mut stderr,
+
+                    abort_on_error!(errors, stderr, file_server);
+
+                    if !type_order.is_empty() {
+                        let mut stderr = stderr.lock();
+                        // TODO: find a way to report which types actually form a cycle
+                        return write_error("cyclic type definitions detected", &mut stderr);
+                    }
+
+                    let mut v_modules = Vec::with_capacity(checked_modules.len());
+                    for (module_ty, checked_module) in checked_modules.iter() {
+                        let v_module =
+                            lowering::lower(checked_module, &known_types, &resolved_types);
+                        v_modules.push((*module_ty, v_module));
+                    }
+
+                    if let Some(parent) = output_path.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    let mut output_file = std::fs::File::create(output_path)?;
+                    transpile::transpile(
+                        &mut output_file,
+                        &known_types,
+                        &resolved_types,
+                        &v_modules,
                     )?;
+                    output_file.sync_all()?;
                 }
-            } else {
-                let mut stderr = stderr.lock();
-                write_error(
-                    &format!("top module `{}` not found", top_module_name),
-                    &mut stderr,
-                )?;
+                Err(err) => {
+                    let mut stderr = stderr.lock();
+                    err.write_colored(&mut stderr, &file_server)?;
+                }
             }
-        }
-        ParseResult::NoMatch => {
+        } else {
             let mut stderr = stderr.lock();
-            write_error("no valid input code found", &mut stderr)?;
+            write_error(
+                &format!("`{}` is not a module", top_module_name),
+                &mut stderr,
+            )?;
         }
-        ParseResult::Err(err) => {
-            let mut stderr = stderr.lock();
-            err.write_colored(&mut stderr, &file_server)?;
-        }
+    } else {
+        let mut stderr = stderr.lock();
+        write_error(
+            &format!("top module `{}` not found", top_module_name),
+            &mut stderr,
+        )?;
     }
 
     Ok(())

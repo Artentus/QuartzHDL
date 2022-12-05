@@ -555,6 +555,9 @@ impl WriteColored for crate::error::QuartzError<'_> {
                 ),
                 assign.span(),
             ),
+            Self::ParseError(err) => {
+                return err.write_colored(stream, file_server);
+            }
             Self::ArithmeticError(err) => {
                 return err.write_colored(stream, file_server);
             }
@@ -596,7 +599,7 @@ impl WriteColored for crate::const_eval::ArithmeticError {
     }
 }
 
-impl WriteColored for crate::parser::QuartzParserErrror {
+impl WriteColored for crate::parser::QuartzParserError {
     fn write_colored(
         &self,
         stream: &mut termcolor::StandardStreamLock,

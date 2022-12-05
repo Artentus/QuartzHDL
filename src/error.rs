@@ -1,5 +1,6 @@
 use crate::ast::*;
 use crate::const_eval::*;
+use crate::parser::QuartzParserError;
 use crate::SharedString;
 use langbox::TextSpan;
 use std::borrow::Cow;
@@ -207,6 +208,7 @@ pub enum QuartzError<'a> {
         target_ty: Cow<'a, str>,
         value_ty: Cow<'a, str>,
     },
+    ParseError(QuartzParserError),
     ArithmeticError(ArithmeticError),
     List(Vec<QuartzError<'a>>),
 }
@@ -220,6 +222,13 @@ impl QuartzError<'_> {
         } else {
             Self::List(list)
         }
+    }
+}
+
+impl From<QuartzParserError> for QuartzError<'_> {
+    #[inline]
+    fn from(value: QuartzParserError) -> Self {
+        Self::ParseError(value)
     }
 }
 
