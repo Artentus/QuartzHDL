@@ -1630,19 +1630,42 @@ pub enum CheckedStatement {
 }
 
 #[derive(Debug, Clone)]
+pub struct CheckedSens {
+    target: CheckedAssignTarget,
+    edge: EdgeKind,
+}
+
+impl CheckedSens {
+    #[inline]
+    pub fn new(target: CheckedAssignTarget, edge: EdgeKind) -> Self {
+        Self { target, edge }
+    }
+
+    #[inline]
+    pub fn target(&self) -> &CheckedAssignTarget {
+        &self.target
+    }
+
+    #[inline]
+    pub fn edge(&self) -> EdgeKind {
+        self.edge
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct CheckedProcMember {
-    sens: Vec<Sens>,
+    sens: Vec<CheckedSens>,
     body: CheckedBlock,
 }
 
 impl CheckedProcMember {
     #[inline]
-    pub fn new(sens: Vec<Sens>, body: CheckedBlock) -> Self {
+    pub fn new(sens: Vec<CheckedSens>, body: CheckedBlock) -> Self {
         Self { sens, body }
     }
 
     #[inline]
-    pub fn sens(&self) -> &[Sens] {
+    pub fn sens(&self) -> &[CheckedSens] {
         &self.sens
     }
 

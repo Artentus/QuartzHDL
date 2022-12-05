@@ -555,6 +555,13 @@ impl WriteColored for crate::error::QuartzError<'_> {
                 ),
                 assign.span(),
             ),
+            Self::InvalidSensType { sens, sens_ty } => ErrorInfo::new(
+                format!(
+                    "sensitivities need to be of type `bit` but found type `{}`",
+                    sens_ty
+                ),
+                sens.sig().span(),
+            ),
             Self::ParseError(err) => {
                 return err.write_colored(stream, file_server);
             }

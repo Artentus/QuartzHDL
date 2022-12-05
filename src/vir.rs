@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use crate::ast::Sens;
+use crate::ast::EdgeKind;
 use crate::ir::TypeId;
 use crate::SharedString;
 use std::ops::Range;
@@ -367,19 +367,42 @@ pub enum VStatement {
 }
 
 #[derive(Debug, Clone)]
+pub struct VSens {
+    target: VAssignTarget,
+    edge: EdgeKind,
+}
+
+impl VSens {
+    #[inline]
+    pub fn new(target: VAssignTarget, edge: EdgeKind) -> Self {
+        Self { target, edge }
+    }
+
+    #[inline]
+    pub fn target(&self) -> &VAssignTarget {
+        &self.target
+    }
+
+    #[inline]
+    pub fn edge(&self) -> EdgeKind {
+        self.edge
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct VFFMember {
-    sens: Vec<Sens>,
+    sens: Vec<VSens>,
     body: VBlock,
 }
 
 impl VFFMember {
     #[inline]
-    pub fn new(sens: Vec<Sens>, body: VBlock) -> Self {
+    pub fn new(sens: Vec<VSens>, body: VBlock) -> Self {
         Self { sens, body }
     }
 
     #[inline]
-    pub fn sens(&self) -> &[Sens] {
+    pub fn sens(&self) -> &[VSens] {
         &self.sens
     }
 

@@ -208,6 +208,10 @@ pub enum QuartzError<'a> {
         target_ty: Cow<'a, str>,
         value_ty: Cow<'a, str>,
     },
+    InvalidSensType {
+        sens: &'a Sens,
+        sens_ty: Cow<'a, str>,
+    },
     ParseError(QuartzParserError),
     ArithmeticError(ArithmeticError),
     List(Vec<QuartzError<'a>>),

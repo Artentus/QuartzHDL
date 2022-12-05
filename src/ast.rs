@@ -2766,13 +2766,13 @@ default_display_impl!(Edge);
 pub struct Sens {
     edge: Edge,
     open_paren: Punct,
-    sig: Expr,
+    sig: AssignTarget,
     close_paren: Punct,
 }
 
 impl Sens {
     #[inline]
-    pub fn new(edge: Edge, open_paren: Punct, sig: Expr, close_paren: Punct) -> Self {
+    pub fn new(edge: Edge, open_paren: Punct, sig: AssignTarget, close_paren: Punct) -> Self {
         Self {
             edge,
             open_paren,
@@ -2792,7 +2792,7 @@ impl Sens {
     }
 
     #[inline]
-    pub fn sig(&self) -> &Expr {
+    pub fn sig(&self) -> &AssignTarget {
         &self.sig
     }
 

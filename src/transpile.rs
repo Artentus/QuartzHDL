@@ -283,12 +283,34 @@ pub fn transpile(
                     write!(writer, ", ")?;
                 }
 
-                match sens.edge().kind() {
+                match sens.edge() {
                     EdgeKind::Rising => write!(writer, "posedge ")?,
                     EdgeKind::Falling => write!(writer, "negedge ")?,
                 }
 
-                write!(writer, "{}", sens.sig())?;
+                write!(writer, "{}", sens.target().base())?;
+                for suffix in sens.target().suffixes() {
+                    match suffix {
+                        VSuffixOp::Indexer(VIndexKind::Single(index)) => {
+                            write!(writer, "[")?;
+                            transpile_expr(
+                                writer,
+                                index,
+                                0,
+                                TranspileMode::Combinatoric,
+                                module_item,
+                                known_types,
+                                resolved_types,
+                                v_modules,
+                            )?;
+                            write!(writer, "]")?;
+                        }
+                        VSuffixOp::Indexer(VIndexKind::Range(range)) => {
+                            write!(writer, "[{}:{}]", range.end - 1, range.start)?;
+                        }
+                        VSuffixOp::MemberAccess(member) => write!(writer, ".{}", member)?,
+                    }
+                }
             }
 
             writeln!(writer, ") begin")?;

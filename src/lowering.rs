@@ -1073,6 +1073,20 @@ pub fn lower(
     for proc_member in module.proc_members() {
         let mut tmp_proc_statements = Vec::new();
 
+        let mut sens = Vec::with_capacity(proc_member.sens().len());
+        for s in proc_member.sens() {
+            let target = lower_assign_target(
+                s.target(),
+                VAssignMode::Combinatoric,
+                &mut tmp_members,
+                &mut tmp_comb_statements,
+                &mut tmp_proc_statements,
+                known_types,
+                resolved_types,
+            );
+            sens.push(VSens::new(target, s.edge()));
+        }
+
         let body = lower_block(
             proc_member.body(),
             VAssignMode::Sequential,
@@ -1083,14 +1097,15 @@ pub fn lower(
             known_types,
             resolved_types,
         );
-        ff_members.push(VFFMember::new(proc_member.sens().to_vec(), body));
 
         if !tmp_proc_statements.is_empty() {
             ff_members.push(VFFMember::new(
-                proc_member.sens().to_vec(),
+                sens.clone(),
                 VBlock::new(tmp_proc_statements),
             ));
         }
+
+        ff_members.push(VFFMember::new(sens, body));
     }
 
     for comb_member in module.comb_members() {

@@ -557,12 +557,14 @@ fn punct_to_assign_op(punct: Punct) -> AssignOp {
     AssignOp::new(kind, punct.span())
 }
 
-fn assign() -> impl QuartzParser<Assignment> {
-    let target = parser!(
+fn assign_target() -> impl QuartzParser<AssignTarget> {
+    parser!(
         ({path()} <.> *{suffix_op()})
         ->[|(path, suffixes)| AssignTarget::new(path, suffixes)]
-    );
+    )
+}
 
+fn assign() -> impl QuartzParser<Assignment> {
     let op = parser!({punct([
         PunctKind::Assign,
         PunctKind::AddAssign,
@@ -579,7 +581,7 @@ fn assign() -> impl QuartzParser<Assignment> {
     ])}->[punct_to_assign_op]);
 
     parser!(
-        (target <.> op <.> {expr(false)}!![err!("expected expression")] <. {punct(PunctKind::Semicolon)}!![err!("expected `;`")])
+        ({assign_target()} <.> op <.> {expr(false)}!![err!("expected expression")] <. {punct(PunctKind::Semicolon)}!![err!("expected `;`")])
         ->[|((target, op), value)| Assignment::new(target, op, value)]
     )
 }
@@ -895,7 +897,7 @@ fn member() -> impl QuartzParser<Member> {
     );
 
     let sens = parser!(
-        (edge <.> {punct(PunctKind::OpenParen)} <.> {expr(true)} <.> {punct(PunctKind::CloseParen)})
+        (edge <.> {punct(PunctKind::OpenParen)} <.> {assign_target()} <.> {punct(PunctKind::CloseParen)})
         ->[|(((edge, open_paren), sig), close_paren)| Sens::new(edge, open_paren, sig, close_paren)]
     );
 

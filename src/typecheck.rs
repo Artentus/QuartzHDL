@@ -1860,6 +1860,89 @@ fn typecheck_match_statement<'a>(
     }
 }
 
+fn typecheck_assign_target<'a>(
+    assign_target: &'a AssignTarget,
+    parent_module: &ResolvedModule,
+    mode: TypecheckMode,
+    scope: &Scope,
+    known_types: &mut HashMap<TypeId, ResolvedType>,
+    resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
+    args: &TypecheckArgs,
+) -> QuartzResult<'a, CheckedAssignTarget> {
+    let mut errors = Vec::new();
+
+    if !assign_target.path().is_ident() {
+        errors.push(QuartzError::InvalidPath {
+            path: assign_target.path(),
+        });
+    }
+
+    let base = assign_target.path().head();
+
+    match find_module_member_type(base, parent_module, None, known_types) {
+        Ok((base_ty, _)) => {
+            let mut ty = base_ty;
+            let mut suffixes = Vec::new();
+            for suffix in assign_target.suffixes().iter() {
+                match suffix {
+                    SuffixOp::Indexer(indexer) => {
+                        let checked_indexer;
+                        (checked_indexer, ty) = match typecheck_indexer(
+                            indexer,
+                            ty,
+                            parent_module,
+                            mode,
+                            scope,
+                            known_types,
+                            resolved_types,
+                            args,
+                        ) {
+                            Ok(val) => val,
+                            Err(err) => {
+                                errors.push(err);
+                                break;
+                            }
+                        };
+
+                        suffixes.push(CheckedSuffixOp::Indexer {
+                            index: checked_indexer,
+                            ty,
+                        });
+                    }
+                    SuffixOp::MemberAccess(member) => {
+                        ty = match find_member_type(
+                            member.member(),
+                            ty,
+                            known_types,
+                            resolved_types,
+                        ) {
+                            Ok(ty) => ty,
+                            Err(err) => {
+                                errors.push(err);
+                                break;
+                            }
+                        };
+
+                        suffixes.push(CheckedSuffixOp::MemberAccess {
+                            member: member.member().clone(),
+                            ty,
+                        });
+                    }
+                }
+            }
+
+            wrap_errors!(
+                CheckedAssignTarget::new(base.clone(), base_ty, suffixes),
+                errors
+            )
+        }
+        Err(err) => {
+            errors.push(err);
+            Err(QuartzError::new_list(errors))
+        }
+    }
+}
+
 fn typecheck_assignment<'a>(
     assign: &'a Assignment,
     parent_module: &ResolvedModule,
@@ -2285,7 +2368,7 @@ pub fn typecheck_module<'a>(
 
     let mut errors = Vec::new();
 
-    for (_, port) in module_item.ports().iter() {
+    for (_, port) in module_item.ports() {
         match (port.dir(), port.kind()) {
             (Direction::In, LogicKind::Register)
             | (Direction::In, LogicKind::Module)
@@ -2316,7 +2399,7 @@ pub fn typecheck_module<'a>(
         }
     }
 
-    for (_, logic_member) in module_item.logic_members().iter() {
+    for (_, logic_member) in module_item.logic_members() {
         let ty_is_mod = type_contains_module(logic_member.ty(), known_types, resolved_types);
         match (logic_member.kind(), ty_is_mod) {
             (LogicKind::Signal, true)
@@ -2330,8 +2413,32 @@ pub fn typecheck_module<'a>(
     }
 
     let mut proc_members = Vec::with_capacity(module_item.proc_members().len());
-    for proc_member in module_item.proc_members().iter() {
-        // FIXME: typecheck sensitivities
+    for proc_member in module_item.proc_members() {
+        let mut sens = Vec::with_capacity(proc_member.sens().len());
+        for s in proc_member.sens() {
+            match typecheck_assign_target(
+                s.sig(),
+                module_item,
+                TypecheckMode::Combinatoric,
+                &module_scope,
+                known_types,
+                resolved_types,
+                &args,
+            ) {
+                Ok(target) => {
+                    let target_ty = &known_types[&target.ty()];
+                    if matches!(target_ty, ResolvedType::BuiltinBits { width } if *width == 1) {
+                        sens.push(CheckedSens::new(target, s.edge().kind()));
+                    } else {
+                        errors.push(QuartzError::InvalidSensType {
+                            sens: s,
+                            sens_ty: target_ty.to_string(known_types),
+                        });
+                    }
+                }
+                Err(err) => errors.push(err),
+            }
+        }
 
         match typecheck_block(
             proc_member.body(),
@@ -2343,14 +2450,14 @@ pub fn typecheck_module<'a>(
             &args,
         ) {
             Ok(body) => {
-                proc_members.push(CheckedProcMember::new(proc_member.sens().to_vec(), body));
+                proc_members.push(CheckedProcMember::new(sens, body));
             }
             Err(err) => errors.push(err),
         }
     }
 
     let mut comb_members = Vec::with_capacity(module_item.comb_members().len());
-    for comb_member in module_item.comb_members().iter() {
+    for comb_member in module_item.comb_members() {
         match typecheck_block(
             comb_member.body(),
             module_item,
