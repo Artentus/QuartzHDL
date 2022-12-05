@@ -466,7 +466,6 @@ fn concat_binary_exprs(terms: (Expr, Vec<(Punct, Expr)>)) -> Expr {
 
         result = match punct.kind() {
             PunctKind::AtSymbol => expr!(Concat),
-            PunctKind::SingleQuote => todo!(),
             PunctKind::Lt => expr!(Lt),
             PunctKind::Lte => expr!(Lte),
             PunctKind::Gt => expr!(Gt),

@@ -30,8 +30,6 @@ pub enum PunctKind {
     Semicolon,
     /// `@`
     AtSymbol,
-    /// `'`
-    SingleQuote,
     /// `=>`
     FatRightArrow,
     /// `==`
@@ -125,7 +123,6 @@ impl DisplayScoped for PunctKind {
                 PunctKind::Colon => ":",
                 PunctKind::Semicolon => ";",
                 PunctKind::AtSymbol => "@",
-                PunctKind::SingleQuote => "'",
                 PunctKind::FatRightArrow => "=>",
                 PunctKind::Eq => "==",
                 PunctKind::Ne => "!=",
@@ -201,7 +198,6 @@ const PUNCTUATION_MAP: &[(&str, PunctKind)] = &[
     (":"   , PunctKind::Colon        ),
     (";"   , PunctKind::Semicolon    ),
     ("@"   , PunctKind::AtSymbol     ),
-    ("'"   , PunctKind::SingleQuote  ),
     ("=>"  , PunctKind::FatRightArrow),
     ("=="  , PunctKind::Eq           ),
     ("!="  , PunctKind::Ne           ),
