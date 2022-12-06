@@ -107,6 +107,8 @@ pub fn transpile(
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     v_modules: &[(TypeId, VModule)],
 ) -> std::io::Result<()> {
+    writeln!(writer, "`default_nettype none\n")?;
+
     for (ty, item) in resolved_types {
         let item_name = get_transpiled_type_name(*ty, known_types);
 
@@ -185,9 +187,9 @@ pub fn transpile(
             }
 
             match port.dir() {
-                Direction::In => write!(writer, "    input ")?,
-                Direction::Out => write!(writer, "    output ")?,
-                Direction::InOut => write!(writer, "    inout ")?,
+                Direction::In => write!(writer, "    input var ")?,
+                Direction::Out => write!(writer, "    output var ")?,
+                Direction::InOut => write!(writer, "    inout var ")?,
             }
 
             let port_type_name = get_transpiled_type_name(port.ty(), known_types);
@@ -212,7 +214,7 @@ pub fn transpile(
                 if !member_module_item.ports().is_empty() {
                     writeln!(
                         writer,
-                        "{}__Interface {}{};",
+                        "var {}__Interface {}{};",
                         member_ty_name.base(),
                         member_name,
                         member_ty_name.array(),
@@ -240,7 +242,7 @@ pub fn transpile(
             } else {
                 writeln!(
                     writer,
-                    "{} {}{};",
+                    "var {} {}{};",
                     member_ty_name.base(),
                     member_name,
                     member_ty_name.array(),
@@ -253,7 +255,7 @@ pub fn transpile(
             let member_ty_name = get_transpiled_type_name(*member_ty, known_types);
             writeln!(
                 writer,
-                "{} {}{};",
+                "var {} {}{};",
                 member_ty_name.base(),
                 member_name,
                 member_ty_name.array(),
