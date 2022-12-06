@@ -445,6 +445,8 @@ pub enum ConstStatement {
     Assignment(ConstAssignment),
     WhileLoop(ConstWhileLoop),
     ForLoop(ConstForLoop),
+    Continue(Keyword),
+    Break(Keyword),
 }
 
 #[derive(Debug, Clone)]

@@ -49,6 +49,8 @@ pub enum KeywordKind {
     Rising,
     Falling,
     As,
+    Continue,
+    Break,
 }
 
 impl DisplayScoped for KeywordKind {
@@ -78,6 +80,8 @@ impl DisplayScoped for KeywordKind {
                 Self::Rising => "rising",
                 Self::Falling => "falling",
                 Self::As => "as",
+                Self::Continue => "continue",
+                Self::Break => "break",
             }
         )
     }
@@ -1813,6 +1817,8 @@ pub enum Statement {
     Assignment(Assignment),
     WhileLoop(WhileLoop),
     ForLoop(ForLoop),
+    Continue(Keyword),
+    Break(Keyword),
 }
 
 impl Spanned for Statement {
@@ -1823,6 +1829,8 @@ impl Spanned for Statement {
             Self::Assignment(assignment) => assignment.span(),
             Self::WhileLoop(while_loop) => while_loop.span(),
             Self::ForLoop(for_loop) => for_loop.span(),
+            Self::Continue(kw) => kw.span(),
+            Self::Break(kw) => kw.span(),
         }
     }
 }
@@ -1838,6 +1846,8 @@ impl DisplayScoped for Statement {
             Self::Assignment(assignment) => DisplayScoped::fmt(assignment, f),
             Self::WhileLoop(while_loop) => DisplayScoped::fmt(while_loop, f),
             Self::ForLoop(for_loop) => DisplayScoped::fmt(for_loop, f),
+            Self::Continue(kw) => write!(f, "{};", kw),
+            Self::Break(kw) => write!(f, "{};", kw),
         }
     }
 }

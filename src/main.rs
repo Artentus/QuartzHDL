@@ -6,6 +6,7 @@
 #![feature(const_maybe_uninit_uninit_array)]
 #![feature(maybe_uninit_slice)]
 #![feature(bigint_helper_methods)]
+#![feature(try_trait_v2)]
 
 #[macro_use]
 mod error;
@@ -234,7 +235,7 @@ fn main() -> std::io::Result<()> {
     for item in design.iter() {
         match item {
             ast::Item::Const(const_item) => {
-                match transform_const_expr(const_item.value(), &global_scope, false) {
+                match transform_const_expr(const_item.value(), &global_scope, false, false) {
                     Ok(expr) => {
                         if !global_consts.contains_key(const_item.name().as_ref())
                             && !funcs.contains_key(const_item.name().as_ref())
@@ -264,7 +265,9 @@ fn main() -> std::io::Result<()> {
     let mut errors = Vec::new();
     let mut global_const_values = HashMap::default();
     for (name, expr) in global_consts.iter() {
-        match eval::<_, i64>(expr, &mut VarScope::empty(), &global_consts, None, &funcs) {
+        match eval::<_, i64>(expr, &mut VarScope::empty(), &global_consts, None, &funcs)
+            .into_result()
+        {
             Ok(value) => {
                 global_const_values.insert(SharedString::clone(name), value);
             }

@@ -35,9 +35,10 @@ pub fn check_for_duplicate_items<'a>(
 fn transform_const_bin_expr<'a>(
     expr: &'a BinaryExpr,
     scope: &Scope,
+    is_in_loop: bool,
 ) -> QuartzResult<'a, ConstBinaryExpr> {
-    let lhs = transform_const_expr(expr.lhs(), scope, false);
-    let rhs = transform_const_expr(expr.rhs(), scope, false);
+    let lhs = transform_const_expr(expr.lhs(), scope, false, is_in_loop);
+    let rhs = transform_const_expr(expr.rhs(), scope, false, is_in_loop);
 
     match lhs {
         Ok(lhs) => match rhs {
@@ -54,6 +55,7 @@ fn transform_const_bin_expr<'a>(
 pub fn transform_const_call_expr<'a>(
     expr: &'a CallExpr,
     scope: &Scope,
+    is_in_loop: bool,
 ) -> QuartzResult<'a, ConstCallExpr> {
     let mut errors = Vec::new();
 
@@ -71,7 +73,7 @@ pub fn transform_const_call_expr<'a>(
 
     let mut args = Vec::with_capacity(expr.args().len());
     for arg in expr.args().iter() {
-        match transform_const_expr(arg, scope, false) {
+        match transform_const_expr(arg, scope, false, is_in_loop) {
             Ok(arg) => args.push(arg),
             Err(err) => errors.push(err),
         }
@@ -87,11 +89,12 @@ fn transform_const_if_expr<'a>(
     expr: &'a IfExpr,
     scope: &Scope,
     needs_return: bool,
+    is_in_loop: bool,
 ) -> QuartzResult<'a, ConstIfExpr> {
     let mut errors = Vec::new();
 
-    let condition = transform_const_expr(expr.condition(), scope, false);
-    let body = transform_const_block(expr.body(), scope, needs_return);
+    let condition = transform_const_expr(expr.condition(), scope, false, is_in_loop);
+    let body = transform_const_block(expr.body(), scope, needs_return, is_in_loop);
 
     let condition = match condition {
         Ok(condition) => Some(condition),
@@ -111,8 +114,8 @@ fn transform_const_if_expr<'a>(
 
     let mut else_if_blocks = Vec::with_capacity(expr.else_if_blocks().len());
     for else_if_block in expr.else_if_blocks().iter() {
-        let condition = transform_const_expr(else_if_block.condition(), scope, false);
-        let body = transform_const_block(else_if_block.body(), scope, needs_return);
+        let condition = transform_const_expr(else_if_block.condition(), scope, false, is_in_loop);
+        let body = transform_const_block(else_if_block.body(), scope, needs_return, is_in_loop);
 
         match condition {
             Ok(condition) => match body {
@@ -130,7 +133,7 @@ fn transform_const_if_expr<'a>(
     }
 
     let else_block = if let Some(else_block) = expr.else_block() {
-        match transform_const_block(else_block.body(), scope, needs_return) {
+        match transform_const_block(else_block.body(), scope, needs_return, is_in_loop) {
             Ok(body) => Some(ConstElseBlock::new(body)),
             Err(err) => {
                 errors.push(err);
@@ -237,10 +240,11 @@ fn transform_const_match_expr<'a>(
     expr: &'a MatchExpr,
     scope: &Scope,
     needs_return: bool,
+    is_in_loop: bool,
 ) -> QuartzResult<'a, ConstMatchExpr> {
     let mut errors = Vec::new();
 
-    let value = transform_const_expr(expr.value(), scope, false);
+    let value = transform_const_expr(expr.value(), scope, false, is_in_loop);
     let value = match value {
         Ok(value) => Some(value),
         Err(err) => {
@@ -271,20 +275,22 @@ fn transform_const_match_expr<'a>(
                     errors.push(QuartzError::UnexpectedReturnValue { value: expr });
                 }
 
-                match transform_const_expr(expr, scope, false) {
+                match transform_const_expr(expr, scope, false, is_in_loop) {
                     Ok(expr) => {
                         branches.push(ConstMatchBranch::new(patterns, ConstMatchBody::Expr(expr)))
                     }
                     Err(err) => errors.push(err),
                 }
             }
-            MatchBody::Block(block) => match transform_const_block(block, scope, needs_return) {
-                Ok(block) => branches.push(ConstMatchBranch::new(
-                    patterns,
-                    ConstMatchBody::Block(block),
-                )),
-                Err(err) => errors.push(err),
-            },
+            MatchBody::Block(block) => {
+                match transform_const_block(block, scope, needs_return, is_in_loop) {
+                    Ok(block) => branches.push(ConstMatchBranch::new(
+                        patterns,
+                        ConstMatchBody::Block(block),
+                    )),
+                    Err(err) => errors.push(err),
+                }
+            }
         }
     }
 
@@ -299,10 +305,13 @@ pub fn transform_const_expr<'a>(
     expr: &'a Expr,
     scope: &Scope,
     is_statement: bool,
+    is_in_loop: bool,
 ) -> QuartzResult<'a, ConstExpr> {
     macro_rules! bin_expr {
         ($expr:expr, $op:ident) => {
-            Ok(ConstExpr::$op(transform_const_bin_expr($expr, scope)?))
+            Ok(ConstExpr::$op(transform_const_bin_expr(
+                $expr, scope, is_in_loop,
+            )?))
         };
     }
 
@@ -316,33 +325,38 @@ pub fn transform_const_expr<'a>(
                 Err(QuartzError::InvalidConstExpr { expr })
             }
         }
-        Expr::Paren(expr) => transform_const_expr(expr.inner(), scope, is_statement),
-        Expr::Call(expr) => Ok(ConstExpr::Call(transform_const_call_expr(expr, scope)?)),
+        Expr::Paren(expr) => transform_const_expr(expr.inner(), scope, is_statement, is_in_loop),
+        Expr::Call(expr) => Ok(ConstExpr::Call(transform_const_call_expr(
+            expr, scope, is_in_loop,
+        )?)),
         Expr::Construct(_) => Err(QuartzError::InvalidConstExpr { expr }),
         Expr::If(expr) => Ok(ConstExpr::If(transform_const_if_expr(
             expr,
             scope,
             !is_statement,
+            is_in_loop,
         )?)),
         Expr::Match(expr) => Ok(ConstExpr::Match(transform_const_match_expr(
             expr,
             scope,
             !is_statement,
+            is_in_loop,
         )?)),
         Expr::Block(block) => Ok(ConstExpr::Block(Box::new(transform_const_block(
             block,
             scope,
             !is_statement,
+            is_in_loop,
         )?))),
         Expr::Index(_) => Err(QuartzError::InvalidConstExpr { expr }),
         Expr::MemberAccess(_) => Err(QuartzError::InvalidConstExpr { expr }),
-        Expr::Pos(expr) => transform_const_expr(expr.inner(), scope, false),
+        Expr::Pos(expr) => transform_const_expr(expr.inner(), scope, false, is_in_loop),
         Expr::Neg(expr) => Ok(ConstExpr::Neg(ConstUnaryExpr::new(
-            transform_const_expr(expr.inner(), scope, false)?,
+            transform_const_expr(expr.inner(), scope, false, is_in_loop)?,
             expr.span(),
         ))),
         Expr::Not(expr) => Ok(ConstExpr::Not(ConstUnaryExpr::new(
-            transform_const_expr(expr.inner(), scope, false)?,
+            transform_const_expr(expr.inner(), scope, false, is_in_loop)?,
             expr.span(),
         ))),
         Expr::Cast(_) => Err(QuartzError::InvalidConstExpr { expr }),
@@ -374,6 +388,7 @@ pub fn transform_const_expr<'a>(
 pub fn transform_generic_arg<'a>(
     arg: &'a GenericTypeArg,
     scope: &Scope,
+    is_in_loop: bool,
 ) -> QuartzResult<'a, ConstExpr> {
     match arg {
         GenericTypeArg::Literal(l) => Ok(ConstExpr::Literal(*l)),
@@ -381,13 +396,14 @@ pub fn transform_generic_arg<'a>(
             scope.contains_var(i)?;
             Ok(ConstExpr::Ident(i.clone()))
         }
-        GenericTypeArg::Expr(expr) => transform_const_expr(expr, scope, false),
+        GenericTypeArg::Expr(expr) => transform_const_expr(expr, scope, false, is_in_loop),
     }
 }
 
 fn transform_const_assignment<'a>(
     assign: &'a Assignment,
     scope: &mut Scope,
+    is_in_loop: bool,
 ) -> QuartzResult<'a, ConstAssignment> {
     if let Some(target) = assign.target().path().as_ident()
         && assign.target().suffixes().is_empty()
@@ -397,7 +413,7 @@ fn transform_const_assignment<'a>(
             Err(err1) => Some(err1),
         };
 
-        match transform_const_expr(assign.value(), scope, false) {
+        match transform_const_expr(assign.value(), scope, false, is_in_loop) {
             Ok(value) => {
                 if let Some(err1) = err1 {
                     Err(err1)
@@ -428,9 +444,10 @@ fn transform_const_assignment<'a>(
 fn transform_const_while_loop<'a>(
     while_loop: &'a WhileLoop,
     scope: &Scope,
+    is_in_loop: bool,
 ) -> QuartzResult<'a, ConstWhileLoop> {
-    let condition = transform_const_expr(while_loop.condition(), scope, false);
-    let body = transform_const_block(while_loop.body(), scope, false);
+    let condition = transform_const_expr(while_loop.condition(), scope, false, is_in_loop);
+    let body = transform_const_block(while_loop.body(), scope, false, true);
 
     match condition {
         Ok(condition) => match body {
@@ -447,6 +464,7 @@ fn transform_const_while_loop<'a>(
 fn transform_const_for_loop<'a>(
     for_loop: &'a ForLoop,
     scope: &Scope,
+    is_in_loop: bool,
 ) -> QuartzResult<'a, ConstForLoop> {
     let mut errors = Vec::new();
 
@@ -455,8 +473,8 @@ fn transform_const_for_loop<'a>(
         ForLoopRange::RangeInclusive(start, end) => (start, end, true),
     };
 
-    let start = transform_const_expr(start, scope, false);
-    let end = transform_const_expr(end, scope, false);
+    let start = transform_const_expr(start, scope, false, is_in_loop);
+    let end = transform_const_expr(end, scope, false, is_in_loop);
 
     let start = match start {
         Ok(start) => Some(start),
@@ -476,7 +494,7 @@ fn transform_const_for_loop<'a>(
 
     let mut inner_scope = Scope::new(scope);
     inner_scope.add_var(for_loop.item_name());
-    let body = transform_const_block(for_loop.body(), &inner_scope, false);
+    let body = transform_const_block(for_loop.body(), &inner_scope, false, true);
 
     let body = match body {
         Ok(body) => Some(body),
@@ -503,28 +521,43 @@ fn transform_const_for_loop<'a>(
 fn transform_const_statement<'a>(
     statement: &'a Statement,
     scope: &mut Scope,
+    is_in_loop: bool,
 ) -> QuartzResult<'a, ConstStatement> {
     match statement {
         Statement::Expr(expr) => Ok(ConstStatement::Expr(transform_const_expr(
-            expr, scope, true,
+            expr, scope, true, is_in_loop,
         )?)),
         Statement::Declaration(decl) => {
             scope.add_var(decl.name());
 
             Ok(ConstStatement::Declaration(ConstDeclaration::new(
                 decl.name().clone(),
-                transform_const_expr(decl.value(), scope, false)?,
+                transform_const_expr(decl.value(), scope, false, is_in_loop)?,
             )))
         }
         Statement::Assignment(assign) => Ok(ConstStatement::Assignment(
-            transform_const_assignment(assign, scope)?,
+            transform_const_assignment(assign, scope, is_in_loop)?,
         )),
         Statement::WhileLoop(while_loop) => Ok(ConstStatement::WhileLoop(
-            transform_const_while_loop(while_loop, scope)?,
+            transform_const_while_loop(while_loop, scope, is_in_loop)?,
         )),
         Statement::ForLoop(for_loop) => Ok(ConstStatement::ForLoop(transform_const_for_loop(
-            for_loop, scope,
+            for_loop, scope, is_in_loop,
         )?)),
+        Statement::Continue(kw) => {
+            if is_in_loop {
+                Ok(ConstStatement::Continue(*kw))
+            } else {
+                Err(QuartzError::LoopControlOutsideOfLoop { kw })
+            }
+        }
+        Statement::Break(kw) => {
+            if is_in_loop {
+                Ok(ConstStatement::Break(*kw))
+            } else {
+                Err(QuartzError::LoopControlOutsideOfLoop { kw })
+            }
+        }
     }
 }
 
@@ -532,13 +565,14 @@ fn transform_const_block<'a>(
     block: &'a Block,
     parent_scope: &Scope,
     needs_return: bool,
+    is_in_loop: bool,
 ) -> QuartzResult<'a, ConstBlock> {
     let mut scope = Scope::new(parent_scope);
 
     let mut errors = Vec::new();
     let mut statements = Vec::with_capacity(block.statements().len());
     for statement in block.statements().iter() {
-        match transform_const_statement(statement, &mut scope) {
+        match transform_const_statement(statement, &mut scope, is_in_loop) {
             Ok(statement) => statements.push(statement),
             Err(err) => errors.push(err),
         }
@@ -546,7 +580,7 @@ fn transform_const_block<'a>(
 
     let result = if let Some(result) = block.result() {
         if needs_return {
-            match transform_const_expr(result, &scope, false) {
+            match transform_const_expr(result, &scope, false, is_in_loop) {
                 Ok(result) => Some(result),
                 Err(err) => {
                     errors.push(err);
@@ -574,7 +608,7 @@ pub fn transform_const_func<'a>(func: &'a Func, scope: &Scope) -> QuartzResult<'
         inner_scope.add_var(arg);
     }
 
-    let body = transform_const_block(func.body(), &inner_scope, true)?;
+    let body = transform_const_block(func.body(), &inner_scope, true, false)?;
     Ok(ConstFunc::new(func.args().to_vec(), body))
 }
 
@@ -635,7 +669,7 @@ fn resolve_named_type<'a>(
         "bits" => {
             if generic_arg_count == 1 {
                 let width_arg = &named_ty.generic_args().unwrap().args()[0];
-                let width_expr = transform_generic_arg(width_arg, scope)?;
+                let width_expr = transform_generic_arg(width_arg, scope, false)?;
 
                 let width = eval(
                     &width_expr,
@@ -643,7 +677,8 @@ fn resolve_named_type<'a>(
                     global_const_values,
                     local_const_values,
                     funcs,
-                )?;
+                )
+                .into_result()?;
 
                 if width <= 0 {
                     return Err(QuartzError::InvalidBitWidth {
@@ -699,14 +734,15 @@ fn resolve_named_type<'a>(
             let mut generic_vals = Vec::with_capacity(generic_arg_count);
             if let Some(generic_args) = named_ty.generic_args() {
                 for arg in generic_args.args().iter() {
-                    let arg_expr = transform_generic_arg(arg, scope)?;
+                    let arg_expr = transform_generic_arg(arg, scope, false)?;
                     let arg_val = eval(
                         &arg_expr,
                         &mut VarScope::empty(),
                         global_const_values,
                         local_const_values,
                         funcs,
-                    )?;
+                    )
+                    .into_result()?;
                     generic_vals.push(arg_val);
                 }
             }
@@ -757,14 +793,15 @@ fn resolve_type<'a>(
                 registry,
             )?;
 
-            let len_expr = transform_const_expr(array_ty.len(), scope, false)?;
+            let len_expr = transform_const_expr(array_ty.len(), scope, false, false)?;
             let len = eval(
                 &len_expr,
                 &mut VarScope::empty(),
                 global_const_values,
                 local_const_values,
                 funcs,
-            )?;
+            )
+            .into_result()?;
 
             if len <= 0 {
                 return Err(QuartzError::InvalidArrayLength { ty: array_ty, len });
@@ -864,7 +901,7 @@ fn resolve_struct<'a>(
             args.funcs,
         );
 
-        match result {
+        match result.into_result() {
             Ok(value) => {
                 local_const_values.insert(SharedString::clone(name), value);
             }
@@ -935,7 +972,7 @@ fn resolve_enum<'a>(
     let mut next_variant_value = 0;
     for (name, expr) in enum_item.variants().iter().map(|v| (v.name(), v.value())) {
         if let Some(expr) = expr {
-            match transform_const_expr(expr, &scope, false) {
+            match transform_const_expr(expr, &scope, false, false) {
                 Ok(expr) => {
                     let result = eval::<_, i64>(
                         &expr,
@@ -945,7 +982,7 @@ fn resolve_enum<'a>(
                         args.funcs,
                     );
 
-                    match result {
+                    match result.into_result() {
                         Ok(value) => {
                             variants.insert(name.as_string(), value);
                             next_variant_value = value + 1;
@@ -1146,6 +1183,7 @@ fn resolve_statement<'a>(
             resolve_expr(end, parent_id, scope, args, registry)?;
             resolve_block(for_loop.body(), parent_id, scope, args, registry)
         }
+        Statement::Continue(_) | Statement::Break(_) => Ok(()),
     }
 }
 
@@ -1210,7 +1248,7 @@ fn resolve_module<'a>(
     for member in module_item.members().iter() {
         if let Member::Const(const_member) = member {
             if !local_consts.contains_key(const_member.name().as_ref()) {
-                let const_expr = transform_const_expr(const_member.value(), &scope, false)?;
+                let const_expr = transform_const_expr(const_member.value(), &scope, false, false)?;
                 local_consts.insert(const_member.name().as_string(), const_expr);
                 scope.add_const(const_member.name());
             }
@@ -1227,7 +1265,7 @@ fn resolve_module<'a>(
             args.funcs,
         );
 
-        match result {
+        match result.into_result() {
             Ok(value) => {
                 local_const_values.insert(SharedString::clone(name), value);
             }

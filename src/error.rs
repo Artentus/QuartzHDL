@@ -212,6 +212,12 @@ pub enum QuartzError<'a> {
         sens: &'a Sens,
         sens_ty: Cow<'a, str>,
     },
+    LoopControlOutsideOfLoop {
+        kw: &'a Keyword,
+    },
+    NonConstLoopControl {
+        kw: &'a Keyword,
+    },
     ParseError(QuartzParserError),
     ArithmeticError(ArithmeticError),
     List(Vec<QuartzError<'a>>),

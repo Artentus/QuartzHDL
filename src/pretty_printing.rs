@@ -562,6 +562,13 @@ impl WriteColored for crate::error::QuartzError<'_> {
                 ),
                 sens.sig().span(),
             ),
+            Self::LoopControlOutsideOfLoop { kw } => {
+                ErrorInfo::new(format!("`{}` statement outside of loop", kw), kw.span())
+            }
+            Self::NonConstLoopControl { kw } => ErrorInfo::new(
+                format!("`{}` statement is not allowed in this context", kw),
+                kw.span(),
+            ),
             Self::ParseError(err) => {
                 return err.write_colored(stream, file_server);
             }

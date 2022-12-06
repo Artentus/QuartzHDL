@@ -2,6 +2,8 @@ use crate::ast::{AssignKind, Ident, Spanned};
 use crate::ir::*;
 use crate::{HashMap, SharedString};
 use langbox::TextSpan;
+use std::convert::Infallible;
+use std::ops::{ControlFlow, FromResidual, Try};
 
 pub enum ConstValue<'a, G: Evaluatable, L: Evaluatable> {
     Value(i64),
@@ -80,51 +82,131 @@ pub enum ArithmeticError {
     DivideByZero { expr_span: TextSpan },
 }
 
-pub type ArithmeticResult<T> = Result<T, ArithmeticError>;
+pub enum EvalResult<T> {
+    Value(T),
+    Continue,
+    Break,
+    Err(ArithmeticError),
+}
+
+impl<T> EvalResult<T> {
+    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> EvalResult<U> {
+        match self {
+            EvalResult::Value(value) => EvalResult::Value(f(value)),
+            EvalResult::Continue => EvalResult::Continue,
+            EvalResult::Break => EvalResult::Break,
+            EvalResult::Err(err) => EvalResult::Err(err),
+        }
+    }
+
+    pub fn into_result(self) -> Result<T, ArithmeticError> {
+        match self {
+            EvalResult::Value(value) => Ok(value),
+            EvalResult::Err(err) => Err(err),
+            _ => panic!("invalid eval result"),
+        }
+    }
+}
+
+impl<T> FromResidual<EvalResult<Infallible>> for EvalResult<T> {
+    fn from_residual(residual: EvalResult<Infallible>) -> Self {
+        match residual {
+            EvalResult::Value(_) => unreachable!(),
+            EvalResult::Continue => EvalResult::Continue,
+            EvalResult::Break => EvalResult::Break,
+            EvalResult::Err(err) => EvalResult::Err(err),
+        }
+    }
+}
+
+impl<T> Try for EvalResult<T> {
+    type Output = T;
+    type Residual = EvalResult<Infallible>;
+
+    fn from_output(output: Self::Output) -> Self {
+        EvalResult::Value(output)
+    }
+
+    fn branch(self) -> ControlFlow<Self::Residual, Self::Output> {
+        match self {
+            EvalResult::Value(value) => ControlFlow::Continue(value),
+            EvalResult::Continue => ControlFlow::Break(EvalResult::Continue),
+            EvalResult::Break => ControlFlow::Break(EvalResult::Break),
+            EvalResult::Err(err) => ControlFlow::Break(EvalResult::Err(err)),
+        }
+    }
+}
+
+impl<T> From<Result<T, ArithmeticError>> for EvalResult<T> {
+    fn from(value: Result<T, ArithmeticError>) -> Self {
+        match value {
+            Ok(value) => EvalResult::Value(value),
+            Err(err) => EvalResult::Err(err),
+        }
+    }
+}
+
+macro_rules! ok {
+    ($value:expr) => {
+        EvalResult::Value($value)
+    };
+}
+
+macro_rules! err {
+    ($err:expr) => {
+        EvalResult::Err($err)
+    };
+}
 
 #[inline]
-fn erroring_add(lhs: i64, rhs: i64, expr_span: TextSpan) -> ArithmeticResult<i64> {
+fn erroring_add(lhs: i64, rhs: i64, expr_span: TextSpan) -> EvalResult<i64> {
     lhs.checked_add(rhs)
         .ok_or(ArithmeticError::Overflow { expr_span })
+        .into()
 }
 
 #[inline]
-fn erroring_sub(lhs: i64, rhs: i64, expr_span: TextSpan) -> ArithmeticResult<i64> {
+fn erroring_sub(lhs: i64, rhs: i64, expr_span: TextSpan) -> EvalResult<i64> {
     lhs.checked_sub(rhs)
         .ok_or(ArithmeticError::Overflow { expr_span })
+        .into()
 }
 
 #[inline]
-fn erroring_mul(lhs: i64, rhs: i64, expr_span: TextSpan) -> ArithmeticResult<i64> {
+fn erroring_mul(lhs: i64, rhs: i64, expr_span: TextSpan) -> EvalResult<i64> {
     lhs.checked_mul(rhs)
         .ok_or(ArithmeticError::Overflow { expr_span })
+        .into()
 }
 
 #[inline]
-fn erroring_div(lhs: i64, rhs: i64, expr_span: TextSpan) -> ArithmeticResult<i64> {
+fn erroring_div(lhs: i64, rhs: i64, expr_span: TextSpan) -> EvalResult<i64> {
     if rhs == 0 {
-        return Err(ArithmeticError::DivideByZero { expr_span });
+        return err!(ArithmeticError::DivideByZero { expr_span });
     }
 
     lhs.checked_div(rhs)
         .ok_or(ArithmeticError::Overflow { expr_span })
+        .into()
 }
 
 #[inline]
-fn erroring_rem(lhs: i64, rhs: i64, expr_span: TextSpan) -> ArithmeticResult<i64> {
+fn erroring_rem(lhs: i64, rhs: i64, expr_span: TextSpan) -> EvalResult<i64> {
     if rhs == 0 {
-        return Err(ArithmeticError::DivideByZero { expr_span });
+        return err!(ArithmeticError::DivideByZero { expr_span });
     }
 
     lhs.checked_rem(rhs)
         .ok_or(ArithmeticError::Overflow { expr_span })
+        .into()
 }
 
 #[inline]
-fn erroring_neg(value: i64, expr_span: TextSpan) -> ArithmeticResult<i64> {
+fn erroring_neg(value: i64, expr_span: TextSpan) -> EvalResult<i64> {
     value
         .checked_neg()
         .ok_or(ArithmeticError::Overflow { expr_span })
+        .into()
 }
 
 pub trait Evaluatable {
@@ -134,7 +216,7 @@ pub trait Evaluatable {
         global_consts: &HashMap<SharedString, G>,
         local_consts: Option<&HashMap<SharedString, L>>,
         funcs: &HashMap<SharedString, ConstFunc>,
-    ) -> ArithmeticResult<i64>;
+    ) -> EvalResult<i64>;
 }
 
 impl Evaluatable for i64 {
@@ -145,8 +227,8 @@ impl Evaluatable for i64 {
         _global_consts: &HashMap<SharedString, G>,
         _local_consts: Option<&HashMap<SharedString, L>>,
         _funcs: &HashMap<SharedString, ConstFunc>,
-    ) -> ArithmeticResult<i64> {
-        Ok(*self)
+    ) -> EvalResult<i64> {
+        ok!(*self)
     }
 }
 
@@ -158,7 +240,7 @@ impl Evaluatable for ConstExpr {
         global_consts: &HashMap<SharedString, G>,
         local_consts: Option<&HashMap<SharedString, L>>,
         funcs: &HashMap<SharedString, ConstFunc>,
-    ) -> ArithmeticResult<i64> {
+    ) -> EvalResult<i64> {
         eval(self, scope, global_consts, local_consts, funcs)
     }
 }
@@ -170,40 +252,40 @@ fn pattern_matches<G: Evaluatable, L: Evaluatable>(
     global_consts: &HashMap<SharedString, G>,
     local_consts: Option<&HashMap<SharedString, L>>,
     funcs: &HashMap<SharedString, ConstFunc>,
-) -> ArithmeticResult<bool> {
+) -> EvalResult<bool> {
     for pattern in patterns.iter() {
         match pattern {
             ConstMatchPattern::Literal(l) => {
                 if l.value() == value {
-                    return Ok(true);
+                    return ok!(true);
                 }
             }
             ConstMatchPattern::Range(start, end) => {
                 if (start.value()..end.value()).contains(&value) {
-                    return Ok(true);
+                    return ok!(true);
                 }
             }
             ConstMatchPattern::RangeInclusive(start, end) => {
                 if (start.value()..=end.value()).contains(&value) {
-                    return Ok(true);
+                    return ok!(true);
                 }
             }
             ConstMatchPattern::Ident(ident) => {
                 if ident.as_ref() == "_" {
-                    return Ok(true);
+                    return ok!(true);
                 }
 
                 if let Some(expr) = global_consts.get(ident.as_ref()) {
                     let pattern_value = expr.eval(scope, global_consts, local_consts, funcs)?;
                     if pattern_value == value {
-                        return Ok(true);
+                        return ok!(true);
                     }
                 } else if let Some(expr) =
                     local_consts.and_then(|local_consts| local_consts.get(ident.as_ref()))
                 {
                     let pattern_value = expr.eval(scope, global_consts, local_consts, funcs)?;
                     if pattern_value == value {
-                        return Ok(true);
+                        return ok!(true);
                     }
                 } else {
                     unreachable!("constant does not exist");
@@ -212,7 +294,7 @@ fn pattern_matches<G: Evaluatable, L: Evaluatable>(
         }
     }
 
-    Ok(false)
+    ok!(false)
 }
 
 pub fn eval<G: Evaluatable, L: Evaluatable>(
@@ -221,12 +303,12 @@ pub fn eval<G: Evaluatable, L: Evaluatable>(
     global_consts: &HashMap<SharedString, G>,
     local_consts: Option<&HashMap<SharedString, L>>,
     funcs: &HashMap<SharedString, ConstFunc>,
-) -> ArithmeticResult<i64> {
+) -> EvalResult<i64> {
     macro_rules! eval_cmp_expr {
         ($lhs:expr, $rhs:expr, $op:tt) => {{
             let lhs = eval($lhs, scope, global_consts, local_consts, funcs)?;
             let rhs = eval($rhs, scope, global_consts, local_consts, funcs)?;
-            Ok((lhs $op rhs) as i64)
+            ok!((lhs $op rhs) as i64)
         }};
     }
 
@@ -234,7 +316,7 @@ pub fn eval<G: Evaluatable, L: Evaluatable>(
         ($lhs:expr, $rhs:expr, $op:tt) => {{
             let lhs = eval($lhs, scope, global_consts, local_consts, funcs)?;
             let rhs = eval($rhs, scope, global_consts, local_consts, funcs)?;
-            Ok(lhs $op rhs)
+            ok!(lhs $op rhs)
         }};
     }
 
@@ -247,10 +329,10 @@ pub fn eval<G: Evaluatable, L: Evaluatable>(
     }
 
     match expr {
-        ConstExpr::Value(v) => Ok(*v),
-        ConstExpr::Literal(l) => Ok(l.value()),
+        ConstExpr::Value(v) => ok!(*v),
+        ConstExpr::Literal(l) => ok!(l.value()),
         ConstExpr::Ident(name) => match scope.var(name, global_consts, local_consts) {
-            ConstValue::Value(value) => Ok(value),
+            ConstValue::Value(value) => ok!(value),
             ConstValue::GlobalExpr(expr) => expr.eval(scope, global_consts, local_consts, funcs),
             ConstValue::LocalExpr(expr) => expr.eval(scope, global_consts, local_consts, funcs),
         },
@@ -335,7 +417,7 @@ pub fn eval<G: Evaluatable, L: Evaluatable>(
         }
         ConstExpr::Not(expr) => {
             let inner = eval(expr.inner(), scope, global_consts, local_consts, funcs)?;
-            Ok(!inner)
+            ok!(!inner)
         }
         ConstExpr::Lt(expr) => eval_cmp_expr!(expr.lhs(), expr.rhs(), <),
         ConstExpr::Lte(expr) => eval_cmp_expr!(expr.lhs(), expr.rhs(), <=),
@@ -355,7 +437,7 @@ pub fn eval<G: Evaluatable, L: Evaluatable>(
         ConstExpr::Lsr(expr) => {
             let lhs = eval(expr.lhs(), scope, global_consts, local_consts, funcs)? as u64;
             let rhs = eval(expr.rhs(), scope, global_consts, local_consts, funcs)? as u64;
-            Ok((lhs >> rhs) as i64)
+            ok!((lhs >> rhs) as i64)
         }
         ConstExpr::Asr(expr) => eval_binary_expr!(expr.lhs(), expr.rhs(), >>),
     }
@@ -367,7 +449,7 @@ fn eval_statement<G: Evaluatable, L: Evaluatable>(
     global_consts: &HashMap<SharedString, G>,
     local_consts: Option<&HashMap<SharedString, L>>,
     funcs: &HashMap<SharedString, ConstFunc>,
-) -> ArithmeticResult<()> {
+) -> EvalResult<()> {
     match statement {
         ConstStatement::Expr(expr) => match expr {
             ConstExpr::If(expr) => {
@@ -403,7 +485,7 @@ fn eval_statement<G: Evaluatable, L: Evaluatable>(
                         );
                     }
 
-                    Ok(())
+                    ok!(())
                 }
             }
             ConstExpr::Match(expr) => {
@@ -442,7 +524,7 @@ fn eval_statement<G: Evaluatable, L: Evaluatable>(
         ConstStatement::Declaration(decl) => {
             let value = eval(decl.value(), scope, global_consts, local_consts, funcs)?;
             scope.add_var(decl.name(), value);
-            Ok(())
+            ok!(())
         }
         ConstStatement::Assignment(assign) => {
             let value = eval(assign.value(), scope, global_consts, local_consts, funcs)?;
@@ -463,7 +545,7 @@ fn eval_statement<G: Evaluatable, L: Evaluatable>(
                 AssignKind::LsrAssign => *var >>= value,
             }
 
-            Ok(())
+            ok!(())
         }
         ConstStatement::WhileLoop(while_loop) => {
             while eval(
@@ -474,10 +556,21 @@ fn eval_statement<G: Evaluatable, L: Evaluatable>(
                 funcs,
             )? != 0
             {
-                eval_statement_block(while_loop.body(), scope, global_consts, local_consts, funcs)?;
+                match eval_statement_block(
+                    while_loop.body(),
+                    scope,
+                    global_consts,
+                    local_consts,
+                    funcs,
+                ) {
+                    EvalResult::Value(_) => {}
+                    EvalResult::Continue => continue,
+                    EvalResult::Break => break,
+                    EvalResult::Err(err) => return err!(err),
+                }
             }
 
-            Ok(())
+            ok!(())
         }
         ConstStatement::ForLoop(for_loop) => {
             let (start, end, inclusive) = match for_loop.range() {
@@ -493,18 +586,25 @@ fn eval_statement<G: Evaluatable, L: Evaluatable>(
                     let mut inner_scope = VarScope::new(scope);
                     inner_scope.add_var(for_loop.item_name(), loop_index);
 
-                    eval_statement_block(
+                    match eval_statement_block(
                         for_loop.body(),
                         &mut inner_scope,
                         global_consts,
                         local_consts,
                         funcs,
-                    )?;
+                    ) {
+                        EvalResult::Value(_) => {}
+                        EvalResult::Continue => continue,
+                        EvalResult::Break => break,
+                        EvalResult::Err(err) => return err!(err),
+                    }
                 }
             }
 
-            Ok(())
+            ok!(())
         }
+        ConstStatement::Continue(_) => EvalResult::Continue,
+        ConstStatement::Break(_) => EvalResult::Break,
     }
 }
 
@@ -514,14 +614,14 @@ fn eval_block<G: Evaluatable, L: Evaluatable>(
     global_consts: &HashMap<SharedString, G>,
     local_consts: Option<&HashMap<SharedString, L>>,
     funcs: &HashMap<SharedString, ConstFunc>,
-) -> ArithmeticResult<Option<i64>> {
+) -> EvalResult<Option<i64>> {
     let mut scope = VarScope::new(parent_scope);
     for statement in block.statements().iter() {
         eval_statement(statement, &mut scope, global_consts, local_consts, funcs)?;
     }
 
     if let Some(result) = block.result() {
-        Ok(Some(eval(
+        ok!(Some(eval(
             result,
             &mut scope,
             global_consts,
@@ -529,7 +629,7 @@ fn eval_block<G: Evaluatable, L: Evaluatable>(
             funcs,
         )?))
     } else {
-        Ok(None)
+        ok!(None)
     }
 }
 
@@ -539,10 +639,10 @@ fn eval_expr_block<G: Evaluatable, L: Evaluatable>(
     global_consts: &HashMap<SharedString, G>,
     local_consts: Option<&HashMap<SharedString, L>>,
     funcs: &HashMap<SharedString, ConstFunc>,
-) -> ArithmeticResult<i64> {
-    Ok(
+) -> EvalResult<i64> {
+    ok!(
         eval_block(block, parent_scope, global_consts, local_consts, funcs)?
-            .expect("block is not an expression"),
+            .expect("block is not an expression")
     )
 }
 
@@ -552,8 +652,8 @@ fn eval_statement_block<G: Evaluatable, L: Evaluatable>(
     global_consts: &HashMap<SharedString, G>,
     local_consts: Option<&HashMap<SharedString, L>>,
     funcs: &HashMap<SharedString, ConstFunc>,
-) -> ArithmeticResult<()> {
+) -> EvalResult<()> {
     let result = eval_block(block, parent_scope, global_consts, local_consts, funcs)?;
     assert!(result.is_none(), "block is not a statement");
-    Ok(())
+    ok!(())
 }

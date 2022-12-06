@@ -39,6 +39,8 @@ const KEYWORDS: phf::Map<&'static str, KeywordKind> = phf_macros::phf_map!(
     "rising" => KeywordKind::Rising,
     "falling" => KeywordKind::Falling,
     "as" => KeywordKind::As,
+    "continue" => KeywordKind::Continue,
+    "break" => KeywordKind::Break,
 );
 
 #[derive(Debug)]
@@ -617,6 +619,8 @@ fn for_loop() -> impl QuartzParser<ForLoop> {
 
 fn statement() -> impl QuartzParser<Statement> {
     choice!(
+        parser!({kw(KeywordKind::Continue)}->[Statement::Continue]),
+        parser!({kw(KeywordKind::Break)}->[Statement::Break]),
         parser!({if_expr()}->[Statement::Expr]),
         parser!({match_expr()}->[Statement::Expr]),
         parser!({decl()}->[Statement::Declaration]),

@@ -369,7 +369,8 @@ fn typecheck_cast_expr<'a>(
                     args.global_const_values,
                     Some(args.local_const_values),
                     args.funcs,
-                )?;
+                )
+                .into_result()?;
 
                 return Ok(CheckedCastExpr::new(CheckedExpr::Value(value), target_id));
             }
@@ -414,7 +415,8 @@ fn merge_expr<'a>(
                 args.global_const_values,
                 Some(args.local_const_values),
                 args.funcs,
-            )?;
+            )
+            .into_result()?;
             Ok(CheckedExpr::Value(value))
         }
         Either::Checked(expr) => Ok(expr),
@@ -648,7 +650,8 @@ fn typecheck_indexer<'a>(
                         args.global_const_values,
                         Some(args.local_const_values),
                         args.funcs,
-                    )?;
+                    )
+                    .into_result()?;
                     let checked_indexer = CheckedIndexKind::Single(CheckedExpr::Value(index));
 
                     let base_ty = &known_types[&base_id];
@@ -731,23 +734,25 @@ fn typecheck_indexer<'a>(
         }
         IndexKind::Range(range) => {
             // Index ranges can only be constant
-            let start = transform_const_expr(&range.start, scope, false)?;
+            let start = transform_const_expr(&range.start, scope, false, false)?;
             let start = eval(
                 &start,
                 &mut VarScope::empty(),
                 args.global_const_values,
                 Some(args.local_const_values),
                 args.funcs,
-            )?;
+            )
+            .into_result()?;
 
-            let end = transform_const_expr(&range.end, scope, false)?;
+            let end = transform_const_expr(&range.end, scope, false, false)?;
             let end = eval(
                 &end,
                 &mut VarScope::empty(),
                 args.global_const_values,
                 Some(args.local_const_values),
                 args.funcs,
-            )?;
+            )
+            .into_result()?;
 
             let base_ty = &known_types[&base_id];
             match base_ty {
@@ -1521,7 +1526,7 @@ fn typecheck_expr<'a>(
             )))
         }
         Expr::Call(expr) => {
-            let call_expr = transform_const_call_expr(expr, scope)?;
+            let call_expr = transform_const_call_expr(expr, scope, false)?;
             Ok(Either::Const(ConstExpr::Call(call_expr)))
         }
         Expr::Construct(expr) => {
@@ -2151,6 +2156,9 @@ fn typecheck_statement<'a>(
         }
         Statement::WhileLoop(while_loop) => Err(QuartzError::UnsupportedWhileLoop { while_loop }),
         Statement::ForLoop(for_loop) => Err(QuartzError::UnsupportedForLoop { for_loop }),
+        Statement::Continue(kw) | Statement::Break(kw) => {
+            Err(QuartzError::NonConstLoopControl { kw })
+        }
     }
 }
 
