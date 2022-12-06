@@ -1,6 +1,5 @@
 #![allow(clippy::too_many_arguments)]
 #![feature(trait_alias)]
-#![feature(int_log)]
 #![feature(let_chains)]
 #![feature(maybe_uninit_uninit_array)]
 #![feature(const_maybe_uninit_uninit_array)]
@@ -282,14 +281,14 @@ fn main() -> std::io::Result<()> {
     let Some(top_item) = type_items.get(top_module_name) else {
         let mut stderr = stderr.lock();
         return write_error(
-            &format!("top module `{}` not found", top_module_name),
+            &format!("top module `{top_module_name}` not found"),
             &mut stderr,
         );
     };
     let ir::TypeItem::Module(top_module) = top_item else {
         let mut stderr = stderr.lock();
         return write_error(
-            &format!("`{}` is not a module", top_module_name),
+            &format!("`{top_module_name}` is not a module"),
             &mut stderr,
         );
     };

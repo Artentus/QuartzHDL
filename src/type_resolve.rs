@@ -11,7 +11,7 @@ use topological_sort::TopologicalSort;
 
 pub fn check_for_duplicate_items<'a>(
     items: impl Iterator<Item = &'a Item>,
-) -> QuartzResult<'static, ()> {
+) -> QuartzResult<'a, ()> {
     let mut errors = Vec::new();
     let mut set = HashSet::default();
 
@@ -21,9 +21,7 @@ pub fn check_for_duplicate_items<'a>(
 
     for item in items {
         if set.contains(item.name().as_ref()) {
-            errors.push(QuartzError::DuplicateIdent {
-                name: item.name().clone(),
-            })
+            errors.push(QuartzError::DuplicateIdent { name: item.name() })
         } else {
             set.insert(item.name().as_string());
         }
@@ -365,10 +363,10 @@ pub fn transform_const_expr<'a>(
         Expr::Lte(expr) => bin_expr!(expr, Lte),
         Expr::Gt(expr) => bin_expr!(expr, Gt),
         Expr::Gte(expr) => bin_expr!(expr, Gte),
-        Expr::Slt(expr) => Err(QuartzError::InvalidConstOp { op: *expr.op() }),
-        Expr::Slte(expr) => Err(QuartzError::InvalidConstOp { op: *expr.op() }),
-        Expr::Sgt(expr) => Err(QuartzError::InvalidConstOp { op: *expr.op() }),
-        Expr::Sgte(expr) => Err(QuartzError::InvalidConstOp { op: *expr.op() }),
+        Expr::Slt(expr) => Err(QuartzError::InvalidConstOp { op: expr.op() }),
+        Expr::Slte(expr) => Err(QuartzError::InvalidConstOp { op: expr.op() }),
+        Expr::Sgt(expr) => Err(QuartzError::InvalidConstOp { op: expr.op() }),
+        Expr::Sgte(expr) => Err(QuartzError::InvalidConstOp { op: expr.op() }),
         Expr::Eq(expr) => bin_expr!(expr, Eq),
         Expr::Ne(expr) => bin_expr!(expr, Ne),
         Expr::Add(expr) => bin_expr!(expr, Add),
@@ -826,14 +824,14 @@ fn resolve_type<'a>(
 fn check_for_duplicate_fields<'a>(
     generic_args: Option<&'a GenericStructArgs>,
     fields: impl Iterator<Item = &'a Field>,
-) -> QuartzResult<'static, ()> {
+) -> QuartzResult<'a, ()> {
     let mut errors = Vec::new();
     let mut set = HashSet::default();
 
     if let Some(generic_args) = generic_args {
         for arg in generic_args.args().iter() {
             if set.contains(arg.as_ref()) {
-                errors.push(QuartzError::DuplicateIdent { name: arg.clone() })
+                errors.push(QuartzError::DuplicateIdent { name: arg })
             } else {
                 set.insert(arg.as_string());
             }
@@ -842,9 +840,7 @@ fn check_for_duplicate_fields<'a>(
 
     for field in fields {
         if set.contains(field.name().as_ref()) {
-            errors.push(QuartzError::DuplicateIdent {
-                name: field.name().clone(),
-            })
+            errors.push(QuartzError::DuplicateIdent { name: field.name() })
         } else {
             set.insert(field.name().as_string());
         }
@@ -1004,14 +1000,14 @@ fn resolve_enum<'a>(
 fn check_for_duplicate_members<'a>(
     generic_args: Option<&'a GenericStructArgs>,
     members: impl Iterator<Item = &'a Member>,
-) -> QuartzResult<'static, ()> {
+) -> QuartzResult<'a, ()> {
     let mut errors = Vec::new();
     let mut set = HashSet::default();
 
     if let Some(generic_args) = generic_args {
         for arg in generic_args.args().iter() {
             if set.contains(arg.as_ref()) {
-                errors.push(QuartzError::DuplicateIdent { name: arg.clone() })
+                errors.push(QuartzError::DuplicateIdent { name: arg })
             } else {
                 set.insert(arg.as_string());
             }
@@ -1021,7 +1017,7 @@ fn check_for_duplicate_members<'a>(
     for member in members {
         if let Some(name) = member.name() {
             if set.contains(name.as_ref()) {
-                errors.push(QuartzError::DuplicateIdent { name: name.clone() })
+                errors.push(QuartzError::DuplicateIdent { name: name })
             } else {
                 set.insert(name.as_string());
             }

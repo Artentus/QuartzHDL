@@ -527,12 +527,10 @@ fn find_module_member_type<'a>(
     } else if let Some(module_id) = module_id {
         Err(QuartzError::UndefinedMember {
             ty: known_types[&module_id].to_string(known_types),
-            name: ident.clone(),
+            name: ident,
         })
     } else {
-        Err(QuartzError::UndefinedIdent {
-            name: ident.clone(),
-        })
+        Err(QuartzError::UndefinedIdent { name: ident })
     }
 }
 
@@ -549,7 +547,7 @@ fn find_member_type<'a>(
             } else {
                 Err(QuartzError::UndefinedMember {
                     ty: known_types[&parent_id].to_string(known_types),
-                    name: ident.clone(),
+                    name: ident,
                 })
             }
         }
@@ -558,7 +556,7 @@ fn find_member_type<'a>(
         }
         Some(_) => Err(QuartzError::UndefinedMember {
             ty: known_types[&parent_id].to_string(known_types),
-            name: ident.clone(),
+            name: ident,
         }),
         None => unreachable!("type incorrectly resolved"),
     }
@@ -577,13 +575,11 @@ fn is_valid_enum_variant<'a>(
             } else {
                 Err(QuartzError::InvalidEnumVariant {
                     enum_name: enum_name.as_string(),
-                    variant_name: variant_name.clone(),
+                    variant_name,
                 })
             }
         }
-        _ => Err(QuartzError::InvalidEnumIdent {
-            name: enum_name.clone(),
-        }),
+        _ => Err(QuartzError::InvalidEnumIdent { name: enum_name }),
     }
 }
 
@@ -1202,7 +1198,7 @@ fn typecheck_enum_match_expr<'a>(
                     } else {
                         errors.push(QuartzError::InvalidEnumVariant {
                             enum_name: SharedString::clone(enum_name),
-                            variant_name: variant_name.clone()
+                            variant_name,
                         });
                         continue 'inner;
                     }
@@ -1451,7 +1447,7 @@ fn typecheck_expr<'a>(
                 args,
             )?;
             match inner {
-                Either::Const(_) => Err(QuartzError::InvalidConstOp { op: *$expr.op() }),
+                Either::Const(_) => Err(QuartzError::InvalidConstOp { op: $expr.op() }),
                 Either::Checked(inner) => Ok(Either::Checked(CheckedExpr::$op(inner))),
             }
         }};
@@ -2376,7 +2372,7 @@ pub fn typecheck_module<'a>(
 
     let mut errors = Vec::new();
 
-    for (_, port) in module_item.ports() {
+    for port in module_item.ports().values() {
         match (port.dir(), port.kind()) {
             (Direction::In, LogicKind::Register)
             | (Direction::In, LogicKind::Module)
@@ -2407,7 +2403,7 @@ pub fn typecheck_module<'a>(
         }
     }
 
-    for (_, logic_member) in module_item.logic_members() {
+    for logic_member in module_item.logic_members().values() {
         let ty_is_mod = type_contains_module(logic_member.ty(), known_types, resolved_types);
         match (logic_member.kind(), ty_is_mod) {
             (LogicKind::Signal, true)

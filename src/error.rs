@@ -8,7 +8,7 @@ use std::borrow::Cow;
 #[derive(Debug)]
 pub enum QuartzError<'a> {
     DuplicateIdent {
-        name: Ident,
+        name: &'a Ident,
     },
     InvalidConstExpr {
         expr: &'a Expr,
@@ -17,7 +17,7 @@ pub enum QuartzError<'a> {
         match_expr: &'a MatchExpr,
     },
     InvalidConstOp {
-        op: Punct,
+        op: &'a Punct,
     },
     InvalidConstAssignTarget {
         target: &'a AssignTarget,
@@ -29,19 +29,19 @@ pub enum QuartzError<'a> {
         value: &'a Expr,
     },
     UndefinedIdent {
-        name: Ident,
+        name: &'a Ident,
     },
     TargetNotAssignable {
-        name: Ident,
+        name: &'a Ident,
     },
     ValueNotConst {
-        name: Ident,
+        name: &'a Ident,
     },
     InvalidValueIdent {
-        name: Ident,
+        name: &'a Ident,
     },
     InvalidFuncIdent {
-        name: Ident,
+        name: &'a Ident,
     },
     MissingElseBlock {
         if_expr: &'a IfExpr,
@@ -97,15 +97,15 @@ pub enum QuartzError<'a> {
         path: &'a Path,
     },
     InvalidEnumIdent {
-        name: Ident,
+        name: &'a Ident,
     },
     InvalidEnumVariant {
         enum_name: SharedString,
-        variant_name: Ident,
+        variant_name: &'a Ident,
     },
     UndefinedMember {
         ty: Cow<'a, str>,
-        name: Ident,
+        name: &'a Ident,
     },
     InvalidIndexing {
         indexer: &'a Indexer,

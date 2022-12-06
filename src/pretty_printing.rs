@@ -99,9 +99,13 @@ fn _write_error(
 
     let file = file_server.get_file(info.span.file_id()).unwrap();
 
-    let start_line = info.span.start_pos().line();
-    let end_line = info.span.end_pos().line();
-    let line_count = end_line - start_line + 1;
+    let (start_line, start_column) = info.span.start_pos().line_column(file_server);
+    let (start_line, start_column) = (start_line as usize, start_column as usize);
+
+    let (end_line, end_column) = info.span.end_pos().line_column(file_server);
+    let (end_line, end_column) = (end_line as usize, end_column as usize);
+
+    let line_count = (end_line - start_line + 1) as usize;
     let digit_count = ((end_line + 1) * 10).ilog10() as usize;
 
     write_styled!(
@@ -117,7 +121,7 @@ fn _write_error(
         "{}:{}:{}",
         file.path().display(),
         start_line + 1,
-        info.span.start_pos().column() + 1
+        start_column + 1
     )?;
 
     writeln_styled!(
@@ -159,7 +163,7 @@ fn _write_error(
                 [White; Bold],
                 "{:>width$}",
                 "",
-                width = info.span.start_pos().column()
+                width = start_column
             )?;
 
             writeln_styled!(
@@ -167,7 +171,7 @@ fn _write_error(
                 [Red; Bold],
                 "{:^^width$}",
                 "",
-                width = info.span.end_pos().column() - info.span.start_pos().column()
+                width = end_column - start_column
             )?;
         } else if i == start_line {
             write_styled!(
@@ -175,7 +179,7 @@ fn _write_error(
                 [White; Bold],
                 "{:>width$}",
                 "",
-                width = info.span.start_pos().column()
+                width = start_column
             )?;
 
             writeln_styled!(
@@ -183,16 +187,10 @@ fn _write_error(
                 [Red; Bold],
                 "{:^^width$}",
                 "",
-                width = line.chars().count() - info.span.start_pos().column()
+                width = line.chars().count() - start_column
             )?;
         } else if i == end_line {
-            writeln_styled!(
-                stream,
-                [Red; Bold],
-                "{:^^width$}",
-                "",
-                width = info.span.end_pos().column()
-            )?;
+            writeln_styled!(stream, [Red; Bold], "{:^^width$}", "", width = end_column)?;
         } else {
             writeln_styled!(
                 stream,
