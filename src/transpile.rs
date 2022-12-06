@@ -189,7 +189,7 @@ pub fn transpile(
             match port.dir() {
                 Direction::In => write!(writer, "    input var ")?,
                 Direction::Out => write!(writer, "    output var ")?,
-                Direction::InOut => write!(writer, "    inout var ")?,
+                Direction::InOut => write!(writer, "    inout tri ")?,
             }
 
             let port_type_name = get_transpiled_type_name(port.ty(), known_types);
@@ -665,13 +665,13 @@ fn transpile_statement(
             )?;
             writeln!(writer, ")")?;
 
-            for branch in case_statement.branches().iter() {
+            for (i, branch) in case_statement.branches().iter().enumerate() {
                 write!(writer, "{}    ", leading_ws)?;
 
                 let is_default = branch.patterns().iter().any(|pattern| {
                     matches!(pattern, VCasePattern::Ident(ident) if ident.as_ref() == "_")
                 });
-                if is_default {
+                if is_default || (i == (case_statement.branches().len() - 1)) {
                     writeln!(writer, "default: begin")?;
                 } else {
                     for (i, pattern) in branch.patterns().iter().enumerate() {
@@ -700,6 +700,10 @@ fn transpile_statement(
                 )?;
 
                 writeln!(writer, "{}    end", leading_ws)?;
+
+                if is_default {
+                    break;
+                }
             }
 
             writeln!(writer, "{}endcase", leading_ws)?;
