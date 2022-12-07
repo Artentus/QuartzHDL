@@ -1017,7 +1017,7 @@ fn check_for_duplicate_members<'a>(
     for member in members {
         if let Some(name) = member.name() {
             if set.contains(name.as_ref()) {
-                errors.push(QuartzError::DuplicateIdent { name: name })
+                errors.push(QuartzError::DuplicateIdent { name })
             } else {
                 set.insert(name.as_string());
             }

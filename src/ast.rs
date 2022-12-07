@@ -323,7 +323,7 @@ impl DisplayScoped for Path {
         write!(f, "{}", self.head)?;
 
         for segment in self.tail.iter() {
-            write!(f, "{}", segment)?;
+            write!(f, "{segment}")?;
         }
 
         Ok(())
@@ -430,9 +430,9 @@ impl DisplayScoped for CallExpr {
         write!(f, "{}{}", self.func, self.open_paren)?;
         for (i, arg) in self.args.iter().enumerate() {
             if i > 0 {
-                write!(f, ", {}", arg)?;
+                write!(f, ", {arg}")?;
             } else {
-                write!(f, "{}", arg)?;
+                write!(f, "{arg}")?;
             }
         }
         write!(f, "{}", self.close_paren)
@@ -554,7 +554,7 @@ impl DisplayScoped for ConstructExpr {
 
         f.enter_scope();
         for field in self.fields.iter() {
-            writeln!(f, "{},", field)?;
+            writeln!(f, "{field},")?;
         }
         f.exit_scope();
 
@@ -741,11 +741,11 @@ impl DisplayScoped for IfExpr {
         )?;
 
         for else_if_block in self.else_if_blocks.iter() {
-            write!(f, " {}", else_if_block)?;
+            write!(f, " {else_if_block}")?;
         }
 
         if let Some(else_block) = &self.else_block {
-            write!(f, " {}", else_block)?;
+            write!(f, " {else_block}")?;
         }
 
         Ok(())
@@ -777,8 +777,8 @@ impl DisplayScoped for MatchPattern {
     fn fmt(&self, f: &mut ScopedFormatter<'_, '_>) -> std::fmt::Result {
         match self {
             Self::Literal(l) => DisplayScoped::fmt(l, f),
-            Self::Range(s, e) => write!(f, "{}..{}", s, e),
-            Self::RangeInclusive(s, e) => write!(f, "{}..={}", s, e),
+            Self::Range(s, e) => write!(f, "{s}..{e}"),
+            Self::RangeInclusive(s, e) => write!(f, "{s}..={e}"),
             Self::Path(p) => DisplayScoped::fmt(p, f),
         }
     }
@@ -859,9 +859,9 @@ impl DisplayScoped for MatchBranch {
     fn fmt(&self, f: &mut ScopedFormatter<'_, '_>) -> std::fmt::Result {
         for (i, pattern) in self.patterns.iter().enumerate() {
             if i > 0 {
-                write!(f, " | {}", pattern)?;
+                write!(f, " | {pattern}")?;
             } else {
-                write!(f, "{}", pattern)?;
+                write!(f, "{pattern}")?;
             }
         }
 
@@ -936,7 +936,7 @@ impl DisplayScoped for MatchExpr {
 
         f.enter_scope();
         for branch in self.branches.iter() {
-            writeln!(f, "{},", branch)?;
+            writeln!(f, "{branch},")?;
         }
         f.exit_scope();
 
@@ -1541,7 +1541,7 @@ impl DisplayScoped for AssignTarget {
         write!(f, "{}", self.path)?;
 
         for suffix in self.suffixes.iter() {
-            write!(f, "{}", suffix)?;
+            write!(f, "{suffix}")?;
         }
 
         Ok(())
@@ -1731,8 +1731,8 @@ pub enum ForLoopRange {
 impl DisplayScoped for ForLoopRange {
     fn fmt(&self, f: &mut ScopedFormatter<'_, '_>) -> std::fmt::Result {
         match self {
-            Self::Range(s, e) => write!(f, "{}..{}", s, e),
-            Self::RangeInclusive(s, e) => write!(f, "{}..={}", s, e),
+            Self::Range(s, e) => write!(f, "{s}..{e}"),
+            Self::RangeInclusive(s, e) => write!(f, "{s}..={e}"),
         }
     }
 }
@@ -1840,14 +1840,14 @@ impl DisplayScoped for Statement {
         match self {
             Self::Expr(expr) => match expr {
                 Expr::If(_) | Expr::Match(_) | Expr::Block(_) => DisplayScoped::fmt(expr, f),
-                _ => write!(f, "{};", expr),
+                _ => write!(f, "{expr};"),
             },
             Self::Declaration(decl) => DisplayScoped::fmt(decl, f),
             Self::Assignment(assignment) => DisplayScoped::fmt(assignment, f),
             Self::WhileLoop(while_loop) => DisplayScoped::fmt(while_loop, f),
             Self::ForLoop(for_loop) => DisplayScoped::fmt(for_loop, f),
-            Self::Continue(kw) => write!(f, "{};", kw),
-            Self::Break(kw) => write!(f, "{};", kw),
+            Self::Continue(kw) => write!(f, "{kw};"),
+            Self::Break(kw) => write!(f, "{kw};"),
         }
     }
 }
@@ -1911,10 +1911,10 @@ impl DisplayScoped for Block {
 
         f.enter_scope();
         for statement in self.statements.iter() {
-            writeln!(f, "{}", statement)?;
+            writeln!(f, "{statement}")?;
         }
         if let Some(result) = &self.result {
-            writeln!(f, "{}", result)?;
+            writeln!(f, "{result}")?;
         }
         f.exit_scope();
 
@@ -1946,7 +1946,7 @@ impl DisplayScoped for GenericTypeArg {
         match self {
             Self::Literal(l) => DisplayScoped::fmt(l, f),
             Self::Ident(i) => DisplayScoped::fmt(i, f),
-            Self::Expr(expr) => write!(f, "{{ {} }}", expr),
+            Self::Expr(expr) => write!(f, "{{ {expr} }}"),
         }
     }
 }
@@ -2007,15 +2007,15 @@ impl Spanned for GenericTypeArgs {
 impl DisplayScoped for GenericTypeArgs {
     fn fmt(&self, f: &mut ScopedFormatter<'_, '_>) -> std::fmt::Result {
         if let Some(turbofish) = &self.turbofish {
-            write!(f, "{}", turbofish)?;
+            write!(f, "{turbofish}")?;
         }
 
         write!(f, "{}", self.open_paren)?;
         for (i, arg) in self.args.iter().enumerate() {
             if i == 0 {
-                write!(f, "{}", arg)?;
+                write!(f, "{arg}")?;
             } else {
-                write!(f, ", {}", arg)?;
+                write!(f, ", {arg}")?;
             }
         }
         write!(f, "{}", self.close_paren)
@@ -2259,9 +2259,9 @@ impl DisplayScoped for GenericStructArgs {
         write!(f, "{}", self.open_paren)?;
         for (i, arg) in self.args.iter().enumerate() {
             if i == 0 {
-                write!(f, "{}", arg)?;
+                write!(f, "{arg}")?;
             } else {
-                write!(f, ", {}", arg)?;
+                write!(f, ", {arg}")?;
             }
         }
         write!(f, "{}", self.close_paren)
@@ -2357,7 +2357,7 @@ impl DisplayScoped for Struct {
 
         f.enter_scope();
         for field in self.fields.iter() {
-            writeln!(f, "{},", field)?;
+            writeln!(f, "{field},")?;
         }
         f.exit_scope();
 
@@ -2497,7 +2497,7 @@ impl DisplayScoped for Enum {
 
         f.enter_scope();
         for variant in self.variants.iter() {
-            writeln!(f, "{},", variant)?;
+            writeln!(f, "{variant},")?;
         }
         f.exit_scope();
 
@@ -2929,9 +2929,9 @@ impl DisplayScoped for ProcMember {
 
         for (i, sens) in self.sens.iter().enumerate() {
             if i > 0 {
-                write!(f, " | {}", sens)?;
+                write!(f, " | {sens}")?;
             } else {
-                write!(f, "{}", sens)?;
+                write!(f, "{sens}")?;
             }
         }
 
@@ -3135,13 +3135,13 @@ impl DisplayScoped for Module {
 
         f.enter_scope();
         for port in self.ports.iter() {
-            writeln!(f, "{},", port)?;
+            writeln!(f, "{port},")?;
         }
         f.exit_scope();
         writeln!(f, "{} {}", self.close_paren, self.open_curl)?;
         f.enter_scope();
         for member in self.members.iter() {
-            writeln!(f, "{}", member)?;
+            writeln!(f, "{member}")?;
         }
         f.exit_scope();
         write!(f, "{}", self.close_curl)
@@ -3222,9 +3222,9 @@ impl DisplayScoped for Func {
         write!(f, "{} {}{}", self.fn_kw, self.name, self.open_paren)?;
         for (i, arg) in self.args.iter().enumerate() {
             if i > 0 {
-                write!(f, ", {}", arg)?;
+                write!(f, ", {arg}")?;
             } else {
-                write!(f, "{}", arg)?;
+                write!(f, "{arg}")?;
             }
         }
 

@@ -92,8 +92,7 @@ fn ident() -> impl QuartzParser<Ident> {
                     if KEYWORDS.contains_key(name) {
                         ParseResult::Err(QuartzParserError {
                             message: format!(
-                                "'{}' is a reserved keyword and cannot be used as an identifier",
-                                name
+                                "'{name}' is a reserved keyword and cannot be used as an identifier",
                             )
                             .into(),
                             span: token.span,

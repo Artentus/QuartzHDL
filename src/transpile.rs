@@ -39,17 +39,17 @@ impl<'a> TranspiledTypeName<'a> {
 
     fn array(&self) -> &str {
         if let Some(array) = &self.array {
-            &array
+            array
         } else {
             ""
         }
     }
 }
 
-fn get_transpiled_type_name<'a>(
+fn get_transpiled_type_name(
     id: TypeId,
-    known_types: &'a HashMap<TypeId, ResolvedType>,
-) -> TranspiledTypeName<'a> {
+    known_types: &HashMap<TypeId, ResolvedType>,
+) -> TranspiledTypeName {
     match &known_types[&id] {
         ResolvedType::Const => unreachable!("invalid type"),
         ResolvedType::BuiltinBits { width } => {
@@ -69,7 +69,7 @@ fn get_transpiled_type_name<'a>(
 
                 for generic_arg in generic_args.iter() {
                     use std::fmt::Write;
-                    write!(transpiled_name, "_{}", generic_arg).unwrap();
+                    write!(transpiled_name, "_{generic_arg}").unwrap();
                 }
 
                 TranspiledTypeName::new(transpiled_name)
@@ -174,10 +174,10 @@ pub fn transpile(
                     port_ty_name.array(),
                 )?;
             }
-            writeln!(writer, "}} {}__Interface;\n", module_name)?;
+            writeln!(writer, "}} {module_name}__Interface;\n")?;
         }
 
-        write!(writer, "module {} (", module_name)?;
+        write!(writer, "module {module_name} (")?;
 
         for (i, (port_name, port)) in module_item.ports().iter().enumerate() {
             if i > 0 {
@@ -232,9 +232,9 @@ pub fn transpile(
                 // FIXME: these assignments do not work if we have a module array
                 for (i, (port_name, _)) in member_module_item.ports().iter().enumerate() {
                     if (i as isize) >= ((member_module_item.ports().len() as isize) - 1) {
-                        writeln!(writer, "    .{}({}.{})", port_name, member_name, port_name)?;
+                        writeln!(writer, "    .{port_name}({member_name}.{port_name})")?;
                     } else {
-                        writeln!(writer, "    .{}({}.{}),", port_name, member_name, port_name)?;
+                        writeln!(writer, "    .{port_name}({member_name}.{port_name}),")?;
                     }
                 }
 
@@ -264,16 +264,7 @@ pub fn transpile(
 
         if !module.tmp_statements().statements().is_empty() {
             writeln!(writer, "always_comb begin")?;
-            transpile_block(
-                writer,
-                module.tmp_statements(),
-                1,
-                TranspileMode::Combinatoric,
-                module_item,
-                known_types,
-                resolved_types,
-                v_modules,
-            )?;
+            transpile_block(writer, module.tmp_statements(), 1)?;
             writeln!(writer, "end\n")?;
         }
 
@@ -295,38 +286,20 @@ pub fn transpile(
                     match suffix {
                         VSuffixOp::Indexer(VIndexKind::Single(index)) => {
                             write!(writer, "[")?;
-                            transpile_expr(
-                                writer,
-                                index,
-                                0,
-                                TranspileMode::Combinatoric,
-                                module_item,
-                                known_types,
-                                resolved_types,
-                                v_modules,
-                            )?;
+                            transpile_expr(writer, index)?;
                             write!(writer, "]")?;
                         }
                         VSuffixOp::Indexer(VIndexKind::Range(range)) => {
                             write!(writer, "[{}:{}]", range.end - 1, range.start)?;
                         }
-                        VSuffixOp::MemberAccess(member) => write!(writer, ".{}", member)?,
+                        VSuffixOp::MemberAccess(member) => write!(writer, ".{member}")?,
                     }
                 }
             }
 
             writeln!(writer, ") begin")?;
 
-            transpile_block(
-                writer,
-                ff_member.body(),
-                1,
-                TranspileMode::Sequential,
-                module_item,
-                known_types,
-                resolved_types,
-                v_modules,
-            )?;
+            transpile_block(writer, ff_member.body(), 1)?;
 
             writeln!(writer, "end\n")?;
         }
@@ -334,16 +307,7 @@ pub fn transpile(
         for comb_member in module.comb_members() {
             writeln!(writer, "always_comb begin")?;
 
-            transpile_block(
-                writer,
-                comb_member,
-                1,
-                TranspileMode::Combinatoric,
-                module_item,
-                known_types,
-                resolved_types,
-                v_modules,
-            )?;
+            transpile_block(writer, comb_member, 1)?;
 
             writeln!(writer, "end\n")?;
         }
@@ -354,48 +318,15 @@ pub fn transpile(
     Ok(())
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TranspileMode {
-    Sequential,
-    Combinatoric,
-}
-
-fn transpile_expr(
-    writer: &mut impl Write,
-    expr: &VExpr,
-    level: usize,
-    mode: TranspileMode,
-    parent_module: &ResolvedModule,
-    known_types: &HashMap<TypeId, ResolvedType>,
-    resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
-    v_modules: &[(TypeId, VModule)],
-) -> std::io::Result<()> {
+fn transpile_expr(writer: &mut impl Write, expr: &VExpr) -> std::io::Result<()> {
     macro_rules! bin_expr {
         ($bin_expr:expr, $op:literal) => {{
             write!(writer, "(")?;
-            transpile_expr(
-                writer,
-                $bin_expr.lhs(),
-                level,
-                mode,
-                parent_module,
-                known_types,
-                resolved_types,
-                v_modules,
-            )?;
+            transpile_expr(writer, $bin_expr.lhs())?;
             write!(writer, ")")?;
             write!(writer, $op)?;
             write!(writer, "(")?;
-            transpile_expr(
-                writer,
-                $bin_expr.rhs(),
-                level,
-                mode,
-                parent_module,
-                known_types,
-                resolved_types,
-                v_modules,
-            )?;
+            transpile_expr(writer, $bin_expr.rhs())?;
             write!(writer, ")")?;
         }};
     }
@@ -403,129 +334,48 @@ fn transpile_expr(
     macro_rules! signed_bin_expr {
         ($bin_expr:expr, $op:literal) => {{
             write!(writer, "$signed(")?;
-            transpile_expr(
-                writer,
-                $bin_expr.lhs(),
-                level,
-                mode,
-                parent_module,
-                known_types,
-                resolved_types,
-                v_modules,
-            )?;
+            transpile_expr(writer, $bin_expr.lhs())?;
             write!(writer, ")")?;
             write!(writer, $op)?;
             write!(writer, "$signed(")?;
-            transpile_expr(
-                writer,
-                $bin_expr.rhs(),
-                level,
-                mode,
-                parent_module,
-                known_types,
-                resolved_types,
-                v_modules,
-            )?;
+            transpile_expr(writer, $bin_expr.rhs())?;
             write!(writer, ")")?;
         }};
     }
 
     match expr {
-        VExpr::Value(value) => write!(writer, "{}", value)?,
-        VExpr::Literal(literal) => write!(writer, "{}", literal)?,
-        VExpr::Ident(ident) => write!(writer, "{}", ident)?,
+        VExpr::Value(value) => write!(writer, "{value}")?,
+        VExpr::Literal(literal) => write!(writer, "{literal}")?,
+        VExpr::Ident(ident) => write!(writer, "{ident}")?,
         VExpr::Index(index_expr) => {
-            transpile_expr(
-                writer,
-                index_expr.base(),
-                level,
-                mode,
-                parent_module,
-                known_types,
-                resolved_types,
-                v_modules,
-            )?;
+            transpile_expr(writer, index_expr.base())?;
             write!(writer, "[")?;
             match index_expr.indexer() {
-                VIndexKind::Single(index) => transpile_expr(
-                    writer,
-                    index,
-                    level,
-                    mode,
-                    parent_module,
-                    known_types,
-                    resolved_types,
-                    v_modules,
-                )?,
+                VIndexKind::Single(index) => transpile_expr(writer, index)?,
                 VIndexKind::Range(range) => write!(writer, "{}:{}", range.end - 1, range.start)?,
             }
             write!(writer, "]")?;
         }
         VExpr::MemberAccess(member_access) => {
-            transpile_expr(
-                writer,
-                member_access.base(),
-                level,
-                mode,
-                parent_module,
-                known_types,
-                resolved_types,
-                v_modules,
-            )?;
+            transpile_expr(writer, member_access.base())?;
             write!(writer, ".")?;
             write!(writer, "{}", member_access.member().as_ref())?;
         }
         VExpr::Neg(expr) => {
             write!(writer, "-(")?;
-            transpile_expr(
-                writer,
-                expr.inner(),
-                level,
-                mode,
-                parent_module,
-                known_types,
-                resolved_types,
-                v_modules,
-            )?;
+            transpile_expr(writer, expr.inner())?;
             write!(writer, ")")?;
         }
         VExpr::Not(expr) => {
             write!(writer, "~(")?;
-            transpile_expr(
-                writer,
-                expr.inner(),
-                level,
-                mode,
-                parent_module,
-                known_types,
-                resolved_types,
-                v_modules,
-            )?;
+            transpile_expr(writer, expr.inner())?;
             write!(writer, ")")?;
         }
         VExpr::Concat(expr) => {
             write!(writer, "{{")?;
-            transpile_expr(
-                writer,
-                expr.lhs(),
-                level,
-                mode,
-                parent_module,
-                known_types,
-                resolved_types,
-                v_modules,
-            )?;
+            transpile_expr(writer, expr.lhs())?;
             write!(writer, ", ")?;
-            transpile_expr(
-                writer,
-                expr.rhs(),
-                level,
-                mode,
-                parent_module,
-                known_types,
-                resolved_types,
-                v_modules,
-            )?;
+            transpile_expr(writer, expr.rhs())?;
             write!(writer, "}}")?;
         }
 
@@ -560,113 +410,45 @@ fn transpile_statement(
     writer: &mut impl Write,
     statement: &VStatement,
     level: usize,
-    mode: TranspileMode,
-    parent_module: &ResolvedModule,
-    known_types: &HashMap<TypeId, ResolvedType>,
-    resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
-    v_modules: &[(TypeId, VModule)],
 ) -> std::io::Result<()> {
     let leading_ws = str::repeat("    ", level);
 
     match statement {
         VStatement::Block(block) => {
-            writeln!(writer, "{}begin", leading_ws)?;
+            writeln!(writer, "{leading_ws}begin")?;
 
-            transpile_block(
-                writer,
-                block,
-                level + 1,
-                mode,
-                parent_module,
-                known_types,
-                resolved_types,
-                v_modules,
-            )?;
+            transpile_block(writer, block, level + 1)?;
 
-            writeln!(writer, "{}end", leading_ws)?;
+            writeln!(writer, "{leading_ws}end")?;
         }
         VStatement::If(if_statement) => {
-            write!(writer, "{}if (", leading_ws)?;
-            transpile_expr(
-                writer,
-                if_statement.condition(),
-                level,
-                mode,
-                parent_module,
-                known_types,
-                resolved_types,
-                v_modules,
-            )?;
+            write!(writer, "{leading_ws}if (")?;
+            transpile_expr(writer, if_statement.condition())?;
             writeln!(writer, ") begin")?;
-            transpile_block(
-                writer,
-                if_statement.body(),
-                level + 1,
-                mode,
-                parent_module,
-                known_types,
-                resolved_types,
-                v_modules,
-            )?;
+            transpile_block(writer, if_statement.body(), level + 1)?;
 
             for (condition, body) in if_statement.else_if_blocks().iter() {
-                write!(writer, "{}end else if (", leading_ws)?;
-                transpile_expr(
-                    writer,
-                    condition,
-                    level,
-                    mode,
-                    parent_module,
-                    known_types,
-                    resolved_types,
-                    v_modules,
-                )?;
+                write!(writer, "{leading_ws}end else if (")?;
+                transpile_expr(writer, condition)?;
                 writeln!(writer, ") begin")?;
 
-                transpile_block(
-                    writer,
-                    body,
-                    level + 1,
-                    mode,
-                    parent_module,
-                    known_types,
-                    resolved_types,
-                    v_modules,
-                )?;
+                transpile_block(writer, body, level + 1)?;
             }
 
             if let Some(else_block) = if_statement.else_block() {
-                writeln!(writer, "{}end else begin", leading_ws)?;
-                transpile_block(
-                    writer,
-                    else_block,
-                    level + 1,
-                    mode,
-                    parent_module,
-                    known_types,
-                    resolved_types,
-                    v_modules,
-                )?;
+                writeln!(writer, "{leading_ws}end else begin")?;
+                transpile_block(writer, else_block, level + 1)?;
             }
 
-            writeln!(writer, "{}end", leading_ws)?;
+            writeln!(writer, "{leading_ws}end")?;
         }
         VStatement::Case(case_statement) => {
-            write!(writer, "{}case (", leading_ws)?;
-            transpile_expr(
-                writer,
-                case_statement.value(),
-                level,
-                mode,
-                parent_module,
-                known_types,
-                resolved_types,
-                v_modules,
-            )?;
+            write!(writer, "{leading_ws}case (")?;
+            transpile_expr(writer, case_statement.value())?;
             writeln!(writer, ")")?;
 
             for (i, branch) in case_statement.branches().iter().enumerate() {
-                write!(writer, "{}    ", leading_ws)?;
+                write!(writer, "{leading_ws}    ")?;
 
                 let is_default = branch.patterns().iter().any(|pattern| {
                     matches!(pattern, VCasePattern::Ident(ident) if ident.as_ref() == "_")
@@ -680,33 +462,24 @@ fn transpile_statement(
                         }
 
                         match pattern {
-                            VCasePattern::Literal(literal) => write!(writer, "{}", literal)?,
-                            VCasePattern::Ident(ident) => write!(writer, "{}", ident)?,
+                            VCasePattern::Literal(literal) => write!(writer, "{literal}")?,
+                            VCasePattern::Ident(ident) => write!(writer, "{ident}")?,
                         }
                     }
 
                     writeln!(writer, ": begin")?;
                 }
 
-                transpile_block(
-                    writer,
-                    branch.body(),
-                    level + 2,
-                    mode,
-                    parent_module,
-                    known_types,
-                    resolved_types,
-                    v_modules,
-                )?;
+                transpile_block(writer, branch.body(), level + 2)?;
 
-                writeln!(writer, "{}    end", leading_ws)?;
+                writeln!(writer, "{leading_ws}    end")?;
 
                 if is_default {
                     break;
                 }
             }
 
-            writeln!(writer, "{}endcase", leading_ws)?;
+            writeln!(writer, "{leading_ws}endcase")?;
         }
         VStatement::Assignment(assign) => {
             write!(writer, "{}{}", leading_ws, assign.target().base())?;
@@ -714,22 +487,13 @@ fn transpile_statement(
                 match suffix {
                     VSuffixOp::Indexer(VIndexKind::Single(index)) => {
                         write!(writer, "[")?;
-                        transpile_expr(
-                            writer,
-                            index,
-                            level,
-                            mode,
-                            parent_module,
-                            known_types,
-                            resolved_types,
-                            v_modules,
-                        )?;
+                        transpile_expr(writer, index)?;
                         write!(writer, "]")?;
                     }
                     VSuffixOp::Indexer(VIndexKind::Range(range)) => {
                         write!(writer, "[{}:{}]", range.end - 1, range.start)?;
                     }
-                    VSuffixOp::MemberAccess(member) => write!(writer, ".{}", member)?,
+                    VSuffixOp::MemberAccess(member) => write!(writer, ".{member}")?,
                 }
             }
 
@@ -738,16 +502,7 @@ fn transpile_statement(
                 VAssignMode::Combinatoric => write!(writer, " = ")?,
             }
 
-            transpile_expr(
-                writer,
-                assign.value(),
-                level,
-                mode,
-                parent_module,
-                known_types,
-                resolved_types,
-                v_modules,
-            )?;
+            transpile_expr(writer, assign.value())?;
 
             writeln!(writer, ";")?
         }
@@ -756,27 +511,9 @@ fn transpile_statement(
     Ok(())
 }
 
-fn transpile_block(
-    writer: &mut impl Write,
-    block: &VBlock,
-    level: usize,
-    mode: TranspileMode,
-    parent_module: &ResolvedModule,
-    known_types: &HashMap<TypeId, ResolvedType>,
-    resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
-    v_modules: &[(TypeId, VModule)],
-) -> std::io::Result<()> {
+fn transpile_block(writer: &mut impl Write, block: &VBlock, level: usize) -> std::io::Result<()> {
     for statement in block.statements().iter() {
-        transpile_statement(
-            writer,
-            statement,
-            level,
-            mode,
-            parent_module,
-            known_types,
-            resolved_types,
-            v_modules,
-        )?;
+        transpile_statement(writer, statement, level)?;
     }
 
     Ok(())

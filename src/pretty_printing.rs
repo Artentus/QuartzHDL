@@ -105,7 +105,7 @@ fn _write_error(
     let (end_line, end_column) = info.span.end_pos().line_column(file_server);
     let (end_line, end_column) = (end_line as usize, end_column as usize);
 
-    let line_count = (end_line - start_line + 1) as usize;
+    let line_count = end_line - start_line + 1;
     let digit_count = ((end_line + 1) * 10).ilog10() as usize;
 
     write_styled!(
@@ -232,7 +232,7 @@ impl WriteColored for crate::error::QuartzError<'_> {
 
         let info = match self {
             Self::DuplicateIdent { name } => {
-                ErrorInfo::new(format!("`{}` has already been defined", name), name.span())
+                ErrorInfo::new(format!("`{name}` has already been defined"), name.span())
             }
             Self::InvalidConstExpr { expr } => {
                 ErrorInfo::new("expression is not valid in constant context", expr.span())
@@ -245,7 +245,7 @@ impl WriteColored for crate::error::QuartzError<'_> {
                     .join(&match_expr.value().span()),
             ),
             Self::InvalidConstOp { op } => ErrorInfo::new(
-                format!("`{}` operator is not valid in constant context", op),
+                format!("`{op}` operator is not valid in constant context"),
                 op.span(),
             ),
             Self::InvalidConstAssignTarget { target } => ErrorInfo::new(
@@ -259,19 +259,19 @@ impl WriteColored for crate::error::QuartzError<'_> {
                 ErrorInfo::new("return value not expected", value.span())
             }
             Self::UndefinedIdent { name } => {
-                ErrorInfo::new(format!("`{}` is not defined", name), name.span())
+                ErrorInfo::new(format!("`{name}` is not defined"), name.span())
             }
             Self::TargetNotAssignable { name } => {
-                ErrorInfo::new(format!("`{}` cannot be assigned to", name), name.span())
+                ErrorInfo::new(format!("`{name}` cannot be assigned to"), name.span())
             }
             Self::ValueNotConst { name } => {
-                ErrorInfo::new(format!("`{}` is not a constant", name), name.span())
+                ErrorInfo::new(format!("`{name}` is not a constant"), name.span())
             }
             Self::InvalidValueIdent { name } => {
-                ErrorInfo::new(format!("`{}` is not a value", name), name.span())
+                ErrorInfo::new(format!("`{name}` is not a value"), name.span())
             }
             Self::InvalidFuncIdent { name } => {
-                ErrorInfo::new(format!("`{}` is not a function", name), name.span())
+                ErrorInfo::new(format!("`{name}` is not a function"), name.span())
             }
             Self::MissingElseBlock { if_expr } => ErrorInfo::new(
                 "if-expressions with return value must include an else-branch",
@@ -299,14 +299,14 @@ impl WriteColored for crate::error::QuartzError<'_> {
                 ty.span(),
             ),
             Self::InvalidEnumBaseType { ty } => ErrorInfo::new(
-                format!("`{}` is not a valid base type for an enum", ty),
+                format!("`{ty}` is not a valid base type for an enum"),
                 ty.span(),
             ),
             Self::InvalidBitWidth { width, arg } => {
-                ErrorInfo::new(format!("`{}` is not a valid bit width", width), arg.span())
+                ErrorInfo::new(format!("`{width}` is not a valid bit width"), arg.span())
             }
             Self::UndefinedType { ty } => {
-                ErrorInfo::new(format!("`the type {}` is not defined", ty), ty.span())
+                ErrorInfo::new(format!("`the type {ty}` is not defined"), ty.span())
             }
             Self::IncompatibleType { expr, ty } => ErrorInfo::new(
                 format!("operator '{}' is not defined on type `{}`", expr.op(), ty),
@@ -330,15 +330,15 @@ impl WriteColored for crate::error::QuartzError<'_> {
                 expr.span(),
             ),
             Self::TypeNotConstructible { ty } => ErrorInfo::new(
-                format!("the type `{}` cannot be constructed", ty),
+                format!("the type `{ty}` cannot be constructed"),
                 ty.span(),
             ),
             Self::UnknownField { ty, field } => ErrorInfo::new(
-                format!("no field named `{}` in struct `{}`", field, ty),
+                format!("no field named `{field}` in struct `{ty}`"),
                 field.span(),
             ),
             Self::MissingField { ty, field } => ErrorInfo::new(
-                format!("missing field `{}` for struct `{}`", field, ty),
+                format!("missing field `{field}` for struct `{ty}`"),
                 ty.span(),
             ),
             Self::IncompatibleFieldType {
@@ -356,34 +356,32 @@ impl WriteColored for crate::error::QuartzError<'_> {
             ),
             Self::InvalidPath { path } => ErrorInfo::new("invalid path", path.span()),
             Self::InvalidEnumIdent { name } => {
-                ErrorInfo::new(format!("`{}` is not an enum", name), name.span())
+                ErrorInfo::new(format!("`{name}` is not an enum"), name.span())
             }
             Self::InvalidEnumVariant {
                 enum_name,
                 variant_name,
             } => ErrorInfo::new(
                 format!(
-                    "enum `{}` does not have a variant named `{}`",
-                    enum_name, variant_name
+                    "enum `{enum_name}` does not have a variant named `{variant_name}`",
                 ),
                 variant_name.span(),
             ),
             Self::UndefinedMember { ty, name } => ErrorInfo::new(
-                format!("type `{}` does not have a member named `{}`", ty, name),
+                format!("type `{ty}` does not have a member named `{name}`"),
                 name.span(),
             ),
             Self::InvalidIndexing { indexer, base_ty } => ErrorInfo::new(
-                format!("value of type `{}` cannot be indexed", base_ty),
+                format!("value of type `{base_ty}` cannot be indexed"),
                 indexer.span(),
             ),
             Self::InvalidRangeIndexing { indexer, base_ty } => ErrorInfo::new(
-                format!("value of type `{}` cannot be range indexed", base_ty),
+                format!("value of type `{base_ty}` cannot be range indexed"),
                 indexer.span(),
             ),
             Self::InvalidArrayLength { ty, len } => ErrorInfo::new(
                 format!(
-                    "`{}` is not a valid array length (must be greater than zero)",
-                    len
+                    "`{len}` is not a valid array length (must be greater than zero)",
                 ),
                 ty.span(),
             ),
@@ -393,8 +391,7 @@ impl WriteColored for crate::error::QuartzError<'_> {
                 len,
             } => ErrorInfo::new(
                 format!(
-                    "index `{}` is out of range for array of length {}",
-                    index, len
+                    "index `{index}` is out of range for array of length {len}",
                 ),
                 index_expr.span(),
             ),
@@ -404,8 +401,7 @@ impl WriteColored for crate::error::QuartzError<'_> {
                 value_ty,
             } => ErrorInfo::new(
                 format!(
-                    "expected index type `{}` but found type `{}`",
-                    expected_ty, value_ty
+                    "expected index type `{expected_ty}` but found type `{value_ty}`",
                 ),
                 expr.span(),
             ),
@@ -415,8 +411,7 @@ impl WriteColored for crate::error::QuartzError<'_> {
                 else_if_block,
             } => ErrorInfo::new(
                 format!(
-                    "if expression is of type `{}` but this branch is returning type `{}`",
-                    if_ty, else_if_ty
+                    "if expression is of type `{if_ty}` but this branch is returning type `{else_if_ty}`",
                 ),
                 else_if_block.body().result().unwrap().span(),
             ),
@@ -426,15 +421,13 @@ impl WriteColored for crate::error::QuartzError<'_> {
                 else_block,
             } => ErrorInfo::new(
                 format!(
-                    "if expression is of type `{}` but this branch is returning type `{}`",
-                    if_ty, else_ty
+                    "if expression is of type `{if_ty}` but this branch is returning type `{else_ty}`",
                 ),
                 else_block.body().result().unwrap().span(),
             ),
             Self::InvalidConditionType { cond, cond_ty } => ErrorInfo::new(
                 format!(
-                    "expected expression of type `const int` or of type `bit` but found type `{}`",
-                    cond_ty
+                    "expected expression of type `const int` or of type `bit` but found type `{cond_ty}`",
                 ),
                 cond.span(),
             ),
@@ -451,15 +444,15 @@ impl WriteColored for crate::error::QuartzError<'_> {
                 for_loop.span(),
             ),
             Self::InvalidMatchType { value, value_ty } => ErrorInfo::new(
-                format!("cannot match on expression of type `{}`", value_ty),
+                format!("cannot match on expression of type `{value_ty}`"),
                 value.span(),
             ),
             Self::IncompatiblePattern { pattern, value_ty } => ErrorInfo::new(
-                format!("pattern is not valid for type `{}`", value_ty),
+                format!("pattern is not valid for type `{value_ty}`"),
                 pattern.span(),
             ),
             Self::PatternOutOfRange { pattern, value_ty } => ErrorInfo::new(
-                format!("value out of range for type `{}`", value_ty),
+                format!("value out of range for type `{value_ty}`"),
                 pattern.span(),
             ),
             Self::MatchBranchTypeMismatch {
@@ -470,8 +463,7 @@ impl WriteColored for crate::error::QuartzError<'_> {
                 use crate::ast::MatchBody;
                 ErrorInfo::new(
                     format!(
-                        "match expression is of type `{}` but this branch is returning type `{}`",
-                        match_ty, branch_ty
+                        "match expression is of type `{match_ty}` but this branch is returning type `{branch_ty}`",
                     ),
                     match branch.body() {
                         MatchBody::Expr(body_expr) => body_expr.span(),
@@ -521,12 +513,12 @@ impl WriteColored for crate::error::QuartzError<'_> {
                 };
 
                 ErrorInfo::new(
-                    format!("{} ports cannot be {}", dir_str, kind_str),
+                    format!("{dir_str} ports cannot be {kind_str}"),
                     *port_span,
                 )
             }
             Self::PortKindMismatch { port_span, port_ty } => ErrorInfo::new(
-                format!("type `{}` is not valid for this port", port_ty),
+                format!("type `{port_ty}` is not valid for this port"),
                 *port_span,
             ),
             Self::PortModuleType { port_span } => {
@@ -536,7 +528,7 @@ impl WriteColored for crate::error::QuartzError<'_> {
                 member_span,
                 member_ty,
             } => ErrorInfo::new(
-                format!("type `{}` is not valid for this member", member_ty),
+                format!("type `{member_ty}` is not valid for this member"),
                 *member_span,
             ),
             Self::StructModuleField { field_span } => {
@@ -548,23 +540,21 @@ impl WriteColored for crate::error::QuartzError<'_> {
                 value_ty,
             } => ErrorInfo::new(
                 format!(
-                    "assignment target is of type `{}` but found type `{}`",
-                    target_ty, value_ty
+                    "assignment target is of type `{target_ty}` but found type `{value_ty}`",
                 ),
                 assign.span(),
             ),
             Self::InvalidSensType { sens, sens_ty } => ErrorInfo::new(
                 format!(
-                    "sensitivities need to be of type `bit` but found type `{}`",
-                    sens_ty
+                    "sensitivities need to be of type `bit` but found type `{sens_ty}`",
                 ),
                 sens.sig().span(),
             ),
             Self::LoopControlOutsideOfLoop { kw } => {
-                ErrorInfo::new(format!("`{}` statement outside of loop", kw), kw.span())
+                ErrorInfo::new(format!("`{kw}` statement outside of loop"), kw.span())
             }
             Self::NonConstLoopControl { kw } => ErrorInfo::new(
-                format!("`{}` statement is not allowed in this context", kw),
+                format!("`{kw}` statement is not allowed in this context"),
                 kw.span(),
             ),
             Self::ParseError(err) => {

@@ -75,7 +75,7 @@ impl DisplayScoped for crate::SharedString {
     #[inline]
     fn fmt(&self, f: &mut ScopedFormatter<'_, '_>) -> fmt::Result {
         use std::fmt::Write;
-        write!(f, "{}", self)
+        write!(f, "{self}")
     }
 }
 
@@ -83,7 +83,7 @@ impl DisplayScoped for i64 {
     #[inline]
     fn fmt(&self, f: &mut ScopedFormatter<'_, '_>) -> fmt::Result {
         use std::fmt::Write;
-        write!(f, "{}", self)
+        write!(f, "{self}")
     }
 }
 

@@ -536,22 +536,22 @@ impl ResolvedType {
                 if *width == 1 {
                     "bit".into()
                 } else {
-                    format!("bits<{}>", width).into()
+                    format!("bits<{width}>").into()
                 }
             }
             Self::Named { name, generic_args } => {
                 use std::fmt::Write;
 
                 let mut result = String::new();
-                let _ = write!(result, "{}", name);
+                let _ = write!(result, "{name}");
 
                 if generic_args.len() > 0 {
                     let _ = write!(result, "<");
                     for (i, arg) in generic_args.iter().copied().enumerate() {
                         if i == 0 {
-                            let _ = write!(result, "{}", arg);
+                            let _ = write!(result, "{arg}");
                         } else {
-                            let _ = write!(result, ", {}", arg);
+                            let _ = write!(result, ", {arg}");
                         }
                     }
                     let _ = write!(result, ">");
@@ -561,7 +561,7 @@ impl ResolvedType {
             }
             Self::Array { item_ty, len } => {
                 let item_ty_str = known_types[item_ty].to_string(known_types);
-                format!("[{}; {}]", item_ty_str, len).into()
+                format!("[{item_ty_str}; {len}]").into()
             }
         }
     }

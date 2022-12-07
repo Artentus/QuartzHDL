@@ -108,9 +108,7 @@ fn lower_construct_expr(
             resolved_types,
         );
 
-        let mut suffixes = Vec::with_capacity(1);
-        suffixes.push(VSuffixOp::MemberAccess(SharedString::clone(field)));
-
+        let suffixes = vec![VSuffixOp::MemberAccess(SharedString::clone(field))];
         let target = VAssignTarget::new(SharedString::clone(&tmp_member), suffixes);
         statements.push(VStatement::Assignment(VAssignment::new(
             target,
@@ -267,12 +265,11 @@ fn lower_match_expr(
                     let assign_target =
                         VAssignTarget::new(SharedString::clone(&tmp_member), Vec::new());
 
-                    let mut statements = Vec::with_capacity(1);
-                    statements.push(VStatement::Assignment(VAssignment::new(
+                    let statements = vec![VStatement::Assignment(VAssignment::new(
                         assign_target,
                         mode,
                         result,
-                    )));
+                    ))];
 
                     (VBlock::new(statements), None)
                 }
@@ -391,12 +388,11 @@ fn lower_match_expr(
                         let assign_target =
                             VAssignTarget::new(SharedString::clone(&tmp_member), Vec::new());
 
-                        let mut statements = Vec::with_capacity(1);
-                        statements.push(VStatement::Assignment(VAssignment::new(
+                        let statements = vec![VStatement::Assignment(VAssignment::new(
                             assign_target,
                             mode,
                             result,
-                        )));
+                        ))];
 
                         (VBlock::new(statements), None)
                     }
