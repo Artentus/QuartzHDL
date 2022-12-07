@@ -214,7 +214,7 @@ pub fn transpile(
                 if !member_module_item.ports().is_empty() {
                     writeln!(
                         writer,
-                        "var {}__Interface {}{};",
+                        "var {}__Interface {}{} /*verilator split_var*/;",
                         member_ty_name.base(),
                         member_name,
                         member_ty_name.array(),
