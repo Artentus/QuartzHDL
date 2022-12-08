@@ -484,7 +484,10 @@ fn lower_cast_expr(
                 resolved_types,
             );
 
-            if target_width >= value_width {
+            if target_width > value_width {
+                let padding = VExpr::Literal(VLiteral::new(0, target_width - value_width));
+                VExpr::Concat(VBinaryExpr::new(padding, value))
+            } else if target_width == value_width {
                 value
             } else {
                 let indexer = VIndexKind::Range(((target_width - 1) as i64)..0);
@@ -512,7 +515,10 @@ fn lower_cast_expr(
                     resolved_types,
                 );
 
-                if target_width >= value_width {
+                if target_width > value_width {
+                    let padding = VExpr::Literal(VLiteral::new(0, target_width - value_width));
+                    VExpr::Concat(VBinaryExpr::new(padding, value))
+                } else if target_width == value_width {
                     value
                 } else {
                     let indexer = VIndexKind::Range(((target_width - 1) as i64)..0);
