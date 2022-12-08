@@ -1054,6 +1054,10 @@ fn resolve_expr<'a>(
 
             expr.resolve(ty_id);
             registry.type_order.add_dependency(ty_id, parent_id);
+
+            for field in expr.fields() {
+                resolve_expr(field.value(), parent_id, scope, args, registry)?;
+            }
         }
         Expr::Cast(expr) => {
             let ty_id = resolve_type(
@@ -1068,6 +1072,8 @@ fn resolve_expr<'a>(
 
             expr.resolve(ty_id);
             registry.type_order.add_dependency(ty_id, parent_id);
+
+            resolve_expr(expr.value(), parent_id, scope, args, registry)?;
         }
 
         Expr::Literal(_) => {}
