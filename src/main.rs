@@ -38,7 +38,7 @@ use type_resolve::*;
 use typecheck::*;
 
 type SharedString = Rc<str>;
-type HashMap<K, V> = std::collections::HashMap<K, V, xxhash_rust::xxh3::Xxh3Builder>;
+type HashMap<K, V> = linked_hash_map::LinkedHashMap<K, V, xxhash_rust::xxh3::Xxh3Builder>;
 type HashSet<T> = std::collections::HashSet<T, xxhash_rust::xxh3::Xxh3Builder>;
 pub use small_vec::SmallVec;
 

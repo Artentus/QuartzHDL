@@ -5,7 +5,6 @@ use crate::ir::*;
 use crate::range_collection::*;
 use crate::scope::*;
 use crate::{HashMap, HashSet, SharedString};
-use std::collections::hash_map;
 use std::collections::VecDeque;
 use topological_sort::TopologicalSort;
 
@@ -753,7 +752,7 @@ fn resolve_named_type<'a>(
     };
 
     let id = TypeId::from_type(&resolved_ty);
-    if let hash_map::Entry::Vacant(entry) = registry.known_types.entry(id) {
+    if let linked_hash_map::Entry::Vacant(entry) = registry.known_types.entry(id) {
         entry.insert(resolved_ty);
         registry.type_queue.push_back(id);
     }
@@ -810,7 +809,7 @@ fn resolve_type<'a>(
                 len: len as u64,
             };
             let id = TypeId::from_type(&resolved_ty);
-            if let hash_map::Entry::Vacant(entry) = registry.known_types.entry(id) {
+            if let linked_hash_map::Entry::Vacant(entry) = registry.known_types.entry(id) {
                 entry.insert(resolved_ty);
                 registry.type_queue.push_back(id);
             }
@@ -1504,7 +1503,7 @@ pub fn resolve_type_late(
             let resolved_ty = ResolvedType::BuiltinBits { width: *width };
             let id = TypeId::from_type(&resolved_ty);
 
-            if let hash_map::Entry::Vacant(entry) = known_types.entry(id) {
+            if let linked_hash_map::Entry::Vacant(entry) = known_types.entry(id) {
                 entry.insert(resolved_ty);
             }
 

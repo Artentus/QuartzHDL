@@ -19,3 +19,4 @@ xxhash-rust = { version = "0.8", features = ["xxh3"] }
 clap = { version = "4.0", features = ["derive"] }
 topological-sort = "0.2"
 once_cell = "1.16"
+linked-hash-map = "0.5"
