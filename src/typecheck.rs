@@ -761,7 +761,7 @@ fn typecheck_indexer<'a>(
                         });
                     }
 
-                    if (end <= start) || (end >= (*width as i64)) {
+                    if (end <= start) || (end > (*width as i64)) {
                         return Err(QuartzError::IndexOutOfRange {
                             index_expr: &range.end,
                             index: end,
