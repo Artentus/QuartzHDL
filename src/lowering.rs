@@ -828,6 +828,7 @@ fn lower_if_statement(
 }
 
 enum LoweredMatchStatement {
+    Block(VBlock),
     If(VIfStatement),
     Case(VCaseStatement),
 }
@@ -899,16 +900,18 @@ fn lower_match_statement(
         let value_assign = VAssignment::new(value_target, VAssignMode::Combinatoric, value);
         tmp_comb_statements.push(VStatement::Assignment(value_assign));
 
-        let mut branch_to_cond_body = |branch: &CheckedMatchStatementBranch| -> (VExpr, VBlock) {
-            macro_rules! value {
-                () => {
-                    VExpr::Ident(SharedString::clone(&value_name))
-                };
-            }
+        let mut branch_to_cond_body =
+            |branch: &CheckedMatchStatementBranch| -> (Option<VExpr>, VBlock) {
+                macro_rules! value {
+                    () => {
+                        VExpr::Ident(SharedString::clone(&value_name))
+                    };
+                }
 
-            let mut cond_terms = Vec::with_capacity(branch.patterns().len());
-            for pattern in branch.patterns() {
-                match pattern {
+                let mut is_always_cond = false;
+                let mut cond_terms = Vec::with_capacity(branch.patterns().len());
+                for pattern in branch.patterns() {
+                    match pattern {
                     MatchPattern::Literal(value) => {
                         let value = VExpr::Value(value.value());
                         let term = VExpr::Eq(VBinaryExpr::new(value!(), value));
@@ -934,44 +937,75 @@ fn lower_match_statement(
                         let term = VExpr::And(VBinaryExpr::new(lower_bound, upper_bound));
                         cond_terms.push(term);
                     }
-                    MatchPattern::Path(_) => {
-                        unreachable!("error in type-checking match expression")
+                    MatchPattern::Path(p) => {
+                        if let Some(ident) = p.as_ident() && (ident.as_ref() == "_") {
+                            is_always_cond = true;
+                            break;
+                        } else {
+                            unreachable!("error in type-checking match expression")
+                        }
                     }
                 }
-            }
+                }
 
-            let cond = cond_terms
-                .into_iter()
-                .reduce(|a, b| VExpr::Or(VBinaryExpr::new(a, b)))
-                .expect("error in type-checking match expression");
+                let cond = if is_always_cond {
+                    None
+                } else {
+                    Some(
+                        cond_terms
+                            .into_iter()
+                            .reduce(|a, b| VExpr::Or(VBinaryExpr::new(a, b)))
+                            .expect("error in type-checking match expression"),
+                    )
+                };
 
-            let body = lower_block(
-                branch.body(),
-                mode,
-                emit_assignments,
-                tmp_members,
-                tmp_comb_statements,
-                tmp_proc_statements,
-                known_types,
-                resolved_types,
-            );
+                let body = lower_block(
+                    branch.body(),
+                    mode,
+                    emit_assignments,
+                    tmp_members,
+                    tmp_comb_statements,
+                    tmp_proc_statements,
+                    known_types,
+                    resolved_types,
+                );
 
-            (cond, body)
-        };
+                (cond, body)
+            };
 
         let Some(first) = match_statement.branches().first() else {
             unreachable!("error in type-checking match expression");
         };
 
         let (condition, body) = branch_to_cond_body(first);
+        if let Some(condition) = condition {
+            let mut else_if_blocks = Vec::with_capacity(match_statement.branches().len() - 1);
+            let mut else_block = None;
+            for branch in match_statement.branches().iter().skip(1) {
+                let (condition, body) = branch_to_cond_body(branch);
+                if let Some(condition) = condition {
+                    else_if_blocks.push((condition, body));
+                } else {
+                    else_block = Some(body);
+                    break;
+                }
+            }
 
-        let mut else_if_blocks = Vec::with_capacity(match_statement.branches().len() - 1);
-        for branch in match_statement.branches().iter().skip(1) {
-            let (condition, body) = branch_to_cond_body(branch);
-            else_if_blocks.push((condition, body));
+            // Match statements are checked to be exhaustive, so the last branch is guaranteed to match all remaining cases.
+            // By transforming it into an uncoditional else branch we prevent any latch inference.
+            if else_block.is_none() && (!else_if_blocks.is_empty()) {
+                else_block = Some(else_if_blocks.pop().unwrap().1);
+            }
+
+            LoweredMatchStatement::If(VIfStatement::new(
+                condition,
+                body,
+                else_if_blocks,
+                else_block,
+            ))
+        } else {
+            LoweredMatchStatement::Block(body)
         }
-
-        LoweredMatchStatement::If(VIfStatement::new(condition, body, else_if_blocks, None))
     }
 }
 
@@ -1099,6 +1133,7 @@ fn lower_statement(
                 known_types,
                 resolved_types,
             ) {
+                LoweredMatchStatement::Block(block) => Some(VStatement::Block(block)),
                 LoweredMatchStatement::If(if_statement) => Some(VStatement::If(if_statement)),
                 LoweredMatchStatement::Case(case_statement) => {
                     Some(VStatement::Case(case_statement))
