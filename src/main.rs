@@ -77,11 +77,17 @@ fn _write_errors<E: WriteColored>(
     Ok(())
 }
 
-#[macro_export]
+macro_rules! abort {
+    () => {
+        std::process::exit(1);
+    };
+}
+
 macro_rules! abort_on_error {
     ($errors:expr, $stderr:expr, $file_server:expr) => {
         if $errors.len() > 0 {
-            return $crate::_write_errors($errors, &$stderr, &$file_server);
+            $crate::_write_errors($errors, &$stderr, &$file_server)?;
+            abort!();
         }
     };
 }
@@ -196,7 +202,8 @@ fn main() -> std::io::Result<()> {
 
     if input_files.is_empty() {
         let mut stderr = stderr.lock();
-        return write_error("no input files specified", &mut stderr);
+        write_error("no input files specified", &mut stderr)?;
+        abort!();
     }
 
     let mut file_server = FileServer::new();
@@ -280,22 +287,25 @@ fn main() -> std::io::Result<()> {
 
     let Some(top_item) = type_items.get(top_module_name) else {
         let mut stderr = stderr.lock();
-        return write_error(
+        write_error(
             &format!("top module `{top_module_name}` not found"),
             &mut stderr,
-        );
+        )?;
+        abort!();
     };
     let ir::TypeItem::Module(top_module) = top_item else {
         let mut stderr = stderr.lock();
-        return write_error(
+        write_error(
             &format!("`{top_module_name}` is not a module"),
             &mut stderr,
-        );
+        )?;
+        abort!();
     };
 
     if let Some(generic_args) = top_module.generic_args() && !generic_args.args().is_empty() {
         let mut stderr = stderr.lock();
-        return write_error("modules with generic arguments cannot be used as top module", &mut stderr);
+        write_error("modules with generic arguments cannot be used as top module", &mut stderr)?;
+        abort!();
     }
 
     let resolve_result = resolve_types(
@@ -341,7 +351,8 @@ fn main() -> std::io::Result<()> {
             if !type_order.is_empty() {
                 let mut stderr = stderr.lock();
                 // TODO: find a way to report which types actually form a cycle
-                return write_error("cyclic type definitions detected", &mut stderr);
+                write_error("cyclic type definitions detected", &mut stderr)?;
+                abort!();
             }
 
             let mut v_modules = Vec::with_capacity(checked_modules.len());
@@ -360,6 +371,7 @@ fn main() -> std::io::Result<()> {
         Err(err) => {
             let mut stderr = stderr.lock();
             err.write_colored(&mut stderr, &file_server)?;
+            abort!();
         }
     }
 
