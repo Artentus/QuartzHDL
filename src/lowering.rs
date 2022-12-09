@@ -363,8 +363,14 @@ fn lower_match_expr(
                             let term = VExpr::And(VBinaryExpr::new(lower_bound, upper_bound));
                             cond_terms.push(term);
                         }
-                        MatchPattern::Path(_) => {
-                            unreachable!("error in type-checking match expression")
+                        MatchPattern::Path(p) => {
+                            if let Some(ident) = p.as_ident() && (ident.as_ref() == "_") {
+                                cond_terms.clear();
+                                cond_terms.push(VExpr::Value(1));
+                                break;
+                            } else {
+                                unreachable!("error in type-checking match expression")
+                            }
                         }
                     }
                 }
