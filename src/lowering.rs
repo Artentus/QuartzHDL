@@ -449,6 +449,15 @@ fn lower_match_expr(
                 }
             }
 
+            // Match expressions are checked to be exhaustive, so the last branch is guaranteed to match all remaining cases.
+            // By transforming it into an uncoditional else branch we prevent any latch inference.
+            if else_block_comb.is_none() && (!else_if_blocks_comb.is_empty()) {
+                else_block_comb = Some(else_if_blocks_comb.pop().unwrap().1);
+            }
+            if else_block_proc.is_none() && (!else_if_blocks_proc.is_empty()) {
+                else_block_proc = Some(else_if_blocks_proc.pop().unwrap().1);
+            }
+
             if let Some(body_proc) = body_proc {
                 let if_statement_proc = VIfStatement::new(
                     condition.clone(),
