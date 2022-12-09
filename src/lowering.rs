@@ -328,13 +328,14 @@ fn lower_match_expr(
         tmp_comb_statements.push(VStatement::Assignment(value_assign));
 
         let mut branch_to_cond_body =
-            |branch: &CheckedMatchExprBranch| -> (VExpr, VBlock, Option<VBlock>) {
+            |branch: &CheckedMatchExprBranch| -> (Option<VExpr>, VBlock, Option<VBlock>) {
                 macro_rules! value {
                     () => {
                         VExpr::Ident(SharedString::clone(&value_name))
                     };
                 }
 
+                let mut is_always_cond = false;
                 let mut cond_terms = Vec::with_capacity(branch.patterns().len());
                 for pattern in branch.patterns() {
                     match pattern {
@@ -365,8 +366,7 @@ fn lower_match_expr(
                         }
                         MatchPattern::Path(p) => {
                             if let Some(ident) = p.as_ident() && (ident.as_ref() == "_") {
-                                cond_terms.clear();
-                                cond_terms.push(VExpr::Value(1));
+                                is_always_cond = true;
                                 break;
                             } else {
                                 unreachable!("error in type-checking match expression")
@@ -375,10 +375,16 @@ fn lower_match_expr(
                     }
                 }
 
-                let cond = cond_terms
-                    .into_iter()
-                    .reduce(|a, b| VExpr::Or(VBinaryExpr::new(a, b)))
-                    .expect("error in type-checking match expression");
+                let cond = if is_always_cond {
+                    None
+                } else {
+                    Some(
+                        cond_terms
+                            .into_iter()
+                            .reduce(|a, b| VExpr::Or(VBinaryExpr::new(a, b)))
+                            .expect("error in type-checking match expression"),
+                    )
+                };
 
                 let (body_comb, body_proc) = match branch.body() {
                     CheckedMatchExprBody::Expr(body) => {
@@ -422,33 +428,54 @@ fn lower_match_expr(
         };
 
         let (condition, body_comb, body_proc) = branch_to_cond_body(first);
-
-        let mut else_if_blocks_comb = Vec::with_capacity(match_expr.branches().len() - 1);
-        let mut else_if_blocks_proc = Vec::with_capacity(match_expr.branches().len() - 1);
-        for branch in match_expr.branches().iter().skip(1) {
-            let (condition, body_comb, body_proc) = branch_to_cond_body(branch);
-            if let Some(body_proc) = body_proc {
-                else_if_blocks_proc.push((condition.clone(), body_proc));
+        if let Some(condition) = condition {
+            let mut else_if_blocks_comb = Vec::with_capacity(match_expr.branches().len() - 1);
+            let mut else_if_blocks_proc = Vec::with_capacity(match_expr.branches().len() - 1);
+            let mut else_block_comb = None;
+            let mut else_block_proc = None;
+            for branch in match_expr.branches().iter().skip(1) {
+                let (condition, body_comb, body_proc) = branch_to_cond_body(branch);
+                if let Some(condition) = condition {
+                    if let Some(body_proc) = body_proc {
+                        else_if_blocks_proc.push((condition.clone(), body_proc));
+                    }
+                    else_if_blocks_comb.push((condition, body_comb));
+                } else {
+                    if let Some(body_proc) = body_proc {
+                        else_block_proc = Some(body_proc);
+                    }
+                    else_block_comb = Some(body_comb);
+                    break;
+                }
             }
-            else_if_blocks_comb.push((condition, body_comb));
-        }
 
-        if let Some(body_proc) = body_proc {
-            let if_statement_proc =
-                VIfStatement::new(condition.clone(), body_proc, else_if_blocks_proc, None);
-            tmp_proc_statements.push(VStatement::If(if_statement_proc));
-        } else if !else_if_blocks_proc.is_empty() {
-            let if_statement_proc = VIfStatement::new(
-                condition.clone(),
-                VBlock::new(Vec::new()),
-                else_if_blocks_proc,
-                None,
-            );
-            tmp_proc_statements.push(VStatement::If(if_statement_proc));
-        }
+            if let Some(body_proc) = body_proc {
+                let if_statement_proc = VIfStatement::new(
+                    condition.clone(),
+                    body_proc,
+                    else_if_blocks_proc,
+                    else_block_proc,
+                );
+                tmp_proc_statements.push(VStatement::If(if_statement_proc));
+            } else if !else_if_blocks_proc.is_empty() {
+                let if_statement_proc = VIfStatement::new(
+                    condition.clone(),
+                    VBlock::new(Vec::new()),
+                    else_if_blocks_proc,
+                    else_block_proc,
+                );
+                tmp_proc_statements.push(VStatement::If(if_statement_proc));
+            }
 
-        let if_statement_comb = VIfStatement::new(condition, body_comb, else_if_blocks_comb, None);
-        tmp_comb_statements.push(VStatement::If(if_statement_comb));
+            let if_statement_comb =
+                VIfStatement::new(condition, body_comb, else_if_blocks_comb, else_block_comb);
+            tmp_comb_statements.push(VStatement::If(if_statement_comb));
+        } else {
+            if let Some(body_proc) = body_proc {
+                tmp_proc_statements.push(VStatement::Block(body_proc));
+            }
+            tmp_comb_statements.push(VStatement::Block(body_comb));
+        }
 
         VExpr::Ident(tmp_member)
     }
