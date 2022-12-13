@@ -41,6 +41,7 @@ const KEYWORDS: phf::Map<&'static str, KeywordKind> = phf_macros::phf_map!(
     "as" => KeywordKind::As,
     "continue" => KeywordKind::Continue,
     "break" => KeywordKind::Break,
+    "extern" => KeywordKind::Extern,
 );
 
 #[derive(Debug)]
@@ -945,6 +946,23 @@ fn module_def() -> impl QuartzParser<Module> {
     )
 }
 
+fn extern_module_def() -> impl QuartzParser<ExternModule> {
+    parser!(
+        {sequence!(
+            kw(KeywordKind::Extern),
+            kw(KeywordKind::Mod),
+            parser!({ident()}!![err!("expected identifier")]),
+            parser!({punct(PunctKind::OpenParen)}!![err!("expected `(`")]),
+            sep_by(port(), punct(PunctKind::Comma), true, true),
+            parser!({punct(PunctKind::CloseParen)}!![err!("expected `)`")]),
+            parser!({punct(PunctKind::Semicolon)}!![err!("expected `;`")]),
+        )}
+        ->[|(extern_kw, mod_kw, name, open_paren, ports, close_paren, _)| {
+            ExternModule::new(extern_kw, mod_kw, name, open_paren, ports, close_paren)
+        }]
+    )
+}
+
 fn fn_def() -> impl QuartzParser<Func> {
     parser!(
         {sequence!(
@@ -967,6 +985,7 @@ fn item() -> impl QuartzParser<Item> {
         parser!({enum_def()}->[Item::Enum]),
         parser!({const_def()}->[Item::Const]),
         parser!({module_def()}->[Item::Module]),
+        parser!({extern_module_def()}->[Item::ExternModule]),
         parser!({fn_def()}->[Item::Func]),
     )
 }

@@ -51,6 +51,7 @@ pub enum KeywordKind {
     As,
     Continue,
     Break,
+    Extern,
 }
 
 impl DisplayScoped for KeywordKind {
@@ -82,6 +83,7 @@ impl DisplayScoped for KeywordKind {
                 Self::As => "as",
                 Self::Continue => "continue",
                 Self::Break => "break",
+                Self::Extern => "extern",
             }
         )
     }
@@ -3151,6 +3153,87 @@ impl DisplayScoped for Module {
 default_display_impl!(Module);
 
 #[derive(Debug, Clone)]
+pub struct ExternModule {
+    extern_kw: Keyword,
+    mod_kw: Keyword,
+    name: Ident,
+    open_paren: Punct,
+    ports: Vec<Port>,
+    close_paren: Punct,
+}
+
+impl ExternModule {
+    #[inline]
+    pub fn new(
+        extern_kw: Keyword,
+        mod_kw: Keyword,
+        name: Ident,
+        open_paren: Punct,
+        ports: Vec<Port>,
+        close_paren: Punct,
+    ) -> Self {
+        Self {
+            extern_kw,
+            mod_kw,
+            name,
+            open_paren,
+            ports,
+            close_paren,
+        }
+    }
+
+    #[inline]
+    pub fn extern_kw(&self) -> &Keyword {
+        &self.extern_kw
+    }
+
+    #[inline]
+    pub fn mod_kw(&self) -> &Keyword {
+        &self.mod_kw
+    }
+
+    #[inline]
+    pub fn name(&self) -> &Ident {
+        &self.name
+    }
+
+    #[inline]
+    pub fn open_paren(&self) -> &Punct {
+        &self.open_paren
+    }
+
+    #[inline]
+    pub fn ports(&self) -> &[Port] {
+        &self.ports
+    }
+
+    #[inline]
+    pub fn close_paren(&self) -> &Punct {
+        &self.close_paren
+    }
+}
+
+impl Spanned for ExternModule {
+    fn span(&self) -> TextSpan {
+        self.extern_kw.span().join(&self.close_paren.span())
+    }
+}
+
+impl DisplayScoped for ExternModule {
+    fn fmt(&self, f: &mut ScopedFormatter<'_, '_>) -> std::fmt::Result {
+        writeln!(f, "{} {} {}", self.mod_kw, self.name, self.open_paren)?;
+        f.enter_scope();
+        for port in self.ports.iter() {
+            writeln!(f, "{port},")?;
+        }
+        f.exit_scope();
+        write!(f, "{};", self.close_paren)
+    }
+}
+
+default_display_impl!(ExternModule);
+
+#[derive(Debug, Clone)]
 pub struct Func {
     fn_kw: Keyword,
     name: Ident,
@@ -3240,6 +3323,7 @@ pub enum Item {
     Enum(Enum),
     Const(Const),
     Module(Module),
+    ExternModule(ExternModule),
     Func(Func),
 }
 
@@ -3250,6 +3334,7 @@ impl Item {
             Self::Enum(enum_item) => enum_item.name(),
             Self::Const(const_item) => const_item.name(),
             Self::Module(module_item) => module_item.name(),
+            Self::ExternModule(module_item) => module_item.name(),
             Self::Func(func_item) => func_item.name(),
         }
     }
@@ -3262,6 +3347,7 @@ impl Spanned for Item {
             Self::Enum(enum_item) => enum_item.span(),
             Self::Const(const_item) => const_item.span(),
             Self::Module(module_item) => module_item.span(),
+            Self::ExternModule(module_item) => module_item.span(),
             Self::Func(func_item) => func_item.span(),
         }
     }
@@ -3274,6 +3360,7 @@ impl DisplayScoped for Item {
             Self::Enum(enum_item) => DisplayScoped::fmt(enum_item, f),
             Self::Const(const_item) => DisplayScoped::fmt(const_item, f),
             Self::Module(module_item) => DisplayScoped::fmt(module_item, f),
+            Self::ExternModule(module_item) => DisplayScoped::fmt(module_item, f),
             Self::Func(fn_item) => DisplayScoped::fmt(fn_item, f),
         }
     }

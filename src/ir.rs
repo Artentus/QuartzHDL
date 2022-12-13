@@ -510,6 +510,7 @@ pub enum TypeItem {
     Struct(Struct),
     Enum(Enum),
     Module(Module),
+    ExternModule(ExternModule),
 }
 
 #[derive(Debug, Clone)]
@@ -804,10 +805,28 @@ impl ResolvedModule {
 }
 
 #[derive(Debug, Clone)]
+pub struct ResolvedExternModule {
+    ports: HashMap<SharedString, ResolvedPort>,
+}
+
+impl ResolvedExternModule {
+    #[inline]
+    pub fn new(ports: HashMap<SharedString, ResolvedPort>) -> Self {
+        Self { ports }
+    }
+
+    #[inline]
+    pub fn ports(&self) -> &HashMap<SharedString, ResolvedPort> {
+        &self.ports
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum ResolvedTypeItem {
     Struct(ResolvedStruct),
     Enum(ResolvedEnum),
     Module(ResolvedModule),
+    ExternModule(ResolvedExternModule),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

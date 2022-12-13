@@ -2328,7 +2328,7 @@ fn type_contains_module(
         ResolvedType::Named { .. } => match &resolved_types[&id] {
             // Structs are checked beforehand to not contain any modules
             ResolvedTypeItem::Struct(_) | ResolvedTypeItem::Enum(_) => false,
-            ResolvedTypeItem::Module(_) => true,
+            ResolvedTypeItem::Module(_) | ResolvedTypeItem::ExternModule(_) => true,
         },
         ResolvedType::Array { item_ty, .. } => {
             type_contains_module(*item_ty, known_types, resolved_types)

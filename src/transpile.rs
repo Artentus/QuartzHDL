@@ -1,7 +1,7 @@
 use crate::ast::*;
 use crate::ir::*;
 use crate::vir::*;
-use crate::HashMap;
+use crate::{HashMap, SharedString};
 use std::borrow::Cow;
 use std::io::Write;
 
@@ -82,18 +82,35 @@ fn get_transpiled_type_name(
     }
 }
 
+enum ResolvedModuleItem<'a> {
+    Module(&'a ResolvedModule),
+    ExternModule(&'a ResolvedExternModule),
+}
+
+impl ResolvedModuleItem<'_> {
+    fn ports(&self) -> &HashMap<SharedString, ResolvedPort> {
+        match self {
+            ResolvedModuleItem::Module(module) => module.ports(),
+            ResolvedModuleItem::ExternModule(module) => module.ports(),
+        }
+    }
+}
+
 fn get_module_item<'a>(
     id: TypeId,
     known_types: &HashMap<TypeId, ResolvedType>,
     resolved_types: &'a HashMap<TypeId, ResolvedTypeItem>,
-) -> Option<&'a ResolvedModule> {
+) -> Option<ResolvedModuleItem<'a>> {
     match &known_types[&id] {
         ResolvedType::Const => None,
         ResolvedType::BuiltinBits { .. } => None,
         ResolvedType::Named { .. } => match &resolved_types[&id] {
             ResolvedTypeItem::Struct(_) => None,
             ResolvedTypeItem::Enum(_) => None,
-            ResolvedTypeItem::Module(module_item) => Some(module_item),
+            ResolvedTypeItem::Module(module_item) => Some(ResolvedModuleItem::Module(module_item)),
+            ResolvedTypeItem::ExternModule(module_item) => {
+                Some(ResolvedModuleItem::ExternModule(module_item))
+            }
         },
         ResolvedType::Array { item_ty, .. } => {
             get_module_item(*item_ty, known_types, resolved_types)
@@ -150,6 +167,22 @@ pub fn transpile(
                     }
                 }
                 writeln!(writer, "}} {};\n", item_name.base())?;
+            }
+            ResolvedTypeItem::ExternModule(module_item) => {
+                if !module_item.ports().is_empty() {
+                    writeln!(writer, "typedef struct packed {{")?;
+                    for (port_name, port) in module_item.ports() {
+                        let port_ty_name = get_transpiled_type_name(port.ty(), known_types);
+                        writeln!(
+                            writer,
+                            "    {} {}{};",
+                            port_ty_name.base(),
+                            port_name,
+                            port_ty_name.array(),
+                        )?;
+                    }
+                    writeln!(writer, "}} {}__Interface;\n", item_name.base)?;
+                }
             }
             ResolvedTypeItem::Module(_) => {}
         }

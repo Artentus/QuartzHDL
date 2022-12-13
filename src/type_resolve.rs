@@ -723,6 +723,14 @@ fn resolve_named_type<'a>(
                             });
                         }
                     }
+                    TypeItem::ExternModule(_) => {
+                        if generic_arg_count > 0 {
+                            return Err(QuartzError::GenericCountMismatch {
+                                ty: named_ty,
+                                arg_count: 0,
+                            });
+                        }
+                    }
                 }
             } else {
                 return Err(QuartzError::UndefinedType { ty: named_ty });
@@ -1380,6 +1388,52 @@ fn resolve_module<'a>(
     )
 }
 
+fn resolve_extern_module<'a>(
+    module_item: &'a ExternModule,
+    args: &ResolveArgs,
+    registry: &mut TypeRegistry,
+) -> QuartzResult<'a, ResolvedExternModule> {
+    let this_ty = ResolvedType::Named {
+        name: module_item.name().as_string(),
+        generic_args: [].as_slice().into(),
+    };
+    let this_id = TypeId::from_type(&this_ty);
+
+    let mut errors = Vec::new();
+    let mut scope = Scope::new(args.global_scope);
+
+    let mut ports = HashMap::default();
+    for port in module_item.ports().iter() {
+        let result = resolve_type(
+            port.ty(),
+            args.type_items,
+            &mut scope,
+            args.global_const_values,
+            None,
+            args.funcs,
+            registry,
+        );
+
+        match result {
+            Ok(ty_id) => {
+                registry.type_order.add_dependency(ty_id, this_id);
+                ports.insert(
+                    port.name().as_string(),
+                    ResolvedPort::new(
+                        port.mode().dir(),
+                        port.logic_mode().kind(),
+                        port.span(),
+                        ty_id,
+                    ),
+                );
+            }
+            Err(err) => errors.push(err),
+        }
+    }
+
+    wrap_errors!(ResolvedExternModule::new(ports), errors)
+}
+
 pub type ResolvedTypes = (
     HashMap<TypeId, ResolvedType>,
     HashMap<TypeId, ResolvedTypeItem>,
@@ -1463,6 +1517,17 @@ pub fn resolve_types<'a>(
                             Err(err) => errors.push(err),
                         }
                     }
+                    TypeItem::ExternModule(module_item) => {
+                        let result = resolve_extern_module(module_item, &args, &mut registry);
+
+                        match result {
+                            Ok(resolved_module) => {
+                                resolved_type_items
+                                    .insert(ty_id, ResolvedTypeItem::ExternModule(resolved_module));
+                            }
+                            Err(err) => errors.push(err),
+                        }
+                    }
                 }
             } else {
                 unreachable!("invalid resolved type");
@@ -1492,6 +1557,12 @@ pub fn collect_type_items(
                 type_items.insert(
                     module_item.name().as_string(),
                     TypeItem::Module(module_item),
+                );
+            }
+            Item::ExternModule(module_item) => {
+                type_items.insert(
+                    module_item.name().as_string(),
+                    TypeItem::ExternModule(module_item),
                 );
             }
             _ => {}
