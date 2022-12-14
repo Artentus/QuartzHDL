@@ -696,8 +696,8 @@ fn resolve_named_type<'a>(
         }
         _ => {
             if let Some(type_item) = type_items.get(name) {
-                match type_item {
-                    TypeItem::Struct(struct_item) => {
+                match type_item.kind() {
+                    TypeItemKind::Struct(struct_item) => {
                         let struct_generic_count = struct_item.generic_arg_count();
                         if generic_arg_count != struct_generic_count {
                             return Err(QuartzError::GenericCountMismatch {
@@ -706,7 +706,7 @@ fn resolve_named_type<'a>(
                             });
                         }
                     }
-                    TypeItem::Enum(_) => {
+                    TypeItemKind::Enum(_) => {
                         if generic_arg_count > 0 {
                             return Err(QuartzError::GenericCountMismatch {
                                 ty: named_ty,
@@ -714,7 +714,7 @@ fn resolve_named_type<'a>(
                             });
                         }
                     }
-                    TypeItem::Module(module_item) => {
+                    TypeItemKind::Module(module_item) => {
                         let module_generic_count = module_item.generic_arg_count();
                         if generic_arg_count != module_generic_count {
                             return Err(QuartzError::GenericCountMismatch {
@@ -723,7 +723,7 @@ fn resolve_named_type<'a>(
                             });
                         }
                     }
-                    TypeItem::ExternModule(_) => {
+                    TypeItemKind::ExternModule(_) => {
                         if generic_arg_count > 0 {
                             return Err(QuartzError::GenericCountMismatch {
                                 ty: named_ty,
@@ -1218,6 +1218,7 @@ fn resolve_block<'a>(
 
 fn resolve_module<'a>(
     module_item: &'a Module,
+    attributes: &'a [AttributeList],
     generic_values: &[i64],
     args: &ResolveArgs,
     registry: &mut TypeRegistry,
@@ -1255,7 +1256,7 @@ fn resolve_module<'a>(
     }
 
     for member in module_item.members().iter() {
-        if let Member::Const(const_member) = member {
+        if let MemberKind::Const(const_member) = member.kind() {
             if !local_consts.contains_key(const_member.name().as_ref()) {
                 let const_expr = transform_const_expr(const_member.value(), &scope, false, false)?;
                 local_consts.insert(const_member.name().as_string(), const_expr);
@@ -1300,6 +1301,11 @@ fn resolve_module<'a>(
                 ports.insert(
                     port.name().as_string(),
                     ResolvedPort::new(
+                        port.attributes()
+                            .iter()
+                            .flat_map(|list| list.attributes())
+                            .cloned()
+                            .collect(),
                         port.mode().dir(),
                         port.logic_mode().kind(),
                         port.span(),
@@ -1315,8 +1321,8 @@ fn resolve_module<'a>(
     let mut proc_members = Vec::new();
     let mut comb_members = Vec::new();
     for member in module_item.members().iter() {
-        match member {
-            Member::Logic(logic_member) => {
+        match member.kind() {
+            MemberKind::Logic(logic_member) => {
                 let result = resolve_type(
                     logic_member.ty(),
                     args.type_items,
@@ -1333,6 +1339,12 @@ fn resolve_module<'a>(
                         logic_members.insert(
                             logic_member.name().as_string(),
                             ResolvedLogicMember::new(
+                                member
+                                    .attributes()
+                                    .iter()
+                                    .flat_map(|list| list.attributes())
+                                    .cloned()
+                                    .collect(),
                                 logic_member.mode().kind(),
                                 logic_member.span(),
                                 ty_id,
@@ -1342,7 +1354,7 @@ fn resolve_module<'a>(
                     Err(err) => errors.push(err),
                 }
             }
-            Member::Proc(proc_member) => {
+            MemberKind::Proc(proc_member) => {
                 let result = resolve_block(
                     proc_member.body(),
                     this_id,
@@ -1357,7 +1369,7 @@ fn resolve_module<'a>(
                     proc_members.push(proc_member.clone());
                 }
             }
-            Member::Comb(comb_member) => {
+            MemberKind::Comb(comb_member) => {
                 let result = resolve_block(
                     comb_member.body(),
                     this_id,
@@ -1378,6 +1390,11 @@ fn resolve_module<'a>(
 
     wrap_errors!(
         ResolvedModule::new(
+            attributes
+                .iter()
+                .flat_map(|list| list.attributes())
+                .cloned()
+                .collect(),
             ports,
             local_const_values,
             logic_members,
@@ -1420,6 +1437,11 @@ fn resolve_extern_module<'a>(
                 ports.insert(
                     port.name().as_string(),
                     ResolvedPort::new(
+                        port.attributes()
+                            .iter()
+                            .flat_map(|list| list.attributes())
+                            .cloned()
+                            .collect(),
                         port.mode().dir(),
                         port.logic_mode().kind(),
                         port.span(),
@@ -1481,8 +1503,8 @@ pub fn resolve_types<'a>(
                     type_queue: &mut type_queue,
                 };
 
-                match item {
-                    TypeItem::Struct(struct_item) => {
+                match item.kind() {
+                    TypeItemKind::Struct(struct_item) => {
                         let result =
                             resolve_struct(struct_item, &generic_args, &args, &mut registry);
 
@@ -1494,7 +1516,7 @@ pub fn resolve_types<'a>(
                             Err(err) => errors.push(err),
                         }
                     }
-                    TypeItem::Enum(enum_item) => {
+                    TypeItemKind::Enum(enum_item) => {
                         let result = resolve_enum(enum_item, &args, &mut registry);
 
                         match result {
@@ -1505,9 +1527,14 @@ pub fn resolve_types<'a>(
                             Err(err) => errors.push(err),
                         }
                     }
-                    TypeItem::Module(module_item) => {
-                        let result =
-                            resolve_module(module_item, &generic_args, &args, &mut registry);
+                    TypeItemKind::Module(module_item) => {
+                        let result = resolve_module(
+                            module_item,
+                            item.attributes(),
+                            &generic_args,
+                            &args,
+                            &mut registry,
+                        );
 
                         match result {
                             Ok(resolved_module) => {
@@ -1517,7 +1544,7 @@ pub fn resolve_types<'a>(
                             Err(err) => errors.push(err),
                         }
                     }
-                    TypeItem::ExternModule(module_item) => {
+                    TypeItemKind::ExternModule(module_item) => {
                         let result = resolve_extern_module(module_item, &args, &mut registry);
 
                         match result {
@@ -1543,26 +1570,29 @@ pub fn collect_type_items(
 ) -> HashMap<SharedString, TypeItem> {
     let mut type_items = HashMap::default();
     for item in items.into_iter() {
-        match item {
-            Item::Struct(struct_item) => {
+        match item.kind {
+            ItemKind::Struct(struct_item) => {
                 type_items.insert(
                     struct_item.name().as_string(),
-                    TypeItem::Struct(struct_item),
+                    TypeItem::new(item.attributes, TypeItemKind::Struct(struct_item)),
                 );
             }
-            Item::Enum(enum_item) => {
-                type_items.insert(enum_item.name().as_string(), TypeItem::Enum(enum_item));
-            }
-            Item::Module(module_item) => {
+            ItemKind::Enum(enum_item) => {
                 type_items.insert(
-                    module_item.name().as_string(),
-                    TypeItem::Module(module_item),
+                    enum_item.name().as_string(),
+                    TypeItem::new(item.attributes, TypeItemKind::Enum(enum_item)),
                 );
             }
-            Item::ExternModule(module_item) => {
+            ItemKind::Module(module_item) => {
                 type_items.insert(
                     module_item.name().as_string(),
-                    TypeItem::ExternModule(module_item),
+                    TypeItem::new(item.attributes, TypeItemKind::Module(module_item)),
+                );
+            }
+            ItemKind::ExternModule(module_item) => {
+                type_items.insert(
+                    module_item.name().as_string(),
+                    TypeItem::new(item.attributes, TypeItemKind::ExternModule(module_item)),
                 );
             }
             _ => {}

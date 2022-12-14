@@ -852,6 +852,29 @@ fn const_def() -> impl QuartzParser<Const> {
     )
 }
 
+fn attribute() -> impl QuartzParser<Attribute> {
+    let value = parser!(
+        ({punct(PunctKind::OpenParen)} <.> {ident()} <.> {punct(PunctKind::CloseParen)})
+        ->[|((open_paren, value), close_paren)| AttributeValue::new(open_paren, value, close_paren)]
+    );
+
+    parser!(({ident()} <.> ?value)->[|(name, value)| Attribute::new(name, value)])
+}
+
+fn attribute_list() -> impl QuartzParser<AttributeList> {
+    parser!(
+        {sequence!(
+            punct(PunctKind::Hash),
+            parser!({punct(PunctKind::OpenBracket)}!![err!("expected `[`")]),
+            sep_by(attribute(), punct(PunctKind::Comma), true, true),
+            parser!({punct(PunctKind::CloseBracket)}!![err!("expected `]`")]),
+        )}
+        ->[|(hash_kw, open_bracket, attributes, close_bracket)| {
+            AttributeList::new(hash_kw, open_bracket, attributes, close_bracket)
+        }]
+    )
+}
+
 fn logic_mode() -> impl QuartzParser<LogicMode> {
     choice!(
         parser!({kw(KeywordKind::Sig)}->[|kw| LogicMode::new(LogicKind::Signal, kw.span())]),
@@ -871,14 +894,15 @@ fn port_mode() -> impl QuartzParser<PortMode> {
 fn port() -> impl QuartzParser<Port> {
     parser!(
         {sequence!(
+            parser!(*{attribute_list()}),
             port_mode(),
             parser!({logic_mode()}!![err!("expected `sig` or `reg`")]),
             parser!({ident()}!![err!("expected identifier")]),
             parser!({punct(PunctKind::Colon)}!![err!("expected `:`")]),
             parser!({ty()}!![err!("expected type")]),
         )}
-        ->[|(mode, logic_mode, name, sep, ty)| {
-            Port::new(mode, logic_mode, name, sep, ty)
+        ->[|(attributes, mode, logic_mode, name, sep, ty)| {
+            Port::new(attributes, mode, logic_mode, name, sep, ty)
         }]
     )
 }
@@ -919,12 +943,14 @@ fn member() -> impl QuartzParser<Member> {
         ->[|(comb_kw, body)| CombMember::new(comb_kw, body)]
     );
 
-    choice!(
-        parser!(logic->[Member::Logic]),
-        parser!({const_def()}->[Member::Const]),
-        parser!(proc->[Member::Proc]),
-        parser!(comb->[Member::Comb]),
-    )
+    let kind = choice!(
+        parser!(logic->[MemberKind::Logic]),
+        parser!({const_def()}->[MemberKind::Const]),
+        parser!(proc->[MemberKind::Proc]),
+        parser!(comb->[MemberKind::Comb]),
+    );
+
+    parser!((*{attribute_list()} <.> kind)->[|(attributes, kind)| Member::new(attributes, kind)])
 }
 
 fn module_def() -> impl QuartzParser<Module> {
@@ -980,14 +1006,17 @@ fn fn_def() -> impl QuartzParser<Func> {
 }
 
 fn item() -> impl QuartzParser<Item> {
-    choice!(
-        parser!({struct_def()}->[Item::Struct]),
-        parser!({enum_def()}->[Item::Enum]),
-        parser!({const_def()}->[Item::Const]),
-        parser!({module_def()}->[Item::Module]),
-        parser!({extern_module_def()}->[Item::ExternModule]),
-        parser!({fn_def()}->[Item::Func]),
-    )
+    let attributes = parser!(*{ attribute_list() });
+    let kind = choice!(
+        parser!({struct_def()}->[ItemKind::Struct]),
+        parser!({enum_def()}->[ItemKind::Enum]),
+        parser!({const_def()}->[ItemKind::Const]),
+        parser!({module_def()}->[ItemKind::Module]),
+        parser!({extern_module_def()}->[ItemKind::ExternModule]),
+        parser!({fn_def()}->[ItemKind::Func]),
+    );
+
+    parser!((attributes <.> kind)->[|(attributes, kind)| Item::new(attributes, kind)])
 }
 
 pub fn parse(

@@ -2509,6 +2509,165 @@ impl DisplayScoped for Enum {
 
 default_display_impl!(Enum);
 
+#[derive(Debug, Clone)]
+pub struct AttributeValue {
+    open_paren: Punct,
+    value: Ident,
+    close_paren: Punct,
+}
+
+impl AttributeValue {
+    #[inline]
+    pub fn new(open_paren: Punct, value: Ident, close_paren: Punct) -> Self {
+        Self {
+            open_paren,
+            value,
+            close_paren,
+        }
+    }
+
+    #[inline]
+    pub fn open_paren(&self) -> &Punct {
+        &self.open_paren
+    }
+
+    #[inline]
+    pub fn value(&self) -> &Ident {
+        &self.value
+    }
+
+    #[inline]
+    pub fn close_paren(&self) -> &Punct {
+        &self.close_paren
+    }
+}
+
+impl Spanned for AttributeValue {
+    fn span(&self) -> TextSpan {
+        self.open_paren.span().join(&self.close_paren.span())
+    }
+}
+
+impl DisplayScoped for AttributeValue {
+    fn fmt(&self, f: &mut ScopedFormatter<'_, '_>) -> std::fmt::Result {
+        write!(f, "{}{}{}", self.open_paren, self.value, self.close_paren)
+    }
+}
+
+default_display_impl!(AttributeValue);
+
+#[derive(Debug, Clone)]
+pub struct Attribute {
+    name: Ident,
+    value: Option<AttributeValue>,
+}
+
+impl Attribute {
+    #[inline]
+    pub fn new(name: Ident, value: Option<AttributeValue>) -> Self {
+        Self { name, value }
+    }
+
+    #[inline]
+    pub fn name(&self) -> &Ident {
+        &self.name
+    }
+
+    #[inline]
+    pub fn value(&self) -> Option<&AttributeValue> {
+        self.value.as_ref()
+    }
+}
+
+impl Spanned for Attribute {
+    fn span(&self) -> TextSpan {
+        if let Some(value) = &self.value {
+            self.name.span().join(&value.span())
+        } else {
+            self.name.span()
+        }
+    }
+}
+
+impl DisplayScoped for Attribute {
+    fn fmt(&self, f: &mut ScopedFormatter<'_, '_>) -> std::fmt::Result {
+        if let Some(value) = &self.value {
+            write!(f, "{}{}", self.name, value)
+        } else {
+            DisplayScoped::fmt(&self.name, f)
+        }
+    }
+}
+
+default_display_impl!(Attribute);
+
+#[derive(Debug, Clone)]
+pub struct AttributeList {
+    hash: Punct,
+    open_bracket: Punct,
+    attributes: Vec<Attribute>,
+    close_bracket: Punct,
+}
+
+impl AttributeList {
+    #[inline]
+    pub fn new(
+        hash: Punct,
+        open_bracket: Punct,
+        attributes: Vec<Attribute>,
+        close_bracket: Punct,
+    ) -> Self {
+        Self {
+            hash,
+            open_bracket,
+            attributes,
+            close_bracket,
+        }
+    }
+
+    #[inline]
+    pub fn hash(&self) -> &Punct {
+        &self.hash
+    }
+
+    #[inline]
+    pub fn open_bracket(&self) -> &Punct {
+        &self.open_bracket
+    }
+
+    #[inline]
+    pub fn attributes(&self) -> &[Attribute] {
+        &self.attributes
+    }
+
+    #[inline]
+    pub fn close_bracket(&self) -> &Punct {
+        &self.close_bracket
+    }
+}
+
+impl Spanned for AttributeList {
+    fn span(&self) -> TextSpan {
+        self.hash.span().join(&self.close_bracket.span())
+    }
+}
+
+impl DisplayScoped for AttributeList {
+    fn fmt(&self, f: &mut ScopedFormatter<'_, '_>) -> std::fmt::Result {
+        write!(f, "{}{}", self.hash, self.open_bracket)?;
+        for (i, attribute) in self.attributes.iter().enumerate() {
+            if i == 0 {
+                write!(f, "{}", attribute)?;
+            } else {
+                write!(f, ", {}", attribute)?;
+            }
+        }
+        write!(f, "{}", self.close_bracket)
+    }
+}
+
+default_display_impl!(AttributeList);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LogicKind {
     Signal,
@@ -2607,6 +2766,7 @@ default_display_impl!(PortMode);
 
 #[derive(Debug, Clone)]
 pub struct Port {
+    attributes: Vec<AttributeList>,
     mode: PortMode,
     logic_mode: LogicMode,
     name: Ident,
@@ -2616,14 +2776,27 @@ pub struct Port {
 
 impl Port {
     #[inline]
-    pub fn new(mode: PortMode, logic_mode: LogicMode, name: Ident, sep: Punct, ty: Type) -> Self {
+    pub fn new(
+        attributes: Vec<AttributeList>,
+        mode: PortMode,
+        logic_mode: LogicMode,
+        name: Ident,
+        sep: Punct,
+        ty: Type,
+    ) -> Self {
         Self {
+            attributes,
             mode,
             logic_mode,
             name,
             sep,
             ty,
         }
+    }
+
+    #[inline]
+    pub fn attributes(&self) -> &[AttributeList] {
+        self.attributes.as_ref()
     }
 
     #[inline]
@@ -2654,12 +2827,20 @@ impl Port {
 
 impl Spanned for Port {
     fn span(&self) -> TextSpan {
-        self.mode.span().join(&self.ty.span())
+        if let Some(first) = self.attributes.first() {
+            first.span().join(&self.ty.span())
+        } else {
+            self.mode.span().join(&self.ty.span())
+        }
     }
 }
 
 impl DisplayScoped for Port {
     fn fmt(&self, f: &mut ScopedFormatter<'_, '_>) -> std::fmt::Result {
+        for attribute_list in self.attributes.iter() {
+            writeln!(f, "{}", attribute_list)?;
+        }
+
         write!(
             f,
             "{} {} {}{} {}",
@@ -2984,14 +3165,14 @@ impl DisplayScoped for CombMember {
 default_display_impl!(CombMember);
 
 #[derive(Debug, Clone)]
-pub enum Member {
+pub enum MemberKind {
     Logic(LogicMember),
     Const(Const),
     Proc(ProcMember),
     Comb(CombMember),
 }
 
-impl Member {
+impl MemberKind {
     pub fn name(&self) -> Option<&Ident> {
         match self {
             Self::Logic(member) => Some(member.name()),
@@ -3002,7 +3183,7 @@ impl Member {
     }
 }
 
-impl Spanned for Member {
+impl Spanned for MemberKind {
     fn span(&self) -> TextSpan {
         match self {
             Self::Logic(member) => member.span(),
@@ -3013,7 +3194,7 @@ impl Spanned for Member {
     }
 }
 
-impl DisplayScoped for Member {
+impl DisplayScoped for MemberKind {
     fn fmt(&self, f: &mut ScopedFormatter<'_, '_>) -> std::fmt::Result {
         match self {
             Self::Logic(member) => DisplayScoped::fmt(member, f),
@@ -3021,6 +3202,56 @@ impl DisplayScoped for Member {
             Self::Proc(member) => DisplayScoped::fmt(member, f),
             Self::Comb(member) => DisplayScoped::fmt(member, f),
         }
+    }
+}
+
+default_display_impl!(MemberKind);
+
+#[derive(Debug, Clone)]
+pub struct Member {
+    attributes: Vec<AttributeList>,
+    kind: MemberKind,
+}
+
+impl Member {
+    #[inline]
+    pub fn new(attributes: Vec<AttributeList>, kind: MemberKind) -> Self {
+        Self { attributes, kind }
+    }
+
+    #[inline]
+    pub fn attributes(&self) -> &[AttributeList] {
+        &self.attributes
+    }
+
+    #[inline]
+    pub fn kind(&self) -> &MemberKind {
+        &self.kind
+    }
+
+    #[inline]
+    pub fn name(&self) -> Option<&Ident> {
+        self.kind.name()
+    }
+}
+
+impl Spanned for Member {
+    fn span(&self) -> TextSpan {
+        if let Some(first) = self.attributes.first() {
+            first.span().join(&self.kind.span())
+        } else {
+            self.kind.span()
+        }
+    }
+}
+
+impl DisplayScoped for Member {
+    fn fmt(&self, f: &mut ScopedFormatter<'_, '_>) -> std::fmt::Result {
+        for attribute_list in self.attributes().iter() {
+            writeln!(f, "{}", attribute_list)?;
+        }
+
+        write!(f, "{}", self.kind)
     }
 }
 
@@ -3318,7 +3549,7 @@ impl DisplayScoped for Func {
 default_display_impl!(Func);
 
 #[derive(Debug, Clone)]
-pub enum Item {
+pub enum ItemKind {
     Struct(Struct),
     Enum(Enum),
     Const(Const),
@@ -3327,7 +3558,7 @@ pub enum Item {
     Func(Func),
 }
 
-impl Item {
+impl ItemKind {
     pub fn name(&self) -> &Ident {
         match self {
             Self::Struct(struct_item) => struct_item.name(),
@@ -3340,7 +3571,7 @@ impl Item {
     }
 }
 
-impl Spanned for Item {
+impl Spanned for ItemKind {
     fn span(&self) -> TextSpan {
         match self {
             Self::Struct(struct_item) => struct_item.span(),
@@ -3353,7 +3584,7 @@ impl Spanned for Item {
     }
 }
 
-impl DisplayScoped for Item {
+impl DisplayScoped for ItemKind {
     fn fmt(&self, f: &mut ScopedFormatter<'_, '_>) -> std::fmt::Result {
         match self {
             Self::Struct(struct_item) => DisplayScoped::fmt(struct_item, f),
@@ -3363,6 +3594,46 @@ impl DisplayScoped for Item {
             Self::ExternModule(module_item) => DisplayScoped::fmt(module_item, f),
             Self::Func(fn_item) => DisplayScoped::fmt(fn_item, f),
         }
+    }
+}
+
+default_display_impl!(ItemKind);
+
+#[derive(Debug, Clone)]
+pub struct Item {
+    pub attributes: Vec<AttributeList>,
+    pub kind: ItemKind,
+}
+
+impl Item {
+    #[inline]
+    pub fn new(attributes: Vec<AttributeList>, kind: ItemKind) -> Self {
+        Self { attributes, kind }
+    }
+
+    #[inline]
+    pub fn name(&self) -> &Ident {
+        self.kind.name()
+    }
+}
+
+impl Spanned for Item {
+    fn span(&self) -> TextSpan {
+        if let Some(first) = self.attributes.first() {
+            first.span().join(&self.kind.span())
+        } else {
+            self.kind.span()
+        }
+    }
+}
+
+impl DisplayScoped for Item {
+    fn fmt(&self, f: &mut ScopedFormatter<'_, '_>) -> std::fmt::Result {
+        for attribute_list in self.attributes.iter() {
+            writeln!(f, "{}", attribute_list)?;
+        }
+
+        write!(f, "{}", self.kind)
     }
 }
 

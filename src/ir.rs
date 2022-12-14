@@ -506,11 +506,34 @@ impl ConstFunc {
 }
 
 #[derive(Debug, Clone)]
-pub enum TypeItem {
+pub enum TypeItemKind {
     Struct(Struct),
     Enum(Enum),
     Module(Module),
     ExternModule(ExternModule),
+}
+
+#[derive(Debug, Clone)]
+pub struct TypeItem {
+    attributes: Vec<AttributeList>,
+    kind: TypeItemKind,
+}
+
+impl TypeItem {
+    #[inline]
+    pub fn new(attributes: Vec<AttributeList>, kind: TypeItemKind) -> Self {
+        Self { attributes, kind }
+    }
+
+    #[inline]
+    pub fn attributes(&self) -> &[AttributeList] {
+        &self.attributes
+    }
+
+    #[inline]
+    pub fn kind(&self) -> &TypeItemKind {
+        &self.kind
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -690,6 +713,7 @@ impl ResolvedEnum {
 
 #[derive(Debug, Clone)]
 pub struct ResolvedPort {
+    attributes: Vec<Attribute>,
     dir: Direction,
     kind: LogicKind,
     span: TextSpan,
@@ -698,13 +722,25 @@ pub struct ResolvedPort {
 
 impl ResolvedPort {
     #[inline]
-    pub fn new(dir: Direction, kind: LogicKind, span: TextSpan, ty: TypeId) -> Self {
+    pub fn new(
+        attributes: Vec<Attribute>,
+        dir: Direction,
+        kind: LogicKind,
+        span: TextSpan,
+        ty: TypeId,
+    ) -> Self {
         Self {
+            attributes,
             dir,
             kind,
             span,
             ty,
         }
+    }
+
+    #[inline]
+    pub fn attributes(&self) -> &[Attribute] {
+        self.attributes.as_ref()
     }
 
     #[inline]
@@ -727,6 +763,7 @@ default_spanned_impl!(ResolvedPort);
 
 #[derive(Debug, Clone)]
 pub struct ResolvedLogicMember {
+    attributes: Vec<Attribute>,
     kind: LogicKind,
     span: TextSpan,
     ty: TypeId,
@@ -734,8 +771,18 @@ pub struct ResolvedLogicMember {
 
 impl ResolvedLogicMember {
     #[inline]
-    pub fn new(kind: LogicKind, span: TextSpan, ty: TypeId) -> Self {
-        Self { kind, span, ty }
+    pub fn new(attributes: Vec<Attribute>, kind: LogicKind, span: TextSpan, ty: TypeId) -> Self {
+        Self {
+            attributes,
+            kind,
+            span,
+            ty,
+        }
+    }
+
+    #[inline]
+    pub fn attributes(&self) -> &[Attribute] {
+        self.attributes.as_ref()
     }
 
     #[inline]
@@ -753,6 +800,7 @@ default_spanned_impl!(ResolvedLogicMember);
 
 #[derive(Debug, Clone)]
 pub struct ResolvedModule {
+    attributes: Vec<Attribute>,
     ports: HashMap<SharedString, ResolvedPort>,
     local_consts: HashMap<SharedString, i64>,
     logic_members: HashMap<SharedString, ResolvedLogicMember>,
@@ -763,6 +811,7 @@ pub struct ResolvedModule {
 impl ResolvedModule {
     #[inline]
     pub fn new(
+        attributes: Vec<Attribute>,
         ports: HashMap<SharedString, ResolvedPort>,
         local_consts: HashMap<SharedString, i64>,
         logic_members: HashMap<SharedString, ResolvedLogicMember>,
@@ -770,12 +819,18 @@ impl ResolvedModule {
         comb_members: Vec<CombMember>,
     ) -> Self {
         Self {
+            attributes,
             ports,
             local_consts,
             logic_members,
             proc_members,
             comb_members,
         }
+    }
+
+    #[inline]
+    pub fn attributes(&self) -> &[Attribute] {
+        &self.attributes
     }
 
     #[inline]

@@ -210,6 +210,21 @@ pub fn transpile(
             writeln!(writer, "}} {module_name}__Interface;\n")?;
         }
 
+        if !module_item.attributes().is_empty() {
+            write!(writer, "(* ")?;
+            for (i, attribute) in module_item.attributes().iter().enumerate() {
+                if i > 0 {
+                    write!(writer, ", ")?;
+                }
+
+                write!(writer, "{}", attribute.name().as_ref())?;
+                if let Some(value) = attribute.value() {
+                    write!(writer, "=\"{}\"", value.value().as_ref())?;
+                }
+            }
+            writeln!(writer, " *)")?;
+        }
+
         write!(writer, "module {module_name} (")?;
 
         for (i, (port_name, port)) in module_item.ports().iter().enumerate() {
@@ -217,6 +232,21 @@ pub fn transpile(
                 writeln!(writer, ",")?;
             } else {
                 writeln!(writer)?;
+            }
+
+            if !port.attributes().is_empty() {
+                write!(writer, "(* ")?;
+                for (i, attribute) in port.attributes().iter().enumerate() {
+                    if i > 0 {
+                        write!(writer, ", ")?;
+                    }
+
+                    write!(writer, "{}", attribute.name().as_ref())?;
+                    if let Some(value) = attribute.value() {
+                        write!(writer, "=\"{}\"", value.value().as_ref())?;
+                    }
+                }
+                write!(writer, " *) ")?;
             }
 
             match port.dir() {
@@ -254,6 +284,21 @@ pub fn transpile(
                     )?;
                 }
 
+                if !member.attributes().is_empty() {
+                    write!(writer, "(* ")?;
+                    for (i, attribute) in member.attributes().iter().enumerate() {
+                        if i > 0 {
+                            write!(writer, ", ")?;
+                        }
+
+                        write!(writer, "{}", attribute.name().as_ref())?;
+                        if let Some(value) = attribute.value() {
+                            write!(writer, "=\"{}\"", value.value().as_ref())?;
+                        }
+                    }
+                    write!(writer, " *) ")?;
+                }
+
                 writeln!(
                     writer,
                     "{} {}__instance{} (",
@@ -273,6 +318,21 @@ pub fn transpile(
 
                 writeln!(writer, ");")?;
             } else {
+                if !member.attributes().is_empty() {
+                    write!(writer, "(* ")?;
+                    for (i, attribute) in member.attributes().iter().enumerate() {
+                        if i > 0 {
+                            write!(writer, ", ")?;
+                        }
+
+                        write!(writer, "{}", attribute.name().as_ref())?;
+                        if let Some(value) = attribute.value() {
+                            write!(writer, "=\"{}\"", value.value().as_ref())?;
+                        }
+                    }
+                    write!(writer, " *) ")?;
+                }
+
                 writeln!(
                     writer,
                     "var {} {}{};",

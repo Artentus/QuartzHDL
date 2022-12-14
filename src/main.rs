@@ -227,9 +227,9 @@ fn main() -> std::io::Result<()> {
 
     let mut global_scope = Scope::empty();
     for item in design.iter() {
-        match item {
-            ast::Item::Const(const_item) => global_scope.add_const(const_item.name()),
-            ast::Item::Func(func_item) => {
+        match &item.kind {
+            ast::ItemKind::Const(const_item) => global_scope.add_const(const_item.name()),
+            ast::ItemKind::Func(func_item) => {
                 global_scope.add_func(func_item.name(), func_item.args().len())
             }
             _ => {}
@@ -239,8 +239,8 @@ fn main() -> std::io::Result<()> {
     let mut global_consts = HashMap::default();
     let mut funcs = HashMap::default();
     for item in design.iter() {
-        match item {
-            ast::Item::Const(const_item) => {
+        match &item.kind {
+            ast::ItemKind::Const(const_item) => {
                 match transform_const_expr(const_item.value(), &global_scope, false, false) {
                     Ok(expr) => {
                         if !global_consts.contains_key(const_item.name().as_ref())
@@ -252,16 +252,18 @@ fn main() -> std::io::Result<()> {
                     Err(err) => errors.push(err),
                 }
             }
-            ast::Item::Func(func_item) => match transform_const_func(func_item, &global_scope) {
-                Ok(func) => {
-                    if !global_consts.contains_key(func_item.name().as_ref())
-                        && !funcs.contains_key(func_item.name().as_ref())
-                    {
-                        funcs.insert(func_item.name().as_string(), func);
+            ast::ItemKind::Func(func_item) => {
+                match transform_const_func(func_item, &global_scope) {
+                    Ok(func) => {
+                        if !global_consts.contains_key(func_item.name().as_ref())
+                            && !funcs.contains_key(func_item.name().as_ref())
+                        {
+                            funcs.insert(func_item.name().as_string(), func);
+                        }
                     }
+                    Err(err) => errors.push(err),
                 }
-                Err(err) => errors.push(err),
-            },
+            }
             _ => {}
         }
     }
@@ -293,7 +295,7 @@ fn main() -> std::io::Result<()> {
         )?;
         abort!();
     };
-    let ir::TypeItem::Module(top_module) = top_item else {
+    let ir::TypeItemKind::Module(top_module) = top_item.kind() else {
         let mut stderr = stderr.lock();
         write_error(
             &format!("`{top_module_name}` is not a module"),
