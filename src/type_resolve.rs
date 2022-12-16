@@ -1041,16 +1041,22 @@ fn resolve_expr<'a>(
     args: &ResolveLocalArgs,
     registry: &mut TypeRegistry,
 ) -> QuartzResult<'a, ()> {
+    let mut errors = Vec::new();
+
     macro_rules! resolve_binary_expr {
         ($expr:expr) => {{
-            resolve_expr($expr.lhs(), parent_id, scope, args, registry)?;
-            resolve_expr($expr.rhs(), parent_id, scope, args, registry)?;
+            if let Err(err) = resolve_expr($expr.lhs(), parent_id, scope, args, registry) {
+                errors.push(err);
+            }
+            if let Err(err) = resolve_expr($expr.rhs(), parent_id, scope, args, registry) {
+                errors.push(err);
+            }
         }};
     }
 
     match expr {
         Expr::Construct(expr) => {
-            let ty_id = resolve_named_type(
+            match resolve_named_type(
                 expr.ty(),
                 args.type_items,
                 scope,
@@ -1058,17 +1064,22 @@ fn resolve_expr<'a>(
                 Some(args.local_const_values),
                 args.funcs,
                 registry,
-            )?;
-
-            expr.resolve(ty_id);
-            registry.type_order.add_dependency(ty_id, parent_id);
+            ) {
+                Ok(ty_id) => {
+                    expr.resolve(ty_id);
+                    registry.type_order.add_dependency(ty_id, parent_id);
+                }
+                Err(err) => errors.push(err),
+            }
 
             for field in expr.fields() {
-                resolve_expr(field.value(), parent_id, scope, args, registry)?;
+                if let Err(err) = resolve_expr(field.value(), parent_id, scope, args, registry) {
+                    errors.push(err);
+                }
             }
         }
         Expr::Cast(expr) => {
-            let ty_id = resolve_type(
+            match resolve_type(
                 expr.target_ty(),
                 args.type_items,
                 scope,
@@ -1076,12 +1087,17 @@ fn resolve_expr<'a>(
                 Some(args.local_const_values),
                 args.funcs,
                 registry,
-            )?;
+            ) {
+                Ok(ty_id) => {
+                    expr.resolve(ty_id);
+                    registry.type_order.add_dependency(ty_id, parent_id);
+                }
+                Err(err) => errors.push(err),
+            }
 
-            expr.resolve(ty_id);
-            registry.type_order.add_dependency(ty_id, parent_id);
-
-            resolve_expr(expr.value(), parent_id, scope, args, registry)?;
+            if let Err(err) = resolve_expr(expr.value(), parent_id, scope, args, registry) {
+                errors.push(err);
+            }
         }
 
         Expr::Literal(_) => {}
@@ -1090,43 +1106,80 @@ fn resolve_expr<'a>(
 
         Expr::Call(expr) => {
             for arg in expr.args().iter() {
-                resolve_expr(arg, parent_id, scope, args, registry)?;
+                if let Err(err) = resolve_expr(arg, parent_id, scope, args, registry) {
+                    errors.push(err);
+                }
             }
         }
 
         Expr::If(expr) => {
-            resolve_expr(expr.condition(), parent_id, scope, args, registry)?;
-            resolve_block(expr.body(), parent_id, scope, args, registry)?;
+            if let Err(err) = resolve_expr(expr.condition(), parent_id, scope, args, registry) {
+                errors.push(err);
+            }
+            if let Err(err) = resolve_block(expr.body(), parent_id, scope, args, registry) {
+                errors.push(err);
+            }
 
             for else_if_block in expr.else_if_blocks().iter() {
-                resolve_expr(else_if_block.condition(), parent_id, scope, args, registry)?;
-                resolve_block(else_if_block.body(), parent_id, scope, args, registry)?;
+                if let Err(err) =
+                    resolve_expr(else_if_block.condition(), parent_id, scope, args, registry)
+                {
+                    errors.push(err);
+                }
+                if let Err(err) =
+                    resolve_block(else_if_block.body(), parent_id, scope, args, registry)
+                {
+                    errors.push(err);
+                }
             }
 
             if let Some(else_block) = expr.else_block() {
-                resolve_block(else_block.body(), parent_id, scope, args, registry)?;
+                if let Err(err) = resolve_block(else_block.body(), parent_id, scope, args, registry)
+                {
+                    errors.push(err);
+                }
             }
         }
 
         Expr::Match(expr) => {
-            resolve_expr(expr.value(), parent_id, scope, args, registry)?;
+            if let Err(err) = resolve_expr(expr.value(), parent_id, scope, args, registry) {
+                errors.push(err);
+            }
+
             for branch in expr.branches().iter() {
                 match branch.body() {
-                    MatchBody::Expr(expr) => resolve_expr(expr, parent_id, scope, args, registry)?,
+                    MatchBody::Expr(expr) => {
+                        if let Err(err) = resolve_expr(expr, parent_id, scope, args, registry) {
+                            errors.push(err);
+                        }
+                    }
                     MatchBody::Block(block) => {
-                        resolve_block(block, parent_id, scope, args, registry)?
+                        if let Err(err) = resolve_block(block, parent_id, scope, args, registry) {
+                            errors.push(err);
+                        }
                     }
                 }
             }
         }
 
         Expr::Index(expr) => {
-            resolve_expr(expr.base(), parent_id, scope, args, registry)?;
+            if let Err(err) = resolve_expr(expr.base(), parent_id, scope, args, registry) {
+                errors.push(err);
+            }
+
             match expr.indexer().index() {
-                IndexKind::Single(index) => resolve_expr(index, parent_id, scope, args, registry)?,
+                IndexKind::Single(index) => {
+                    if let Err(err) = resolve_expr(index, parent_id, scope, args, registry) {
+                        errors.push(err);
+                    }
+                }
                 IndexKind::Range(range) => {
-                    resolve_expr(&range.start, parent_id, scope, args, registry)?;
-                    resolve_expr(&range.end, parent_id, scope, args, registry)?;
+                    if let Err(err) = resolve_expr(&range.start, parent_id, scope, args, registry) {
+                        errors.push(err);
+                    }
+                    if let Err(err) = resolve_expr(&range.end, parent_id, scope, args, registry) {
+                        errors.push(err);
+                    }
                 }
             }
         }
@@ -1160,7 +1213,7 @@ fn resolve_expr<'a>(
         Expr::Asr(expr) => resolve_binary_expr!(expr),
     }
 
-    Ok(())
+    wrap_errors!((), errors)
 }
 
 fn resolve_statement<'a>(
@@ -1179,8 +1232,17 @@ fn resolve_statement<'a>(
             resolve_expr(assign.value(), parent_id, scope, args, registry)
         }
         Statement::WhileLoop(while_loop) => {
-            resolve_expr(while_loop.condition(), parent_id, scope, args, registry)?;
-            resolve_block(while_loop.body(), parent_id, scope, args, registry)
+            let mut errors = Vec::new();
+
+            if let Err(err) = resolve_expr(while_loop.condition(), parent_id, scope, args, registry)
+            {
+                errors.push(err);
+            }
+            if let Err(err) = resolve_block(while_loop.body(), parent_id, scope, args, registry) {
+                errors.push(err);
+            }
+
+            wrap_errors!((), errors)
         }
         Statement::ForLoop(for_loop) => {
             let (start, end) = match for_loop.range() {
@@ -1188,9 +1250,19 @@ fn resolve_statement<'a>(
                 ForLoopRange::RangeInclusive(start, end) => (start, end),
             };
 
-            resolve_expr(start, parent_id, scope, args, registry)?;
-            resolve_expr(end, parent_id, scope, args, registry)?;
-            resolve_block(for_loop.body(), parent_id, scope, args, registry)
+            let mut errors = Vec::new();
+
+            if let Err(err) = resolve_expr(start, parent_id, scope, args, registry) {
+                errors.push(err);
+            }
+            if let Err(err) = resolve_expr(end, parent_id, scope, args, registry) {
+                errors.push(err);
+            }
+            if let Err(err) = resolve_block(for_loop.body(), parent_id, scope, args, registry) {
+                errors.push(err);
+            }
+
+            wrap_errors!((), errors)
         }
         Statement::Continue(_) | Statement::Break(_) => Ok(()),
     }
@@ -1203,17 +1275,22 @@ fn resolve_block<'a>(
     args: &ResolveLocalArgs,
     registry: &mut TypeRegistry,
 ) -> QuartzResult<'a, ()> {
+    let mut errors = Vec::new();
     let mut scope = Scope::new(parent_scope);
 
     for statement in block.statements().iter() {
-        resolve_statement(statement, parent_id, &mut scope, args, registry)?;
+        if let Err(err) = resolve_statement(statement, parent_id, &mut scope, args, registry) {
+            errors.push(err);
+        }
     }
 
     if let Some(result) = block.result() {
-        resolve_expr(result, parent_id, &mut scope, args, registry)?;
+        if let Err(err) = resolve_expr(result, parent_id, &mut scope, args, registry) {
+            errors.push(err);
+        }
     }
 
-    Ok(())
+    wrap_errors!((), errors)
 }
 
 fn resolve_module<'a>(
