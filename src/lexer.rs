@@ -372,3 +372,41 @@ impl TokenReader for QuartzTokenReader {
 }
 
 pub type QuartzLexer<'a> = Lexer<'a, QuartzTokenReader, whitespace_mode::Remove>;
+
+#[derive(Debug)]
+pub enum QuartzLexerError {
+    OpenBlockComment {
+        span: TextSpan,
+    },
+    InvalidIdent {
+        ident: SharedString,
+        span: TextSpan,
+    },
+    InvalidLiteral {
+        literal: SharedString,
+        span: TextSpan,
+    },
+    InvalidChar {
+        char: char,
+        span: TextSpan,
+    },
+}
+
+pub fn get_token_error(token: &Token<QuartzToken>) -> Option<QuartzLexerError> {
+    match &token.kind {
+        QuartzToken::Comment(true) => Some(QuartzLexerError::OpenBlockComment { span: token.span }),
+        QuartzToken::InvalidIdent(ident) => Some(QuartzLexerError::InvalidIdent {
+            ident: SharedString::clone(ident),
+            span: token.span,
+        }),
+        QuartzToken::InvalidLiteral(literal) => Some(QuartzLexerError::InvalidLiteral {
+            literal: SharedString::clone(literal),
+            span: token.span,
+        }),
+        QuartzToken::InvalidChar(char) => Some(QuartzLexerError::InvalidChar {
+            char: *char,
+            span: token.span,
+        }),
+        _ => None,
+    }
+}

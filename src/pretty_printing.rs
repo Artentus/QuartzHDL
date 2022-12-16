@@ -557,6 +557,9 @@ impl WriteColored for crate::error::QuartzError<'_> {
                 format!("`{kw}` statement is not allowed in this context"),
                 kw.span(),
             ),
+            Self::LexerError(err) => {
+                return err.write_colored(stream, file_server);
+            }
             Self::ParseError(err) => {
                 return err.write_colored(stream, file_server);
             }
@@ -580,6 +583,39 @@ impl WriteColored for crate::error::QuartzError<'_> {
     }
 }
 
+impl WriteColored for crate::lexer::QuartzLexerError {
+    fn write_colored(
+        &self,
+        stream: &mut termcolor::StandardStreamLock,
+        file_server: &langbox::FileServer,
+    ) -> Result<()> {
+        let info = match self {
+            Self::OpenBlockComment { span } => ErrorInfo::new("open block comment", *span),
+            Self::InvalidIdent { ident, span } => {
+                ErrorInfo::new(format!("`{}` is not a valid identifier", ident), *span)
+            }
+            Self::InvalidLiteral { literal, span } => {
+                ErrorInfo::new(format!("`{}` is not a valid literal", literal), *span)
+            }
+            Self::InvalidChar { char, span } => {
+                ErrorInfo::new(format!("invalid character `{}`", char), *span)
+            }
+        };
+        _write_error(&info, stream, file_server)
+    }
+}
+
+impl WriteColored for crate::parser::QuartzParserError {
+    fn write_colored(
+        &self,
+        stream: &mut termcolor::StandardStreamLock,
+        file_server: &langbox::FileServer,
+    ) -> Result<()> {
+        let info = ErrorInfo::new(self.message.as_ref(), self.span);
+        _write_error(&info, stream, file_server)
+    }
+}
+
 impl WriteColored for crate::const_eval::ArithmeticError {
     fn write_colored(
         &self,
@@ -597,17 +633,6 @@ impl WriteColored for crate::const_eval::ArithmeticError {
         };
 
         let info = ErrorInfo::new(msg, span);
-        _write_error(&info, stream, file_server)
-    }
-}
-
-impl WriteColored for crate::parser::QuartzParserError {
-    fn write_colored(
-        &self,
-        stream: &mut termcolor::StandardStreamLock,
-        file_server: &langbox::FileServer,
-    ) -> Result<()> {
-        let info = ErrorInfo::new(self.message.as_ref(), self.span);
         _write_error(&info, stream, file_server)
     }
 }

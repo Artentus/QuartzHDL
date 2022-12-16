@@ -26,11 +26,12 @@ mod type_resolve;
 mod typecheck;
 mod vir;
 
-use crate::scope::*;
 use const_eval::{eval, VarScope};
+use error::QuartzError;
 use langbox::*;
 use lexer::*;
 use pretty_printing::{write_error, WriteColored};
+use scope::*;
 use std::path::PathBuf;
 use std::rc::Rc;
 use termcolor::StandardStream;
@@ -169,21 +170,34 @@ impl<'a> Iterator for TokenSlices<'a> {
     }
 }
 
-fn tokenize(file_server: &mut FileServer, input_files: &[PathBuf]) -> std::io::Result<Tokens> {
+fn tokenize<'err>(
+    file_server: &mut FileServer,
+    input_files: &[PathBuf],
+) -> std::io::Result<(Tokens, Vec<QuartzError<'err>>)> {
     let mut files = HashSet::default();
     for path in input_files.iter() {
         let file = file_server.register_file(path)?;
         files.insert(file);
     }
 
+    let mut errors = Vec::new();
     let mut tokens = Vec::new();
     for file in files.into_iter() {
         let lexer = QuartzLexer::new(file, file_server);
 
-        tokens.extend(lexer.filter(|t| !matches!(&t.kind, QuartzToken::Comment(_))));
+        tokens.extend(lexer.filter(|token| {
+            if let Some(err) = get_token_error(token) {
+                errors.push(err.into());
+            }
+
+            !matches!(
+                &token.kind,
+                QuartzToken::Comment(_) | QuartzToken::InvalidChar(_)
+            )
+        }));
     }
 
-    Ok(Tokens(tokens))
+    Ok((Tokens(tokens), errors))
 }
 
 fn main() -> std::io::Result<()> {
@@ -207,9 +221,8 @@ fn main() -> std::io::Result<()> {
     }
 
     let mut file_server = FileServer::new();
-    let tokens = tokenize(&mut file_server, input_files)?;
+    let (tokens, mut errors) = tokenize(&mut file_server, input_files)?;
 
-    let mut errors = Vec::new();
     let mut design = Vec::new();
     for tokens in tokens.into_iter() {
         match parser::parse(tokens) {

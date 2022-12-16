@@ -1,5 +1,6 @@
 use crate::ast::*;
 use crate::const_eval::*;
+use crate::lexer::QuartzLexerError;
 use crate::parser::QuartzParserError;
 use crate::SharedString;
 use langbox::TextSpan;
@@ -218,6 +219,7 @@ pub enum QuartzError<'a> {
     NonConstLoopControl {
         kw: &'a Keyword,
     },
+    LexerError(QuartzLexerError),
     ParseError(QuartzParserError),
     ArithmeticError(ArithmeticError),
     List(Vec<QuartzError<'a>>),
@@ -232,6 +234,13 @@ impl QuartzError<'_> {
         } else {
             Self::List(list)
         }
+    }
+}
+
+impl From<QuartzLexerError> for QuartzError<'_> {
+    #[inline]
+    fn from(value: QuartzLexerError) -> Self {
+        Self::LexerError(value)
     }
 }
 
