@@ -132,34 +132,63 @@ fn typecheck_binary_expr<'a>(
     let lhs = lhs.unwrap();
     let rhs = rhs.unwrap();
 
-    let (lhs, rhs) = match (lhs, rhs) {
+    match (lhs, rhs) {
         (Either::Const(lhs), Either::Const(rhs)) => {
-            return Ok(Either::Const(ConstBinaryExpr::new(lhs, rhs, expr.span())));
+            Ok(Either::Const(ConstBinaryExpr::new(lhs, rhs, expr.span())))
         }
-        (Either::Checked(lhs), Either::Checked(rhs)) => {
-            let lhs_id = lhs.ty();
-            let rhs_id = rhs.ty();
-
-            if lhs_id == rhs_id {
-                match &known_types[&lhs_id] {
-                    ResolvedType::Const => unreachable!("error in constant folding"),
-                    ResolvedType::BuiltinBits { .. } => {
-                        return Ok(Either::Checked(CheckedBinaryExpr::new(lhs, rhs, lhs_id)));
-                    }
-                    _ => {}
+        (lhs, rhs) => {
+            let lhs = match merge_expr(lhs, args) {
+                Ok(lhs) => Some(lhs),
+                Err(err) => {
+                    errors.push(err);
+                    None
                 }
+            };
+
+            let rhs = match merge_expr(rhs, args) {
+                Ok(rhs) => Some(rhs),
+                Err(err) => {
+                    errors.push(err);
+                    None
+                }
+            };
+
+            if !errors.is_empty() {
+                return Err(QuartzError::new_list(errors));
             }
 
-            (Either::Checked(lhs), Either::Checked(rhs))
-        }
-        (lhs, rhs) => (lhs, rhs),
-    };
+            let lhs = lhs.unwrap();
+            let rhs = rhs.unwrap();
+            let lhs_ty = &known_types[&lhs.ty()];
+            let rhs_ty = &known_types[&rhs.ty()];
 
-    Err(QuartzError::IncompatibleTypes {
-        expr,
-        lhs_ty: lhs.ty_string(known_types),
-        rhs_ty: rhs.ty_string(known_types),
-    })
+            match (lhs_ty, rhs_ty) {
+                (ResolvedType::Const, ResolvedType::Const) => {
+                    unreachable!("error in constant folding")
+                }
+                (ResolvedType::Const, &ResolvedType::BuiltinBits { .. }) => {
+                    let id = rhs.ty();
+                    Ok(Either::Checked(CheckedBinaryExpr::new(lhs, rhs, id)))
+                }
+                (&ResolvedType::BuiltinBits { .. }, ResolvedType::Const) => {
+                    let id = lhs.ty();
+                    Ok(Either::Checked(CheckedBinaryExpr::new(lhs, rhs, id)))
+                }
+                (
+                    &ResolvedType::BuiltinBits { width: lhs_width },
+                    &ResolvedType::BuiltinBits { width: rhs_width },
+                ) if lhs_width == rhs_width => {
+                    let id = lhs.ty();
+                    Ok(Either::Checked(CheckedBinaryExpr::new(lhs, rhs, id)))
+                }
+                _ => Err(QuartzError::IncompatibleTypes {
+                    expr,
+                    lhs_ty: lhs_ty.to_string(known_types),
+                    rhs_ty: rhs_ty.to_string(known_types),
+                }),
+            }
+        }
+    }
 }
 
 fn typecheck_compare_expr<'a>(
@@ -212,47 +241,75 @@ fn typecheck_compare_expr<'a>(
     let lhs = lhs.unwrap();
     let rhs = rhs.unwrap();
 
-    let (lhs, rhs) = match (lhs, rhs) {
+    match (lhs, rhs) {
         (Either::Const(lhs), Either::Const(rhs)) => {
-            return Ok(Either::Const(ConstBinaryExpr::new(lhs, rhs, expr.span())));
+            Ok(Either::Const(ConstBinaryExpr::new(lhs, rhs, expr.span())))
         }
-        (Either::Checked(lhs), Either::Checked(rhs)) => {
-            let lhs_id = lhs.ty();
-            let rhs_id = rhs.ty();
-
-            if lhs_id == rhs_id {
-                match &known_types[&lhs_id] {
-                    ResolvedType::Const => unreachable!("error in constant folding"),
-                    ResolvedType::BuiltinBits { .. } => {
-                        // Returns a single bit (boolean)
-                        let result_ty = UnresolvedType::BuiltinBits { width: 1 };
-                        let result_id = resolve_type_late(&result_ty, known_types);
-                        return Ok(Either::Checked(CheckedBinaryExpr::new(lhs, rhs, result_id)));
-                    }
-                    ResolvedType::Named { .. } => {
-                        if let ResolvedTypeItem::Enum(_) = &resolved_types[&lhs_id] {
-                            // Returns a single bit (boolean)
-                            let result_ty = UnresolvedType::BuiltinBits { width: 1 };
-                            let result_id = resolve_type_late(&result_ty, known_types);
-                            return Ok(Either::Checked(CheckedBinaryExpr::new(
-                                lhs, rhs, result_id,
-                            )));
-                        }
-                    }
-                    _ => {}
+        (lhs, rhs) => {
+            let lhs = match merge_expr(lhs, args) {
+                Ok(lhs) => Some(lhs),
+                Err(err) => {
+                    errors.push(err);
+                    None
                 }
+            };
+
+            let rhs = match merge_expr(rhs, args) {
+                Ok(rhs) => Some(rhs),
+                Err(err) => {
+                    errors.push(err);
+                    None
+                }
+            };
+
+            if !errors.is_empty() {
+                return Err(QuartzError::new_list(errors));
             }
 
-            (Either::Checked(lhs), Either::Checked(rhs))
-        }
-        (lhs, rhs) => (lhs, rhs),
-    };
+            let lhs = lhs.unwrap();
+            let rhs = rhs.unwrap();
+            let lhs_id = lhs.ty();
+            let rhs_id = rhs.ty();
+            let lhs_ty = &known_types[&lhs_id];
+            let rhs_ty = &known_types[&rhs_id];
 
-    Err(QuartzError::IncompatibleTypes {
-        expr,
-        lhs_ty: lhs.ty_string(known_types),
-        rhs_ty: rhs.ty_string(known_types),
-    })
+            match (lhs_ty, rhs_ty) {
+                (ResolvedType::Const, ResolvedType::Const) => {
+                    unreachable!("error in constant folding")
+                }
+                (ResolvedType::Const, &ResolvedType::BuiltinBits { .. })
+                | (&ResolvedType::BuiltinBits { .. }, ResolvedType::Const) => {
+                    // Returns a single bit (boolean)
+                    let result_ty = UnresolvedType::BuiltinBits { width: 1 };
+                    let result_id = resolve_type_late(&result_ty, known_types);
+                    Ok(Either::Checked(CheckedBinaryExpr::new(lhs, rhs, result_id)))
+                }
+                (
+                    &ResolvedType::BuiltinBits { width: lhs_width },
+                    &ResolvedType::BuiltinBits { width: rhs_width },
+                ) if lhs_width == rhs_width => {
+                    // Returns a single bit (boolean)
+                    let result_ty = UnresolvedType::BuiltinBits { width: 1 };
+                    let result_id = resolve_type_late(&result_ty, known_types);
+                    Ok(Either::Checked(CheckedBinaryExpr::new(lhs, rhs, result_id)))
+                }
+                (ResolvedType::Named { .. }, ResolvedType::Named { .. })
+                    if (lhs_id == rhs_id)
+                        && matches!(resolved_types[&lhs_id], ResolvedTypeItem::Enum(_)) =>
+                {
+                    // Returns a single bit (boolean)
+                    let result_ty = UnresolvedType::BuiltinBits { width: 1 };
+                    let result_id = resolve_type_late(&result_ty, known_types);
+                    Ok(Either::Checked(CheckedBinaryExpr::new(lhs, rhs, result_id)))
+                }
+                _ => Err(QuartzError::IncompatibleTypes {
+                    expr,
+                    lhs_ty: lhs_ty.to_string(known_types),
+                    rhs_ty: rhs_ty.to_string(known_types),
+                }),
+            }
+        }
+    }
 }
 
 fn typecheck_concat_expr<'a>(

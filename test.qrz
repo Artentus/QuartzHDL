@@ -139,7 +139,7 @@ mod Alu<BITS>(
         lhs_s = lhs[BITS - 1];
         rhs_s = rhs[BITS - 1];
 
-        z = result == 0 as bits::<BITS>;
+        z = result == 0;
         s = result[BITS - 1];
         o = (lhs_s == rhs_s) & (lhs_s == s);
 
