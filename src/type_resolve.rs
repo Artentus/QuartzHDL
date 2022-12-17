@@ -1229,7 +1229,39 @@ fn resolve_statement<'a>(
             resolve_expr(decl.value(), parent_id, scope, args, registry)
         }
         Statement::Assignment(assign) => {
-            resolve_expr(assign.value(), parent_id, scope, args, registry)
+            let mut errors = Vec::new();
+
+            if let Err(err) = resolve_expr(assign.value(), parent_id, scope, args, registry) {
+                errors.push(err);
+            };
+
+            for suffix in assign.target().suffixes() {
+                match suffix {
+                    SuffixOp::Indexer(indexer) => match indexer.index() {
+                        IndexKind::Single(index) => {
+                            if let Err(err) = resolve_expr(index, parent_id, scope, args, registry)
+                            {
+                                errors.push(err);
+                            }
+                        }
+                        IndexKind::Range(range) => {
+                            if let Err(err) =
+                                resolve_expr(&range.start, parent_id, scope, args, registry)
+                            {
+                                errors.push(err);
+                            }
+                            if let Err(err) =
+                                resolve_expr(&range.end, parent_id, scope, args, registry)
+                            {
+                                errors.push(err);
+                            }
+                        }
+                    },
+                    SuffixOp::MemberAccess(_) => {}
+                }
+            }
+
+            wrap_errors!((), errors)
         }
         Statement::WhileLoop(while_loop) => {
             let mut errors = Vec::new();
