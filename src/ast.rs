@@ -2512,13 +2512,13 @@ default_display_impl!(Enum);
 #[derive(Debug, Clone)]
 pub struct AttributeValue {
     open_paren: Punct,
-    value: Ident,
+    value: SharedString,
     close_paren: Punct,
 }
 
 impl AttributeValue {
     #[inline]
-    pub fn new(open_paren: Punct, value: Ident, close_paren: Punct) -> Self {
+    pub fn new(open_paren: Punct, value: SharedString, close_paren: Punct) -> Self {
         Self {
             open_paren,
             value,
@@ -2532,7 +2532,7 @@ impl AttributeValue {
     }
 
     #[inline]
-    pub fn value(&self) -> &Ident {
+    pub fn value(&self) -> &SharedString {
         &self.value
     }
 

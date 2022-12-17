@@ -1,5 +1,6 @@
 use crate::ast::*;
 use crate::lexer::{PunctKind, QuartzToken};
+use crate::SharedString;
 use langbox::*;
 use std::borrow::Cow;
 
@@ -153,6 +154,28 @@ fn literal() -> impl QuartzParser<Literal> {
                 },
                 QuartzToken::InvalidLiteral(_) => ParseResult::Match {
                     value: Literal::new(0, token.span),
+                    span: token.span,
+                    remaining: input.advance(),
+                },
+                _ => ParseResult::NoMatch,
+            }
+        } else {
+            ParseResult::NoMatch
+        }
+    })
+}
+
+fn string() -> impl QuartzParser<SharedString> {
+    parse_fn!(|input| {
+        if let Some(token) = input.peek() {
+            match &token.kind {
+                QuartzToken::String(value) => ParseResult::Match {
+                    value: SharedString::clone(value),
+                    span: token.span,
+                    remaining: input.advance(),
+                },
+                QuartzToken::InvalidString { string: value, .. } => ParseResult::Match {
+                    value: SharedString::clone(value),
                     span: token.span,
                     remaining: input.advance(),
                 },
@@ -854,7 +877,11 @@ fn const_def() -> impl QuartzParser<Const> {
 
 fn attribute() -> impl QuartzParser<Attribute> {
     let value = parser!(
-        ({punct(PunctKind::OpenParen)} <.> {ident()} <.> {punct(PunctKind::CloseParen)})
+        (
+            {punct(PunctKind::OpenParen)}
+            <.> {string()}!![err!("expected string literal")]
+            <.> {punct(PunctKind::CloseParen)}!![err!("expected `)`")]
+        )
         ->[|((open_paren, value), close_paren)| AttributeValue::new(open_paren, value, close_paren)]
     );
 

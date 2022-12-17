@@ -181,8 +181,14 @@ pub enum QuartzToken {
     Punct(PunctKind),
     Ident(SharedString),
     Literal(i64),
+    String(SharedString),
     InvalidIdent(SharedString),
     InvalidLiteral(SharedString),
+    InvalidString {
+        string: SharedString,
+        invalid_escape_offsets: Vec<usize>,
+        is_open: bool,
+    },
     InvalidChar(char),
 }
 
@@ -342,6 +348,74 @@ fn parse_literal(text: &str) -> Option<ReadTokenResult<QuartzToken>> {
     }
 }
 
+fn parse_string(text: &str) -> Option<ReadTokenResult<QuartzToken>> {
+    let text = text.strip_prefix('"')?;
+    let mut chars = text.char_indices();
+
+    let mut invalid_escape_offsets = Vec::new();
+    let mut string = String::new();
+    loop {
+        if let Some((i, c)) = chars.next() {
+            if c == '"' {
+                return if invalid_escape_offsets.is_empty() {
+                    Some(ReadTokenResult {
+                        token: QuartzToken::String(string.into()),
+                        consumed_bytes: i + ("\"".len() * 2),
+                    })
+                } else {
+                    Some(ReadTokenResult {
+                        token: QuartzToken::InvalidString {
+                            string: string.into(),
+                            invalid_escape_offsets,
+                            is_open: false,
+                        },
+                        consumed_bytes: i + ("\"".len() * 2),
+                    })
+                };
+            } else if c == '\\' {
+                string.push('\\');
+
+                if let Some((_, c)) = chars.next() {
+                    if matches!(c, '"' | '\\' | 'r' | 'n' | 't' | 'b' | '0') {
+                        string.push(c);
+                    } else {
+                        invalid_escape_offsets.push(i + "\"".len());
+                    }
+                } else {
+                    return Some(ReadTokenResult {
+                        token: QuartzToken::InvalidString {
+                            string: string.into(),
+                            invalid_escape_offsets,
+                            is_open: true,
+                        },
+                        consumed_bytes: i + "\"".len() + "\\".len(),
+                    });
+                }
+            } else if c == '\n' {
+                return Some(ReadTokenResult {
+                    token: QuartzToken::InvalidString {
+                        string: string.into(),
+                        invalid_escape_offsets,
+                        is_open: true,
+                    },
+                    consumed_bytes: i + "\"".len() + "\n".len(),
+                });
+            } else {
+                string.push(c);
+            }
+        } else {
+            return Some(ReadTokenResult {
+                token: QuartzToken::InvalidString {
+                    string: string.into(),
+                    invalid_escape_offsets,
+                    is_open: true,
+                },
+                consumed_bytes: text.len(),
+            });
+        }
+    }
+}
+
 pub struct QuartzTokenReader;
 impl TokenReader for QuartzTokenReader {
     type Token = QuartzToken;
@@ -360,6 +434,10 @@ impl TokenReader for QuartzTokenReader {
         }
 
         if let Some(result) = parse_literal(text) {
+            return result;
+        }
+
+        if let Some(result) = parse_string(text) {
             return result;
         }
 
@@ -386,6 +464,12 @@ pub enum QuartzLexerError {
         literal: SharedString,
         span: TextSpan,
     },
+    InvalidString {
+        string: SharedString,
+        span: TextSpan,
+        invalid_escape_offsets: Vec<usize>,
+        is_open: bool,
+    },
     InvalidChar {
         char: char,
         span: TextSpan,
@@ -402,6 +486,16 @@ pub fn get_token_error(token: &Token<QuartzToken>) -> Option<QuartzLexerError> {
         QuartzToken::InvalidLiteral(literal) => Some(QuartzLexerError::InvalidLiteral {
             literal: SharedString::clone(literal),
             span: token.span,
+        }),
+        QuartzToken::InvalidString {
+            string,
+            invalid_escape_offsets,
+            is_open,
+        } => Some(QuartzLexerError::InvalidString {
+            string: SharedString::clone(string),
+            span: token.span,
+            invalid_escape_offsets: invalid_escape_offsets.clone(),
+            is_open: *is_open,
         }),
         QuartzToken::InvalidChar(char) => Some(QuartzLexerError::InvalidChar {
             char: *char,

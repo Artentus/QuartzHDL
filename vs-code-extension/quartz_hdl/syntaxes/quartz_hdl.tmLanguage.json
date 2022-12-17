@@ -9,6 +9,9 @@
 			"include": "#literals"
 		},
 		{
+			"include": "#strings"
+		},
+		{
 			"include": "#comments"
 		}
 	],
@@ -162,6 +165,17 @@
 				{
 					"name": "constant.numeric.quartz-hdl",
 					"match": "\\b(([0-9][_0-9]*)|(0[xX][0-9a-fA-F][_0-9a-fA-F]*)|(0[bB][01][_01]*))\\b"
+				}
+			]
+		},
+		"strings": {
+			"name": "string.quoted.double.quartz-hdl",
+			"begin": "\"",
+			"end": "\"",
+			"patterns": [
+				{
+					"name": "constant.character.escape.quartz-hdl",
+					"match": "\\\\."
 				}
 			]
 		},

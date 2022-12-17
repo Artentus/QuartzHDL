@@ -1,6 +1,7 @@
 use langbox::{FileServer, TextSpan};
 use std::borrow::Cow;
 use std::io::Result;
+use std::ops::Range;
 use termcolor::{StandardStreamLock, WriteColor};
 
 #[doc(hidden)]
@@ -73,6 +74,7 @@ macro_rules! writeln_styled {
 struct ErrorInfo<'a> {
     msg: Cow<'a, str>,
     span: TextSpan,
+    slice: Option<Range<usize>>,
 }
 
 impl<'a> ErrorInfo<'a> {
@@ -81,6 +83,16 @@ impl<'a> ErrorInfo<'a> {
         Self {
             msg: msg.into(),
             span,
+            slice: None,
+        }
+    }
+
+    #[inline]
+    fn new_slice(msg: impl Into<Cow<'a, str>>, span: TextSpan, slice: Range<usize>) -> Self {
+        Self {
+            msg: msg.into(),
+            span,
+            slice: Some(slice),
         }
     }
 }
@@ -99,10 +111,46 @@ fn _write_error(
 
     let file = file_server.get_file(info.span.file_id()).unwrap();
 
-    let (start_line, start_column) = info.span.start_pos().line_column(file_server);
-    let (start_line, start_column) = (start_line as usize, start_column as usize);
+    let (mut start_line, mut start_column) = info.span.start_pos().line_column(file_server);
 
-    let (end_line, end_column) = info.span.end_pos().line_column(file_server);
+    let mut end_line;
+    let mut end_column;
+    if let Some(slice) = &info.slice {
+        let text = info.span.text(file_server);
+        let mut chars = text.char_indices();
+
+        while let Some((i, c)) = chars.next() {
+            if i >= slice.start {
+                break;
+            }
+
+            if c == '\n' {
+                start_line += 1;
+                start_column = 0;
+            } else {
+                start_column += 1;
+            }
+        }
+
+        end_line = start_line;
+        end_column = start_column;
+        while let Some((i, c)) = chars.next() {
+            if c == '\n' {
+                end_line += 1;
+                end_column = 0;
+            } else {
+                end_column += 1;
+            }
+
+            if i >= slice.end {
+                break;
+            }
+        }
+    } else {
+        (end_line, end_column) = info.span.end_pos().line_column(file_server);
+    }
+
+    let (start_line, start_column) = (start_line as usize, start_column as usize);
     let (end_line, end_column) = (end_line as usize, end_column as usize);
 
     let line_count = end_line - start_line + 1;
@@ -596,6 +644,34 @@ impl WriteColored for crate::lexer::QuartzLexerError {
             }
             Self::InvalidLiteral { literal, span } => {
                 ErrorInfo::new(format!("`{}` is not a valid literal", literal), *span)
+            }
+            Self::InvalidString {
+                span,
+                invalid_escape_offsets,
+                is_open,
+                ..
+            } => {
+                for offset in invalid_escape_offsets {
+                    _write_error(
+                        &ErrorInfo::new_slice(
+                            "invalid escape sequence",
+                            *span,
+                            *offset..(*offset + 2),
+                        ),
+                        stream,
+                        file_server,
+                    )?;
+                }
+
+                if *is_open {
+                    _write_error(
+                        &ErrorInfo::new("open string literal", *span),
+                        stream,
+                        file_server,
+                    )?;
+                }
+
+                return Ok(());
             }
             Self::InvalidChar { char, span } => {
                 ErrorInfo::new(format!("invalid character `{}`", char), *span)
