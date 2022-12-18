@@ -135,6 +135,7 @@ impl VBinaryExpr {
 pub enum VExpr {
     Value(i64),
     Literal(VLiteral),
+    HighZLiteral(u64),
     Ident(SharedString),
     Index(VIndexExpr),
     MemberAccess(VMemberAccessExpr),
@@ -178,6 +179,21 @@ impl VBlock {
     #[inline]
     pub fn statements(&self) -> &[VStatement] {
         &self.statements
+    }
+
+    pub fn with_highz_assign_statements(
+        self,
+        mut highz_assign_statements: Vec<VStatement>,
+    ) -> Self {
+        if highz_assign_statements.is_empty() {
+            self
+        } else {
+            highz_assign_statements.extend(self.statements.into_iter());
+
+            Self {
+                statements: highz_assign_statements,
+            }
+        }
     }
 }
 

@@ -53,6 +53,7 @@ fn typecheck_unary_expr<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
+    assigned_tristate_ports: &mut HashSet<SharedString>,
 ) -> QuartzResult<'a, Either<ConstUnaryExpr, CheckedUnaryExpr>> {
     let inner = typecheck_expr(
         expr.inner(),
@@ -62,7 +63,9 @@ fn typecheck_unary_expr<'a>(
         known_types,
         resolved_types,
         args,
+        assigned_tristate_ports,
     )?;
+
     match inner {
         Either::Const(inner) => Ok(Either::Const(ConstUnaryExpr::new(inner, expr.span()))),
         Either::Checked(inner) => {
@@ -90,6 +93,7 @@ fn typecheck_binary_expr<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
+    assigned_tristate_ports: &mut HashSet<SharedString>,
 ) -> QuartzResult<'a, Either<ConstBinaryExpr, CheckedBinaryExpr>> {
     let mut errors = Vec::new();
 
@@ -101,6 +105,7 @@ fn typecheck_binary_expr<'a>(
         known_types,
         resolved_types,
         args,
+        assigned_tristate_ports,
     ) {
         Ok(lhs) => Some(lhs),
         Err(err) => {
@@ -117,6 +122,7 @@ fn typecheck_binary_expr<'a>(
         known_types,
         resolved_types,
         args,
+        assigned_tristate_ports,
     ) {
         Ok(rhs) => Some(rhs),
         Err(err) => {
@@ -199,6 +205,7 @@ fn typecheck_compare_expr<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
+    assigned_tristate_ports: &mut HashSet<SharedString>,
 ) -> QuartzResult<'a, Either<ConstBinaryExpr, CheckedBinaryExpr>> {
     let mut errors = Vec::new();
 
@@ -210,6 +217,7 @@ fn typecheck_compare_expr<'a>(
         known_types,
         resolved_types,
         args,
+        assigned_tristate_ports,
     ) {
         Ok(lhs) => Some(lhs),
         Err(err) => {
@@ -226,6 +234,7 @@ fn typecheck_compare_expr<'a>(
         known_types,
         resolved_types,
         args,
+        assigned_tristate_ports,
     ) {
         Ok(rhs) => Some(rhs),
         Err(err) => {
@@ -320,6 +329,7 @@ fn typecheck_concat_expr<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
+    assigned_tristate_ports: &mut HashSet<SharedString>,
 ) -> QuartzResult<'a, CheckedConcatExpr> {
     let mut errors = Vec::new();
 
@@ -331,6 +341,7 @@ fn typecheck_concat_expr<'a>(
         known_types,
         resolved_types,
         args,
+        assigned_tristate_ports,
     ) {
         Ok(lhs) => Some(lhs),
         Err(err) => {
@@ -347,6 +358,7 @@ fn typecheck_concat_expr<'a>(
         known_types,
         resolved_types,
         args,
+        assigned_tristate_ports,
     ) {
         Ok(rhs) => Some(rhs),
         Err(err) => {
@@ -402,6 +414,7 @@ fn typecheck_cast_expr<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
+    assigned_tristate_ports: &mut HashSet<SharedString>,
 ) -> QuartzResult<'a, CheckedCastExpr> {
     let value = typecheck_expr(
         expr.value(),
@@ -411,6 +424,7 @@ fn typecheck_cast_expr<'a>(
         known_types,
         resolved_types,
         args,
+        assigned_tristate_ports,
     )?;
 
     let target_id = expr.resolved_ty().expect("type not properly resolved");
@@ -488,6 +502,7 @@ fn typecheck_construct_expr<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
+    assigned_tristate_ports: &mut HashSet<SharedString>,
 ) -> QuartzResult<'a, CheckedConstructExpr> {
     let id = expr.resolved_ty().expect("type not properly resolved");
     let ty = &known_types[&id];
@@ -524,6 +539,7 @@ fn typecheck_construct_expr<'a>(
                                     known_types,
                                     resolved_types,
                                     args,
+                                    assigned_tristate_ports,
                                 );
 
                                 match value {
@@ -682,6 +698,7 @@ fn typecheck_indexer<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
+    assigned_tristate_ports: &mut HashSet<SharedString>,
 ) -> QuartzResult<'a, (CheckedIndexKind, TypeId)> {
     match indexer.index() {
         IndexKind::Single(index_expr) => {
@@ -693,6 +710,7 @@ fn typecheck_indexer<'a>(
                 known_types,
                 resolved_types,
                 args,
+                assigned_tristate_ports,
             )?;
 
             match index {
@@ -859,6 +877,7 @@ fn typecheck_index_expr<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
+    assigned_tristate_ports: &mut HashSet<SharedString>,
 ) -> QuartzResult<'a, CheckedIndexExpr> {
     let base = typecheck_expr(
         expr.base(),
@@ -868,6 +887,7 @@ fn typecheck_index_expr<'a>(
         known_types,
         resolved_types,
         args,
+        assigned_tristate_ports,
     )?;
     let base = merge_expr(base, args)?;
 
@@ -880,6 +900,7 @@ fn typecheck_index_expr<'a>(
         known_types,
         resolved_types,
         args,
+        assigned_tristate_ports,
     )?;
 
     Ok(CheckedIndexExpr::new(base, indexer, ty))
@@ -893,6 +914,7 @@ fn typecheck_member_access_expr<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
+    assigned_tristate_ports: &mut HashSet<SharedString>,
 ) -> QuartzResult<'a, CheckedMemberAccessExpr> {
     let base = typecheck_expr(
         expr.base(),
@@ -902,6 +924,7 @@ fn typecheck_member_access_expr<'a>(
         known_types,
         resolved_types,
         args,
+        assigned_tristate_ports,
     )?;
     let base = merge_expr(base, args)?;
 
@@ -927,6 +950,7 @@ fn typecheck_if_expr<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
+    assigned_tristate_ports: &mut HashSet<SharedString>,
 ) -> QuartzResult<'a, CheckedIfExpr> {
     let mut errors = Vec::new();
 
@@ -938,6 +962,7 @@ fn typecheck_if_expr<'a>(
         known_types,
         resolved_types,
         args,
+        assigned_tristate_ports,
     ) {
         Ok(cond) => match merge_expr(cond, args) {
             Ok(cond) => {
@@ -972,6 +997,7 @@ fn typecheck_if_expr<'a>(
         known_types,
         resolved_types,
         args,
+        assigned_tristate_ports,
     ) {
         Ok(body) => Some(body),
         Err(err) => {
@@ -990,6 +1016,7 @@ fn typecheck_if_expr<'a>(
             known_types,
             resolved_types,
             args,
+            assigned_tristate_ports,
         ) {
             Ok(cond) => match merge_expr(cond, args) {
                 Ok(cond) => {
@@ -1024,6 +1051,7 @@ fn typecheck_if_expr<'a>(
             known_types,
             resolved_types,
             args,
+            assigned_tristate_ports,
         ) {
             Ok(body) => Some(body),
             Err(err) => {
@@ -1046,6 +1074,7 @@ fn typecheck_if_expr<'a>(
             known_types,
             resolved_types,
             args,
+            assigned_tristate_ports,
         ) {
             Ok(body) => Some(CheckedIfExprElseBlock::new(body)),
             Err(err) => {
@@ -1284,6 +1313,7 @@ fn typecheck_match_expr<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
+    assigned_tristate_ports: &mut HashSet<SharedString>,
 ) -> QuartzResult<'a, CheckedMatchExpr> {
     let mut errors = Vec::new();
 
@@ -1295,6 +1325,7 @@ fn typecheck_match_expr<'a>(
         known_types,
         resolved_types,
         args,
+        assigned_tristate_ports,
     ) {
         Ok(value) => match merge_expr(value, args) {
             Ok(value) => Some(value),
@@ -1322,6 +1353,7 @@ fn typecheck_match_expr<'a>(
                     known_types,
                     resolved_types,
                     args,
+                    assigned_tristate_ports,
                 ) {
                     Ok(body_expr) => match merge_expr(body_expr, args) {
                         Ok(body_expr) => CheckedMatchExprBranch::new(
@@ -1348,6 +1380,7 @@ fn typecheck_match_expr<'a>(
                     known_types,
                     resolved_types,
                     args,
+                    assigned_tristate_ports,
                 ) {
                     Ok(body) => CheckedMatchExprBranch::new(
                         branch.patterns().to_vec(),
@@ -1437,6 +1470,7 @@ fn typecheck_expr<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
+    assigned_tristate_ports: &mut HashSet<SharedString>,
 ) -> QuartzResult<'a, Either<ConstExpr, CheckedExpr>> {
     macro_rules! wrap_expr {
         ($inner:expr, $variant:ident) => {
@@ -1457,6 +1491,7 @@ fn typecheck_expr<'a>(
                 known_types,
                 resolved_types,
                 args,
+                assigned_tristate_ports,
             )?;
             Ok(wrap_expr!(inner, $op))
         }};
@@ -1472,6 +1507,7 @@ fn typecheck_expr<'a>(
                 known_types,
                 resolved_types,
                 args,
+                assigned_tristate_ports,
             )?;
             Ok(wrap_expr!(inner, $op))
         }};
@@ -1487,6 +1523,7 @@ fn typecheck_expr<'a>(
                 known_types,
                 resolved_types,
                 args,
+                assigned_tristate_ports,
             )?;
             Ok(wrap_expr!(inner, $op))
         }};
@@ -1502,6 +1539,7 @@ fn typecheck_expr<'a>(
                 known_types,
                 resolved_types,
                 args,
+                assigned_tristate_ports,
             )?;
             match inner {
                 Either::Const(_) => Err(QuartzError::InvalidConstOp { op: $expr.op() }),
@@ -1525,6 +1563,7 @@ fn typecheck_expr<'a>(
                 known_types,
                 resolved_types,
                 args,
+                assigned_tristate_ports,
             )?;
             Ok(Either::Checked(CheckedExpr::If(if_expr)))
         }
@@ -1537,6 +1576,7 @@ fn typecheck_expr<'a>(
                 known_types,
                 resolved_types,
                 args,
+                assigned_tristate_ports,
             )?;
             Ok(Either::Checked(CheckedExpr::Match(match_expr)))
         }
@@ -1549,6 +1589,7 @@ fn typecheck_expr<'a>(
                 known_types,
                 resolved_types,
                 args,
+                assigned_tristate_ports,
             )?;
             Ok(Either::Checked(CheckedExpr::Block(block)))
         }
@@ -1561,6 +1602,7 @@ fn typecheck_expr<'a>(
                 known_types,
                 resolved_types,
                 args,
+                assigned_tristate_ports,
             )?;
             Ok(Either::Checked(CheckedExpr::Index(index_expr)))
         }
@@ -1573,6 +1615,7 @@ fn typecheck_expr<'a>(
                 known_types,
                 resolved_types,
                 args,
+                assigned_tristate_ports,
             )?;
             Ok(Either::Checked(CheckedExpr::MemberAccess(
                 member_access_expr,
@@ -1591,6 +1634,7 @@ fn typecheck_expr<'a>(
                 known_types,
                 resolved_types,
                 args,
+                assigned_tristate_ports,
             )?;
             Ok(Either::Checked(CheckedExpr::Construct(construct_expr)))
         }
@@ -1603,6 +1647,7 @@ fn typecheck_expr<'a>(
                 known_types,
                 resolved_types,
                 args,
+                assigned_tristate_ports,
             )?;
             Ok(Either::Checked(CheckedExpr::Cast(cast_expr)))
         }
@@ -1615,6 +1660,7 @@ fn typecheck_expr<'a>(
                 known_types,
                 resolved_types,
                 args,
+                assigned_tristate_ports,
             )?;
             Ok(Either::Checked(CheckedExpr::Concat(concat_expr)))
         }
@@ -1626,6 +1672,7 @@ fn typecheck_expr<'a>(
             known_types,
             resolved_types,
             args,
+            assigned_tristate_ports,
         ),
         Expr::Paren(expr) => typecheck_expr(
             expr.inner(),
@@ -1635,6 +1682,7 @@ fn typecheck_expr<'a>(
             known_types,
             resolved_types,
             args,
+            assigned_tristate_ports,
         ),
         Expr::Neg(expr) => unary_expr!(expr, Neg),
         Expr::Not(expr) => unary_expr!(expr, Not),
@@ -1670,6 +1718,7 @@ fn typecheck_if_statement<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
+    assigned_tristate_ports: &mut HashSet<SharedString>,
 ) -> QuartzResult<'a, CheckedIfStatement> {
     let mut errors = Vec::new();
 
@@ -1681,6 +1730,7 @@ fn typecheck_if_statement<'a>(
         known_types,
         resolved_types,
         args,
+        assigned_tristate_ports,
     ) {
         Ok(cond) => match merge_expr(cond, args) {
             Ok(cond) => {
@@ -1715,6 +1765,7 @@ fn typecheck_if_statement<'a>(
         known_types,
         resolved_types,
         args,
+        assigned_tristate_ports,
     ) {
         Ok(body) => Some(body),
         Err(err) => {
@@ -1733,6 +1784,7 @@ fn typecheck_if_statement<'a>(
             known_types,
             resolved_types,
             args,
+            assigned_tristate_ports,
         ) {
             Ok(cond) => match merge_expr(cond, args) {
                 Ok(cond) => {
@@ -1767,6 +1819,7 @@ fn typecheck_if_statement<'a>(
             known_types,
             resolved_types,
             args,
+            assigned_tristate_ports,
         ) {
             Ok(body) => Some(body),
             Err(err) => {
@@ -1789,6 +1842,7 @@ fn typecheck_if_statement<'a>(
             known_types,
             resolved_types,
             args,
+            assigned_tristate_ports,
         ) {
             Ok(body) => Some(CheckedIfStatementElseBlock::new(body)),
             Err(err) => {
@@ -1814,6 +1868,7 @@ fn typecheck_match_statement<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
+    assigned_tristate_ports: &mut HashSet<SharedString>,
 ) -> QuartzResult<'a, CheckedMatchStatement> {
     let mut errors = Vec::new();
 
@@ -1825,6 +1880,7 @@ fn typecheck_match_statement<'a>(
         known_types,
         resolved_types,
         args,
+        assigned_tristate_ports,
     ) {
         Ok(value) => match merge_expr(value, args) {
             Ok(value) => Some(value),
@@ -1853,6 +1909,7 @@ fn typecheck_match_statement<'a>(
                     known_types,
                     resolved_types,
                     args,
+                    assigned_tristate_ports,
                 ) {
                     Ok(_) => {}
                     Err(err) => errors.push(err),
@@ -1867,6 +1924,7 @@ fn typecheck_match_statement<'a>(
                     known_types,
                     resolved_types,
                     args,
+                    assigned_tristate_ports,
                 ) {
                     Ok(body) => {
                         branches.push(CheckedMatchStatementBranch::new(
@@ -1926,6 +1984,7 @@ fn typecheck_assign_target<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
+    assigned_tristate_ports: &mut HashSet<SharedString>,
 ) -> QuartzResult<'a, CheckedAssignTarget> {
     let mut errors = Vec::new();
 
@@ -1954,6 +2013,7 @@ fn typecheck_assign_target<'a>(
                             known_types,
                             resolved_types,
                             args,
+                            assigned_tristate_ports,
                         ) {
                             Ok(val) => val,
                             Err(err) => {
@@ -2009,6 +2069,7 @@ fn typecheck_assignment<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
+    assigned_tristate_ports: &mut HashSet<SharedString>,
 ) -> QuartzResult<'a, CheckedAssignment> {
     let mut errors = Vec::new();
 
@@ -2032,6 +2093,7 @@ fn typecheck_assignment<'a>(
         known_types,
         resolved_types,
         args,
+        assigned_tristate_ports,
     ) {
         Ok(value) => match merge_expr(value, args) {
             Ok(value) => Some(value),
@@ -2061,6 +2123,9 @@ fn typecheck_assignment<'a>(
                 (TypecheckMode::Combinatoric, LogicKind::Register, _) => {
                     errors.push(QuartzError::InvalidCombAssignReg { assign })
                 }
+                (TypecheckMode::Combinatoric, LogicKind::Signal, Some(Direction::InOut)) => {
+                    assigned_tristate_ports.insert(base.as_string());
+                }
                 _ => { /* valid */ }
             }
 
@@ -2079,6 +2144,7 @@ fn typecheck_assignment<'a>(
                             known_types,
                             resolved_types,
                             args,
+                            assigned_tristate_ports,
                         ) {
                             Ok(val) => val,
                             Err(err) => {
@@ -2144,6 +2210,7 @@ fn typecheck_statement<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
+    assigned_tristate_ports: &mut HashSet<SharedString>,
 ) -> QuartzResult<'a, CheckedStatement> {
     match statement {
         Statement::Expr(expr) => match expr {
@@ -2156,6 +2223,7 @@ fn typecheck_statement<'a>(
                     known_types,
                     resolved_types,
                     args,
+                    assigned_tristate_ports,
                 )?;
                 Ok(CheckedStatement::If(checked_if_statement))
             }
@@ -2168,6 +2236,7 @@ fn typecheck_statement<'a>(
                     known_types,
                     resolved_types,
                     args,
+                    assigned_tristate_ports,
                 )?;
                 Ok(CheckedStatement::Match(checked_match_statement))
             }
@@ -2180,6 +2249,7 @@ fn typecheck_statement<'a>(
                     known_types,
                     resolved_types,
                     args,
+                    assigned_tristate_ports,
                 )?;
                 Ok(CheckedStatement::Block(checked_block))
             }
@@ -2192,6 +2262,7 @@ fn typecheck_statement<'a>(
                     known_types,
                     resolved_types,
                     args,
+                    assigned_tristate_ports,
                 )?;
                 let checked_expr = merge_expr(checked_expr, args)?;
                 Ok(CheckedStatement::Expr(checked_expr))
@@ -2207,6 +2278,7 @@ fn typecheck_statement<'a>(
                 known_types,
                 resolved_types,
                 args,
+                assigned_tristate_ports,
             )?;
             Ok(CheckedStatement::Assignment(checked_assign))
         }
@@ -2226,6 +2298,7 @@ fn typecheck_expr_block<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
+    assigned_tristate_ports: &mut HashSet<SharedString>,
 ) -> QuartzResult<'a, CheckedExprBlock> {
     let mut errors = Vec::new();
     let scope = Scope::new(parent_scope);
@@ -2240,6 +2313,7 @@ fn typecheck_expr_block<'a>(
             known_types,
             resolved_types,
             args,
+            assigned_tristate_ports,
         ) {
             Ok(statement) => statements.push(statement),
             Err(err) => errors.push(err),
@@ -2256,6 +2330,7 @@ fn typecheck_expr_block<'a>(
                 known_types,
                 resolved_types,
                 args,
+                assigned_tristate_ports,
             );
 
             match result {
@@ -2288,6 +2363,7 @@ fn typecheck_block<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
+    assigned_tristate_ports: &mut HashSet<SharedString>,
 ) -> QuartzResult<'a, CheckedBlock> {
     let mut errors = Vec::new();
     let scope = Scope::new(parent_scope);
@@ -2302,6 +2378,7 @@ fn typecheck_block<'a>(
             known_types,
             resolved_types,
             args,
+            assigned_tristate_ports,
         ) {
             Ok(statement) => statements.push(statement),
             Err(err) => errors.push(err),
@@ -2320,6 +2397,7 @@ fn typecheck_block<'a>(
                     known_types,
                     resolved_types,
                     args,
+                    assigned_tristate_ports,
                 ) {
                     Ok(result_if_statement) => {
                         statements.push(CheckedStatement::If(result_if_statement))
@@ -2336,6 +2414,7 @@ fn typecheck_block<'a>(
                     known_types,
                     resolved_types,
                     args,
+                    assigned_tristate_ports,
                 ) {
                     Ok(result_match_statement) => {
                         statements.push(CheckedStatement::Match(result_match_statement))
@@ -2352,6 +2431,7 @@ fn typecheck_block<'a>(
                     known_types,
                     resolved_types,
                     args,
+                    assigned_tristate_ports,
                 ) {
                     Ok(result_block) => statements.push(CheckedStatement::Block(result_block)),
                     Err(err) => errors.push(err),
@@ -2366,6 +2446,7 @@ fn typecheck_block<'a>(
                     known_types,
                     resolved_types,
                     args,
+                    assigned_tristate_ports,
                 ) {
                     errors.push(err);
                 }
@@ -2478,6 +2559,8 @@ pub fn typecheck_module<'a>(
 
     let mut proc_members = Vec::with_capacity(module_item.proc_members().len());
     for proc_member in module_item.proc_members() {
+        let mut assigned_tristate_ports = HashSet::default();
+
         let mut sens = Vec::with_capacity(proc_member.sens().len());
         for s in proc_member.sens() {
             match typecheck_assign_target(
@@ -2488,6 +2571,7 @@ pub fn typecheck_module<'a>(
                 known_types,
                 resolved_types,
                 &args,
+                &mut assigned_tristate_ports,
             ) {
                 Ok(target) => {
                     let target_ty = &known_types[&target.ty()];
@@ -2504,6 +2588,11 @@ pub fn typecheck_module<'a>(
             }
         }
 
+        assert!(
+            assigned_tristate_ports.is_empty(),
+            "invalid assignments to tristate ports in sensitivity list"
+        );
+
         match typecheck_block(
             proc_member.body(),
             module_item,
@@ -2512,16 +2601,24 @@ pub fn typecheck_module<'a>(
             known_types,
             resolved_types,
             &args,
+            &mut assigned_tristate_ports,
         ) {
             Ok(body) => {
                 proc_members.push(CheckedProcMember::new(sens, body));
             }
             Err(err) => errors.push(err),
         }
+
+        assert!(
+            assigned_tristate_ports.is_empty(),
+            "invalid sequential assignments to tristate ports"
+        );
     }
 
     let mut comb_members = Vec::with_capacity(module_item.comb_members().len());
     for comb_member in module_item.comb_members() {
+        let mut assigned_tristate_ports = HashSet::default();
+
         match typecheck_block(
             comb_member.body(),
             module_item,
@@ -2530,9 +2627,10 @@ pub fn typecheck_module<'a>(
             known_types,
             resolved_types,
             &args,
+            &mut assigned_tristate_ports,
         ) {
             Ok(body) => {
-                comb_members.push(CheckedCombMember::new(body));
+                comb_members.push(CheckedCombMember::new(body, assigned_tristate_ports));
             }
             Err(err) => errors.push(err),
         }
