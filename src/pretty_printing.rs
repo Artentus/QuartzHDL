@@ -537,6 +537,10 @@ impl WriteColored for crate::error::QuartzError<'_> {
                 "cannot assign to signal in sequential context",
                 assign.target().span().join(&assign.op().span()),
             ),
+            Self::InvalidCombAssignIn { assign } => ErrorInfo::new(
+                "cannot assign to input port",
+                assign.target().span().join(&assign.op().span()),
+            ),
             Self::InvalidCombAssignReg { assign } => ErrorInfo::new(
                 "cannot assign to register in combinatoric context",
                 assign.target().span().join(&assign.op().span()),

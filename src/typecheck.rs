@@ -576,11 +576,11 @@ fn find_module_member_type<'a>(
     module: &ResolvedModule,
     module_id: Option<TypeId>,
     known_types: &HashMap<TypeId, ResolvedType>,
-) -> QuartzResult<'a, (TypeId, LogicKind)> {
+) -> QuartzResult<'a, (TypeId, LogicKind, Option<Direction>)> {
     if let Some(port) = module.ports().get(ident.as_ref()) {
-        Ok((port.ty(), port.kind()))
+        Ok((port.ty(), port.kind(), Some(port.dir())))
     } else if let Some(member) = module.logic_members().get(ident.as_ref()) {
-        Ok((member.ty(), member.kind()))
+        Ok((member.ty(), member.kind(), None))
     } else if let Some(module_id) = module_id {
         Err(QuartzError::UndefinedMember {
             ty: known_types[&module_id].to_string(known_types),
@@ -1938,7 +1938,7 @@ fn typecheck_assign_target<'a>(
     let base = assign_target.path().head();
 
     match find_module_member_type(base, parent_module, None, known_types) {
-        Ok((base_ty, _)) => {
+        Ok((base_ty, _, _)) => {
             let mut ty = base_ty;
             let mut suffixes = Vec::new();
             for suffix in assign_target.suffixes().iter() {
@@ -2047,15 +2047,18 @@ fn typecheck_assignment<'a>(
     };
 
     match find_module_member_type(base, parent_module, None, known_types) {
-        Ok((base_ty, kind)) => {
-            match (mode, kind) {
-                (TypecheckMode::Sequential, LogicKind::Signal) => {
+        Ok((base_ty, kind, dir)) => {
+            match (mode, kind, dir) {
+                (TypecheckMode::Sequential, LogicKind::Signal, _) => {
                     errors.push(QuartzError::InvalidSeqAssignSig { assign })
                 }
-                (TypecheckMode::Sequential, LogicKind::Module) => {
+                (TypecheckMode::Sequential, LogicKind::Module, _) => {
                     errors.push(QuartzError::InvalidSeqAssignMod { assign })
                 }
-                (TypecheckMode::Combinatoric, LogicKind::Register) => {
+                (TypecheckMode::Combinatoric, LogicKind::Signal, Some(Direction::In)) => {
+                    errors.push(QuartzError::InvalidCombAssignIn { assign })
+                }
+                (TypecheckMode::Combinatoric, LogicKind::Register, _) => {
                     errors.push(QuartzError::InvalidCombAssignReg { assign })
                 }
                 _ => { /* valid */ }

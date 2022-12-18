@@ -182,6 +182,9 @@ pub enum QuartzError<'a> {
     InvalidSeqAssignMod {
         assign: &'a Assignment,
     },
+    InvalidCombAssignIn {
+        assign: &'a Assignment,
+    },
     InvalidCombAssignReg {
         assign: &'a Assignment,
     },
