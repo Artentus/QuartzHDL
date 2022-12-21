@@ -914,7 +914,6 @@ fn port_mode() -> impl QuartzParser<PortMode> {
     choice!(
         parser!({kw(KeywordKind::In)}->[|kw| PortMode::new(Direction::In, kw.span())]),
         parser!({kw(KeywordKind::Out)}->[|kw| PortMode::new(Direction::Out, kw.span())]),
-        parser!({kw(KeywordKind::InOut)}->[|kw| PortMode::new(Direction::InOut, kw.span())]),
     )
 }
 
@@ -952,7 +951,12 @@ fn member() -> impl QuartzParser<Member> {
     );
 
     let sens = parser!(
-        (edge <.> {punct(PunctKind::OpenParen)} <.> {assign_target()} <.> {punct(PunctKind::CloseParen)})
+        (
+            edge
+            <.> {punct(PunctKind::OpenParen)}!![err!("expected `(`")]
+            <.> {assign_target()}!![err!("expected signal")]
+            <.> {punct(PunctKind::CloseParen)}!![err!("expected `)`")]
+        )
         ->[|(((edge, open_paren), sig), close_paren)| Sens::new(edge, open_paren, sig, close_paren)]
     );
 
@@ -960,13 +964,13 @@ fn member() -> impl QuartzParser<Member> {
         (
             {kw(KeywordKind::Proc)}
             <.> {sep_by(sens, punct(PunctKind::Or), false, false)}!![err!("expected sensitivity list")]
-            <.> {block()}
+            <.> {block()}!![err!("expected block")]
         )
         ->[|((proc_kw, sens), body)| ProcMember::new(proc_kw, sens, body)]
     );
 
     let comb = parser!(
-        ({kw(KeywordKind::Comb)} <.> {block()})
+        ({kw(KeywordKind::Comb)} <.> {block()}!![err!("expected block")])
         ->[|(comb_kw, body)| CombMember::new(comb_kw, body)]
     );
 

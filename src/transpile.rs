@@ -252,7 +252,6 @@ pub fn transpile(
             match port.dir() {
                 Direction::In => write!(writer, "    input var ")?,
                 Direction::Out => write!(writer, "    output var ")?,
-                Direction::InOut => write!(writer, "    inout tri ")?,
             }
 
             let port_type_name = get_transpiled_type_name(port.ty(), known_types);
@@ -309,10 +308,12 @@ pub fn transpile(
 
                 // FIXME: these assignments do not work if we have a module array
                 for (i, (port_name, _)) in member_module_item.ports().iter().enumerate() {
+                    write!(writer, "    .{port_name}({member_name}.{port_name})")?;
+
                     if (i as isize) >= ((member_module_item.ports().len() as isize) - 1) {
-                        writeln!(writer, "    .{port_name}({member_name}.{port_name})")?;
+                        writeln!(writer)?;
                     } else {
-                        writeln!(writer, "    .{port_name}({member_name}.{port_name}),")?;
+                        writeln!(writer, ",")?;
                     }
                 }
 
@@ -404,6 +405,32 @@ pub fn transpile(
 
             writeln!(writer, "end\n")?;
         }
+
+        for assign_member in module.assign_members() {
+            write!(writer, "assign ")?;
+
+            write!(writer, "{}", assign_member.target().base())?;
+            for suffix in assign_member.target().suffixes() {
+                match suffix {
+                    VSuffixOp::Indexer(VIndexKind::Single(index)) => {
+                        write!(writer, "[")?;
+                        transpile_expr(writer, index)?;
+                        write!(writer, "]")?;
+                    }
+                    VSuffixOp::Indexer(VIndexKind::Range(range)) => {
+                        write!(writer, "[{}:{}]", range.end - 1, range.start)?;
+                    }
+                    VSuffixOp::MemberAccess(member) => write!(writer, ".{member}")?,
+                }
+            }
+
+            write!(writer, " = ")?;
+            transpile_expr(writer, assign_member.condition())?;
+            write!(writer, " ? ")?;
+            transpile_expr(writer, assign_member.value())?;
+            writeln!(writer, ": 'bz;")?
+        }
+        writeln!(writer)?;
 
         writeln!(writer, "endmodule\n")?;
     }

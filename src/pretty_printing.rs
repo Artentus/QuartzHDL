@@ -529,19 +529,15 @@ impl WriteColored for crate::error::QuartzError<'_> {
                 ),
                 assign.op().span(),
             ),
-            Self::InvalidSeqAssignSig { assign } => ErrorInfo::new(
-                "cannot assign to signal in sequential context",
-                assign.target().span().join(&assign.op().span()),
-            ),
-            Self::InvalidSeqAssignMod { assign } => ErrorInfo::new(
-                "cannot assign to signal in sequential context",
-                assign.target().span().join(&assign.op().span()),
-            ),
-            Self::InvalidCombAssignIn { assign } => ErrorInfo::new(
+            Self::InvalidAssignIn { assign } => ErrorInfo::new(
                 "cannot assign to input port",
                 assign.target().span().join(&assign.op().span()),
             ),
-            Self::InvalidCombAssignReg { assign } => ErrorInfo::new(
+            Self::InvalidSeqAssign { assign } => ErrorInfo::new(
+                "cannot assign to signal in sequential context",
+                assign.target().span().join(&assign.op().span()),
+            ),
+            Self::InvalidCombAssign { assign } => ErrorInfo::new(
                 "cannot assign to register in combinatoric context",
                 assign.target().span().join(&assign.op().span()),
             ),
@@ -554,7 +550,6 @@ impl WriteColored for crate::error::QuartzError<'_> {
                 let dir_str = match port_dir {
                     Direction::In => "input",
                     Direction::Out => "output",
-                    Direction::InOut => "bi-directional",
                 };
 
                 use crate::ast::LogicKind;

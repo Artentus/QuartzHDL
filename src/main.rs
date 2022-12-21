@@ -372,12 +372,7 @@ fn main() -> std::io::Result<()> {
 
             let mut v_modules = Vec::with_capacity(checked_modules.len());
             for (module_ty, checked_module) in checked_modules.iter() {
-                let ir::ResolvedTypeItem::Module(rmodule) = &resolved_types[module_ty] else {
-                    unreachable!();
-                };
-
-                let v_module =
-                    lowering::lower(checked_module, rmodule, &known_types, &resolved_types);
+                let v_module = lowering::lower(checked_module, &known_types, &resolved_types);
                 v_modules.push((*module_ty, v_module));
             }
 

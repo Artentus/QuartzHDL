@@ -1216,6 +1216,39 @@ fn resolve_expr<'a>(
     wrap_errors!((), errors)
 }
 
+fn resolve_assign_target<'a>(
+    assign_target: &'a AssignTarget,
+    parent_id: TypeId,
+    scope: &mut Scope,
+    args: &ResolveLocalArgs,
+    registry: &mut TypeRegistry,
+) -> QuartzResult<'a, ()> {
+    let mut errors = Vec::new();
+
+    for suffix in assign_target.suffixes() {
+        match suffix {
+            SuffixOp::Indexer(indexer) => match indexer.index() {
+                IndexKind::Single(index) => {
+                    if let Err(err) = resolve_expr(index, parent_id, scope, args, registry) {
+                        errors.push(err);
+                    }
+                }
+                IndexKind::Range(range) => {
+                    if let Err(err) = resolve_expr(&range.start, parent_id, scope, args, registry) {
+                        errors.push(err);
+                    }
+                    if let Err(err) = resolve_expr(&range.end, parent_id, scope, args, registry) {
+                        errors.push(err);
+                    }
+                }
+            },
+            SuffixOp::MemberAccess(_) => {}
+        }
+    }
+
+    wrap_errors!((), errors)
+}
+
 fn resolve_statement<'a>(
     statement: &'a Statement,
     parent_id: TypeId,
@@ -1233,32 +1266,12 @@ fn resolve_statement<'a>(
 
             if let Err(err) = resolve_expr(assign.value(), parent_id, scope, args, registry) {
                 errors.push(err);
-            };
+            }
 
-            for suffix in assign.target().suffixes() {
-                match suffix {
-                    SuffixOp::Indexer(indexer) => match indexer.index() {
-                        IndexKind::Single(index) => {
-                            if let Err(err) = resolve_expr(index, parent_id, scope, args, registry)
-                            {
-                                errors.push(err);
-                            }
-                        }
-                        IndexKind::Range(range) => {
-                            if let Err(err) =
-                                resolve_expr(&range.start, parent_id, scope, args, registry)
-                            {
-                                errors.push(err);
-                            }
-                            if let Err(err) =
-                                resolve_expr(&range.end, parent_id, scope, args, registry)
-                            {
-                                errors.push(err);
-                            }
-                        }
-                    },
-                    SuffixOp::MemberAccess(_) => {}
-                }
+            if let Err(err) =
+                resolve_assign_target(assign.target(), parent_id, scope, args, registry)
+            {
+                errors.push(err);
             }
 
             wrap_errors!((), errors)
@@ -1464,17 +1477,33 @@ fn resolve_module<'a>(
                 }
             }
             MemberKind::Proc(proc_member) => {
-                let result = resolve_block(
+                let mut has_error = false;
+
+                for sens in proc_member.sens() {
+                    if let Err(err) = resolve_assign_target(
+                        sens.sig(),
+                        this_id,
+                        &mut scope,
+                        &args.to_local(&local_const_values),
+                        registry,
+                    ) {
+                        errors.push(err);
+                        has_error = true;
+                    }
+                }
+
+                if let Err(err) = resolve_block(
                     proc_member.body(),
                     this_id,
                     &scope,
                     &args.to_local(&local_const_values),
                     registry,
-                );
-
-                if let Err(err) = result {
+                ) {
                     errors.push(err);
-                } else {
+                    has_error = true;
+                }
+
+                if !has_error {
                     proc_members.push(proc_member.clone());
                 }
             }
@@ -1508,7 +1537,7 @@ fn resolve_module<'a>(
             local_const_values,
             logic_members,
             proc_members,
-            comb_members
+            comb_members,
         ),
         errors
     )

@@ -176,16 +176,13 @@ pub enum QuartzError<'a> {
     InvalidAssignOp {
         assign: &'a Assignment,
     },
-    InvalidSeqAssignSig {
+    InvalidAssignIn {
         assign: &'a Assignment,
     },
-    InvalidSeqAssignMod {
+    InvalidSeqAssign {
         assign: &'a Assignment,
     },
-    InvalidCombAssignIn {
-        assign: &'a Assignment,
-    },
-    InvalidCombAssignReg {
+    InvalidCombAssign {
         assign: &'a Assignment,
     },
     InvalidPortKind {

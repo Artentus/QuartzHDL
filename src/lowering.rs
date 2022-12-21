@@ -1187,30 +1187,8 @@ fn lower_block(
     VBlock::new(statements)
 }
 
-fn generate_highz_assign_statements(
-    port: &ResolvedPort,
-    port_name: SharedString,
-    known_types: &HashMap<TypeId, ResolvedType>,
-    _resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
-    highz_assign_statements: &mut Vec<VStatement>,
-) {
-    let port_ty = &known_types[&port.ty()];
-    match port_ty {
-        ResolvedType::Const => unreachable!("invalid port type"),
-        &ResolvedType::BuiltinBits { width } => {
-            let literal = VExpr::HighZLiteral(width);
-            let target = VAssignTarget::new(port_name, Vec::new());
-            let assign = VAssignment::new(target, VAssignMode::Combinatoric, literal);
-            highz_assign_statements.push(VStatement::Assignment(assign));
-        }
-        ResolvedType::Named { .. } => todo!( /* TODO: */ ),
-        ResolvedType::Array { .. } => todo!( /* TODO: */ ),
-    }
-}
-
 pub fn lower(
     module: &CheckedModule,
-    rmodule: &ResolvedModule,
     known_types: &HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
 ) -> VModule {
@@ -1258,17 +1236,6 @@ pub fn lower(
     }
 
     for comb_member in module.comb_members() {
-        let mut highz_assign_statements = Vec::new();
-        for assigned_tristate_port in comb_member.assigned_tristate_ports() {
-            generate_highz_assign_statements(
-                &rmodule.ports()[assigned_tristate_port.as_ref()],
-                SharedString::clone(assigned_tristate_port),
-                known_types,
-                resolved_types,
-                &mut highz_assign_statements,
-            );
-        }
-
         let mut tmp_proc_statements = Vec::new();
 
         let body = lower_block(
@@ -1281,7 +1248,7 @@ pub fn lower(
             known_types,
             resolved_types,
         );
-        comb_members.push(body.with_highz_assign_statements(highz_assign_statements));
+        comb_members.push(body);
 
         if !tmp_proc_statements.is_empty() {
             comb_members.push(VBlock::new(tmp_proc_statements));
@@ -1293,5 +1260,6 @@ pub fn lower(
         VBlock::new(tmp_comb_statements),
         ff_members,
         comb_members,
+        Vec::new(), // TODO:
     )
 }

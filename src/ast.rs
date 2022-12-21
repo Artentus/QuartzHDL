@@ -2720,7 +2720,6 @@ default_display_impl!(LogicMode);
 pub enum Direction {
     In,
     Out,
-    InOut,
 }
 
 impl DisplayScoped for Direction {
@@ -2728,7 +2727,6 @@ impl DisplayScoped for Direction {
         match self {
             Self::In => write!(f, "in"),
             Self::Out => write!(f, "out"),
-            Self::InOut => write!(f, "inout"),
         }
     }
 }

@@ -180,21 +180,6 @@ impl VBlock {
     pub fn statements(&self) -> &[VStatement] {
         &self.statements
     }
-
-    pub fn with_highz_assign_statements(
-        self,
-        mut highz_assign_statements: Vec<VStatement>,
-    ) -> Self {
-        if highz_assign_statements.is_empty() {
-            self
-        } else {
-            highz_assign_statements.extend(self.statements.into_iter());
-
-            Self {
-                statements: highz_assign_statements,
-            }
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -429,11 +414,45 @@ impl VFFMember {
 }
 
 #[derive(Debug, Clone)]
+pub struct VAssignMember {
+    target: VAssignTarget,
+    condition: VExpr,
+    value: VExpr,
+}
+
+impl VAssignMember {
+    #[inline]
+    pub fn new(target: VAssignTarget, condition: VExpr, value: VExpr) -> Self {
+        Self {
+            target,
+            condition,
+            value,
+        }
+    }
+
+    #[inline]
+    pub fn target(&self) -> &VAssignTarget {
+        &self.target
+    }
+
+    #[inline]
+    pub fn condition(&self) -> &VExpr {
+        &self.condition
+    }
+
+    #[inline]
+    pub fn value(&self) -> &VExpr {
+        &self.value
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct VModule {
     tmp_members: Vec<(SharedString, TypeId)>,
     tmp_statements: VBlock,
     ff_members: Vec<VFFMember>,
     comb_members: Vec<VBlock>,
+    assign_members: Vec<VAssignMember>,
 }
 
 impl VModule {
@@ -443,12 +462,14 @@ impl VModule {
         tmp_statements: VBlock,
         ff_members: Vec<VFFMember>,
         comb_members: Vec<VBlock>,
+        assign_members: Vec<VAssignMember>,
     ) -> Self {
         Self {
             tmp_members,
             tmp_statements,
             ff_members,
             comb_members,
+            assign_members,
         }
     }
 
@@ -470,5 +491,10 @@ impl VModule {
     #[inline]
     pub fn comb_members(&self) -> &[VBlock] {
         &self.comb_members
+    }
+
+    #[inline]
+    pub fn assign_members(&self) -> &[VAssignMember] {
+        &self.assign_members
     }
 }

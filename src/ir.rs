@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use crate::ast::*;
-use crate::{default_spanned_impl, HashMap, HashSet, SharedString};
+use crate::{default_spanned_impl, HashMap, SharedString};
 use langbox::TextSpan;
 use once_cell::sync::Lazy;
 use std::borrow::Cow;
@@ -1754,26 +1754,17 @@ impl CheckedProcMember {
 #[derive(Debug, Clone)]
 pub struct CheckedCombMember {
     body: CheckedBlock,
-    assigned_tristate_ports: HashSet<SharedString>,
 }
 
 impl CheckedCombMember {
     #[inline]
-    pub fn new(body: CheckedBlock, assigned_tristate_ports: HashSet<SharedString>) -> Self {
-        Self {
-            body,
-            assigned_tristate_ports,
-        }
+    pub fn new(body: CheckedBlock) -> Self {
+        Self { body }
     }
 
     #[inline]
     pub fn body(&self) -> &CheckedBlock {
         &self.body
-    }
-
-    #[inline]
-    pub fn assigned_tristate_ports(&self) -> &HashSet<SharedString> {
-        &self.assigned_tristate_ports
     }
 }
 
