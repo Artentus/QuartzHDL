@@ -23,7 +23,8 @@ impl<'a> TranspiledTypeName<'a> {
         if let Some(array) = self.array {
             Self {
                 base: self.base,
-                array: Some(format!("{}{}", array, new_array.into()).into()),
+                // In Verilog, array syntax is right associative, so "outer" arrays actually appear on the left.
+                array: Some(format!("{}{}", new_array.into(), array).into()),
             }
         } else {
             Self {
@@ -100,20 +101,25 @@ fn get_module_item<'a>(
     id: TypeId,
     known_types: &HashMap<TypeId, ResolvedType>,
     resolved_types: &'a HashMap<TypeId, ResolvedTypeItem>,
-) -> Option<ResolvedModuleItem<'a>> {
+) -> Option<(ResolvedModuleItem<'a>, Vec<u64>)> {
     match &known_types[&id] {
         ResolvedType::Const => None,
         ResolvedType::BuiltinBits { .. } => None,
         ResolvedType::Named { .. } => match &resolved_types[&id] {
             ResolvedTypeItem::Struct(_) => None,
             ResolvedTypeItem::Enum(_) => None,
-            ResolvedTypeItem::Module(module_item) => Some(ResolvedModuleItem::Module(module_item)),
+            ResolvedTypeItem::Module(module_item) => {
+                Some((ResolvedModuleItem::Module(module_item), Vec::new()))
+            }
             ResolvedTypeItem::ExternModule(module_item) => {
-                Some(ResolvedModuleItem::ExternModule(module_item))
+                Some((ResolvedModuleItem::ExternModule(module_item), Vec::new()))
             }
         },
-        ResolvedType::Array { item_ty, .. } => {
-            get_module_item(*item_ty, known_types, resolved_types)
+        &ResolvedType::Array { item_ty, len } => {
+            let (module_item, mut array_lengths) =
+                get_module_item(item_ty, known_types, resolved_types)?;
+            array_lengths.push(len);
+            Some((module_item, array_lengths))
         }
     }
 }
@@ -269,7 +275,7 @@ pub fn transpile(
         for (member_name, member) in module_item.logic_members() {
             let member_ty_name = get_transpiled_type_name(member.ty(), known_types);
             if member.kind() == LogicKind::Module {
-                let Some(member_module_item) = get_module_item(member.ty(), known_types, resolved_types) else {
+                let Some((member_module_item, array_lengths)) = get_module_item(member.ty(), known_types, resolved_types) else {
                     unreachable!("invalid module type");
                 };
 
@@ -298,26 +304,42 @@ pub fn transpile(
                     write!(writer, " *) ")?;
                 }
 
+                for (array_level, array_len) in array_lengths.iter().copied().rev().enumerate() {
+                    writeln!(
+                        writer,
+                        "for (genvar i{0} = 0; i{0} < {1}; i{0}++) begin",
+                        array_level, array_len
+                    )?;
+                }
+
                 writeln!(
                     writer,
-                    "{} {}__instance{} (",
+                    "{} {}__instance (",
                     member_ty_name.base(),
                     member_name,
-                    member_ty_name.array(),
                 )?;
 
-                // FIXME: these assignments do not work if we have a module array
                 for (i, (port_name, _)) in member_module_item.ports().iter().enumerate() {
-                    write!(writer, "    .{port_name}({member_name}.{port_name})")?;
+                    write!(writer, "    .{port_name}({member_name}")?;
+
+                    for i in 0..array_lengths.len() {
+                        write!(writer, "[i{i}]",)?;
+                    }
+
+                    write!(writer, ".{port_name}")?;
 
                     if (i as isize) >= ((member_module_item.ports().len() as isize) - 1) {
-                        writeln!(writer)?;
+                        writeln!(writer, ")")?;
                     } else {
-                        writeln!(writer, ",")?;
+                        writeln!(writer, "),")?;
                     }
                 }
 
                 writeln!(writer, ");")?;
+
+                for _ in 0..array_lengths.len() {
+                    writeln!(writer, "end")?;
+                }
             } else {
                 if !member.attributes().is_empty() {
                     write!(writer, "(* ")?;
