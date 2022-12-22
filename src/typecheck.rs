@@ -605,7 +605,7 @@ fn find_member_type<'a>(
         Some(ResolvedTypeItem::Module(module_item)) => {
             if let Some(port) = module_item.ports().get(ident.as_ref()) {
                 Ok((port.ty(), Some(port.dir())))
-            } else if let Some(_) = module_item.logic_members().get(ident.as_ref()) {
+            } else if module_item.logic_members().get(ident.as_ref()).is_some() {
                 Err(QuartzError::MemberNotAccessible {
                     ty: known_types[&parent_id].to_string(known_types),
                     name: ident,

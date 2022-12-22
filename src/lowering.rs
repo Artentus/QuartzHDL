@@ -2,6 +2,7 @@ use crate::ast::Path;
 use crate::ir::*;
 use crate::vir::*;
 use crate::{HashMap, SharedString};
+use std::cmp::Ordering;
 
 fn add_tmp_member(ty: TypeId, tmp_members: &mut Vec<(SharedString, TypeId)>) -> SharedString {
     let name: SharedString = format!("__tmp_{}", tmp_members.len()).into();
@@ -526,14 +527,16 @@ fn lower_cast_expr(
                 resolved_types,
             );
 
-            if target_width > value_width {
-                let padding = VExpr::Literal(VLiteral::new(0, target_width - value_width));
-                VExpr::Concat(VBinaryExpr::new(padding, value))
-            } else if target_width == value_width {
-                value
-            } else {
-                let indexer = VIndexKind::Range(((target_width - 1) as i64)..0);
-                VExpr::Index(VIndexExpr::new(value, indexer))
+            match target_width.cmp(&value_width) {
+                Ordering::Equal => value,
+                Ordering::Less => {
+                    let indexer = VIndexKind::Range(((target_width - 1) as i64)..0);
+                    VExpr::Index(VIndexExpr::new(value, indexer))
+                }
+                Ordering::Greater => {
+                    let padding = VExpr::Literal(VLiteral::new(0, target_width - value_width));
+                    VExpr::Concat(VBinaryExpr::new(padding, value))
+                }
             }
         }
         (
@@ -557,14 +560,16 @@ fn lower_cast_expr(
                     resolved_types,
                 );
 
-                if target_width > value_width {
-                    let padding = VExpr::Literal(VLiteral::new(0, target_width - value_width));
-                    VExpr::Concat(VBinaryExpr::new(padding, value))
-                } else if target_width == value_width {
-                    value
-                } else {
-                    let indexer = VIndexKind::Range(((target_width - 1) as i64)..0);
-                    VExpr::Index(VIndexExpr::new(value, indexer))
+                match target_width.cmp(&value_width) {
+                    Ordering::Equal => value,
+                    Ordering::Less => {
+                        let indexer = VIndexKind::Range(((target_width - 1) as i64)..0);
+                        VExpr::Index(VIndexExpr::new(value, indexer))
+                    }
+                    Ordering::Greater => {
+                        let padding = VExpr::Literal(VLiteral::new(0, target_width - value_width));
+                        VExpr::Concat(VBinaryExpr::new(padding, value))
+                    }
                 }
             } else {
                 unreachable!("error in type-checking cast expression");

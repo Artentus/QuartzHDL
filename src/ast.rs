@@ -2657,9 +2657,9 @@ impl DisplayScoped for AttributeList {
         write!(f, "{}{}", self.hash, self.open_bracket)?;
         for (i, attribute) in self.attributes.iter().enumerate() {
             if i == 0 {
-                write!(f, "{}", attribute)?;
+                write!(f, "{attribute}")?;
             } else {
-                write!(f, ", {}", attribute)?;
+                write!(f, ", {attribute}")?;
             }
         }
         write!(f, "{}", self.close_bracket)
@@ -2836,7 +2836,7 @@ impl Spanned for Port {
 impl DisplayScoped for Port {
     fn fmt(&self, f: &mut ScopedFormatter<'_, '_>) -> std::fmt::Result {
         for attribute_list in self.attributes.iter() {
-            writeln!(f, "{}", attribute_list)?;
+            writeln!(f, "{attribute_list}")?;
         }
 
         write!(
@@ -3246,7 +3246,7 @@ impl Spanned for Member {
 impl DisplayScoped for Member {
     fn fmt(&self, f: &mut ScopedFormatter<'_, '_>) -> std::fmt::Result {
         for attribute_list in self.attributes().iter() {
-            writeln!(f, "{}", attribute_list)?;
+            writeln!(f, "{attribute_list}")?;
         }
 
         write!(f, "{}", self.kind)
@@ -3628,7 +3628,7 @@ impl Spanned for Item {
 impl DisplayScoped for Item {
     fn fmt(&self, f: &mut ScopedFormatter<'_, '_>) -> std::fmt::Result {
         for attribute_list in self.attributes.iter() {
-            writeln!(f, "{}", attribute_list)?;
+            writeln!(f, "{attribute_list}")?;
         }
 
         write!(f, "{}", self.kind)

@@ -307,8 +307,7 @@ pub fn transpile(
                 for (array_level, array_len) in array_lengths.iter().copied().rev().enumerate() {
                     writeln!(
                         writer,
-                        "for (genvar i{0} = 0; i{0} < {1}; i{0}++) begin",
-                        array_level, array_len
+                        "for (genvar i{array_level} = 0; i{array_level} < {array_len}; i{array_level}++) begin",
                     )?;
                 }
 
@@ -488,7 +487,7 @@ fn transpile_expr(writer: &mut impl Write, expr: &VExpr) -> std::io::Result<()> 
     match expr {
         VExpr::Value(value) => write!(writer, "{value}")?,
         VExpr::Literal(literal) => write!(writer, "{literal}")?,
-        VExpr::HighZLiteral(width) => write!(writer, "{}'dZ", width)?,
+        VExpr::HighZLiteral(width) => write!(writer, "{width}'dZ")?,
         VExpr::Ident(ident) => write!(writer, "{ident}")?,
         VExpr::Index(index_expr) => {
             transpile_expr(writer, index_expr.base())?;

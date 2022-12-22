@@ -119,7 +119,7 @@ fn _write_error(
         let text = info.span.text(file_server);
         let mut chars = text.char_indices();
 
-        while let Some((i, c)) = chars.next() {
+        for (i, c) in chars.by_ref() {
             if i >= slice.start {
                 break;
             }
@@ -134,7 +134,7 @@ fn _write_error(
 
         end_line = start_line;
         end_column = start_column;
-        while let Some((i, c)) = chars.next() {
+        for (i, c) in chars.by_ref() {
             if c == '\n' {
                 end_line += 1;
                 end_column = 0;
@@ -648,10 +648,10 @@ impl WriteColored for crate::lexer::QuartzLexerError {
         let info = match self {
             Self::OpenBlockComment { span } => ErrorInfo::new("open block comment", *span),
             Self::InvalidIdent { ident, span } => {
-                ErrorInfo::new(format!("`{}` is not a valid identifier", ident), *span)
+                ErrorInfo::new(format!("`{ident}` is not a valid identifier"), *span)
             }
             Self::InvalidLiteral { literal, span } => {
-                ErrorInfo::new(format!("`{}` is not a valid literal", literal), *span)
+                ErrorInfo::new(format!("`{literal}` is not a valid literal"), *span)
             }
             Self::InvalidString {
                 span,
@@ -682,7 +682,7 @@ impl WriteColored for crate::lexer::QuartzLexerError {
                 return Ok(());
             }
             Self::InvalidChar { char, span } => {
-                ErrorInfo::new(format!("invalid character `{}`", char), *span)
+                ErrorInfo::new(format!("invalid character `{char}`"), *span)
             }
         };
         _write_error(&info, stream, file_server)
