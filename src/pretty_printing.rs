@@ -419,6 +419,15 @@ impl WriteColored for crate::error::QuartzError<'_> {
                 format!("type `{ty}` does not have a member named `{name}`"),
                 name.span(),
             ),
+            Self::MemberNotAccessible { ty, name } => {
+                ErrorInfo::new(format!("member `{}` of type `{}` is private", name.as_ref(), ty), name.span())
+            }
+            Self::MemberNotReadable { ty, name } => {
+                ErrorInfo::new(format!("member `{}` of type `{}` cannot be used as a value", name.as_ref(), ty), name.span())
+            }
+            Self::MemberNotAssignable { ty, name } => {
+                ErrorInfo::new(format!("cannot assign to member `{}` of type `{}`", name.as_ref(), ty), name.span())
+            }
             Self::InvalidIndexing { indexer, base_ty } => ErrorInfo::new(
                 format!("value of type `{base_ty}` cannot be indexed"),
                 indexer.span(),

@@ -108,6 +108,18 @@ pub enum QuartzError<'a> {
         ty: Cow<'a, str>,
         name: &'a Ident,
     },
+    MemberNotAccessible {
+        ty: Cow<'a, str>,
+        name: &'a Ident,
+    },
+    MemberNotReadable {
+        ty: Cow<'a, str>,
+        name: &'a Ident,
+    },
+    MemberNotAssignable {
+        ty: Cow<'a, str>,
+        name: &'a Ident,
+    },
     InvalidIndexing {
         indexer: &'a Indexer,
         base_ty: Cow<'a, str>,

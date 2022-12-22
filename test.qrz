@@ -141,7 +141,7 @@ mod Alu<BITS>(
 
         z = result == 0;
         s = result[BITS - 1];
-        o = (lhs_s == rhs_s) & (lhs_s == s);
+        o = (lhs_s == rhs_s) & (lhs_s != s);
 
         flags_out = match op {
             AluOp::Add | AluOp::AddC | AluOp::Sub | AluOp::SubB => Flags {

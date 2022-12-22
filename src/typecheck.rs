@@ -575,18 +575,11 @@ fn typecheck_construct_expr<'a>(
 fn find_module_member_type<'a>(
     ident: &'a Ident,
     module: &ResolvedModule,
-    module_id: Option<TypeId>,
-    known_types: &HashMap<TypeId, ResolvedType>,
 ) -> QuartzResult<'a, (TypeId, LogicKind, Option<Direction>)> {
     if let Some(port) = module.ports().get(ident.as_ref()) {
         Ok((port.ty(), port.kind(), Some(port.dir())))
     } else if let Some(member) = module.logic_members().get(ident.as_ref()) {
         Ok((member.ty(), member.kind(), None))
-    } else if let Some(module_id) = module_id {
-        Err(QuartzError::UndefinedMember {
-            ty: known_types[&module_id].to_string(known_types),
-            name: ident,
-        })
     } else {
         Err(QuartzError::UndefinedIdent { name: ident })
     }
@@ -597,11 +590,11 @@ fn find_member_type<'a>(
     parent_id: TypeId,
     known_types: &HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
-) -> QuartzResult<'a, TypeId> {
+) -> QuartzResult<'a, (TypeId, Option<Direction>)> {
     match resolved_types.get(&parent_id) {
         Some(ResolvedTypeItem::Struct(struct_item)) => {
             if let Some((field_ty, _)) = struct_item.fields().get(ident.as_ref()).copied() {
-                Ok(field_ty)
+                Ok((field_ty, None))
             } else {
                 Err(QuartzError::UndefinedMember {
                     ty: known_types[&parent_id].to_string(known_types),
@@ -610,7 +603,19 @@ fn find_member_type<'a>(
             }
         }
         Some(ResolvedTypeItem::Module(module_item)) => {
-            Ok(find_module_member_type(ident, module_item, Some(parent_id), known_types)?.0)
+            if let Some(port) = module_item.ports().get(ident.as_ref()) {
+                Ok((port.ty(), Some(port.dir())))
+            } else if let Some(_) = module_item.logic_members().get(ident.as_ref()) {
+                Err(QuartzError::MemberNotAccessible {
+                    ty: known_types[&parent_id].to_string(known_types),
+                    name: ident,
+                })
+            } else {
+                Err(QuartzError::UndefinedMember {
+                    ty: known_types[&parent_id].to_string(known_types),
+                    name: ident,
+                })
+            }
         }
         Some(_) => Err(QuartzError::UndefinedMember {
             ty: known_types[&parent_id].to_string(known_types),
@@ -644,7 +649,6 @@ fn is_valid_enum_variant<'a>(
 fn typecheck_path<'a>(
     path: &'a Path,
     parent_module: &ResolvedModule,
-    known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
 ) -> QuartzResult<'a, Either<Ident, CheckedPath>> {
@@ -654,7 +658,7 @@ fn typecheck_path<'a>(
         {
             Ok(Either::Const(ident.clone()))
         } else {
-            let ty = find_module_member_type(ident, parent_module, None, known_types)?.0;
+            let (ty, _, _) = find_module_member_type(ident, parent_module)?;
             Ok(Either::Checked(CheckedPath::new(path.clone(), ty)))
         }
     } else {
@@ -1025,18 +1029,25 @@ fn typecheck_member_access_expr<'a>(
     )?;
     let base = merge_expr(base, args)?;
 
-    let ty = find_member_type(
+    let (ty, dir) = find_member_type(
         expr.member().member(),
         base.ty(),
         known_types,
         resolved_types,
     )?;
 
-    Ok(CheckedMemberAccessExpr::new(
-        base,
-        expr.member().member().clone(),
-        ty,
-    ))
+    if let Some(Direction::In) = dir {
+        Err(QuartzError::MemberNotReadable {
+            ty: known_types[&base.ty()].to_string(known_types),
+            name: expr.member().member(),
+        })
+    } else {
+        Ok(CheckedMemberAccessExpr::new(
+            base,
+            expr.member().member().clone(),
+            ty,
+        ))
+    }
 }
 
 fn typecheck_if_expr<'a>(
@@ -1633,7 +1644,7 @@ fn typecheck_expr<'a>(
     match expr {
         Expr::Literal(l) => Ok(Either::Const(ConstExpr::Literal(*l))),
         Expr::Path(path) => {
-            let path = typecheck_path(path, parent_module, known_types, resolved_types, args)?;
+            let path = typecheck_path(path, parent_module, resolved_types, args)?;
             Ok(path.map(ConstExpr::Ident, CheckedExpr::Path))
         }
         Expr::If(expr) => {
@@ -2056,7 +2067,7 @@ fn typecheck_fixed_assign_target<'a>(
 
     let base = assign_target.path().head();
 
-    match find_module_member_type(base, parent_module, None, known_types) {
+    match find_module_member_type(base, parent_module) {
         Ok((base_ty, _, _)) => {
             let mut ty = base_ty;
             let mut suffixes = Vec::new();
@@ -2085,7 +2096,16 @@ fn typecheck_fixed_assign_target<'a>(
                             known_types,
                             resolved_types,
                         ) {
-                            Ok(ty) => ty,
+                            Ok((member_ty, dir)) => {
+                                if let Some(Direction::Out) = dir {
+                                    errors.push(QuartzError::MemberNotAssignable {
+                                        ty: known_types[&ty].to_string(known_types),
+                                        name: member.member(),
+                                    })
+                                }
+
+                                member_ty
+                            }
                             Err(err) => {
                                 errors.push(err);
                                 break;
@@ -2157,7 +2177,7 @@ fn typecheck_assignment<'a>(
         }
     };
 
-    match find_module_member_type(base, parent_module, None, known_types) {
+    match find_module_member_type(base, parent_module) {
         Ok((base_ty, kind, dir)) => {
             if let Some(Direction::In) = dir {
                 errors.push(QuartzError::InvalidAssignIn { assign });
@@ -2173,8 +2193,6 @@ fn typecheck_assignment<'a>(
                 }
                 _ => { /* valid */ }
             }
-
-            // TODO: also check full path for assignability
 
             let mut ty = base_ty;
             let mut suffixes = Vec::new();
@@ -2211,7 +2229,16 @@ fn typecheck_assignment<'a>(
                             known_types,
                             resolved_types,
                         ) {
-                            Ok(ty) => ty,
+                            Ok((member_ty, dir)) => {
+                                if let Some(Direction::Out) = dir {
+                                    errors.push(QuartzError::MemberNotAssignable {
+                                        ty: known_types[&ty].to_string(known_types),
+                                        name: member.member(),
+                                    })
+                                }
+
+                                member_ty
+                            }
                             Err(err) => {
                                 errors.push(err);
                                 break;
