@@ -2,3 +2,5 @@
 *.v
 *.sv
 .svlint.toml
+.svls.toml
+yosys.log
