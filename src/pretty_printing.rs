@@ -282,6 +282,9 @@ impl WriteColored for crate::error::QuartzError<'_> {
             Self::DuplicateIdent { name } => {
                 ErrorInfo::new(format!("`{name}` has already been defined"), name.span())
             }
+            Self::BuiltinIdent { name } => {
+                ErrorInfo::new(format!("`{name}` is a builtin type and cannot be redefined"), name.span())
+            }
             Self::InvalidConstExpr { expr } => {
                 ErrorInfo::new("expression is not valid in constant context", expr.span())
             }

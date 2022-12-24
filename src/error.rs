@@ -11,6 +11,9 @@ pub enum QuartzError<'a> {
     DuplicateIdent {
         name: &'a Ident,
     },
+    BuiltinIdent {
+        name: &'a Ident,
+    },
     InvalidConstExpr {
         expr: &'a Expr,
     },

@@ -11,16 +11,17 @@ use topological_sort::TopologicalSort;
 pub fn check_for_duplicate_items<'a>(
     items: impl Iterator<Item = &'a Item>,
 ) -> QuartzResult<'a, ()> {
+    const BUILTINS: phf::Set<&'static str> =
+        phf_macros::phf_set!("bit", "bits", "InPort", "OutPort", "InOutPort");
+
     let mut errors = Vec::new();
     let mut set = HashSet::default();
-
-    // Primitive types
-    set.insert("bit".into());
-    set.insert("bits".into());
 
     for item in items {
         if set.contains(item.name().as_ref()) {
             errors.push(QuartzError::DuplicateIdent { name: item.name() })
+        } else if BUILTINS.contains(item.name().as_ref()) {
+            errors.push(QuartzError::BuiltinIdent { name: item.name() })
         } else {
             set.insert(item.name().as_string());
         }
