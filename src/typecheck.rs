@@ -602,7 +602,8 @@ fn find_member_type<'a>(
                 })
             }
         }
-        Some(ResolvedTypeItem::Module(module_item)) => {
+        Some(ResolvedTypeItem::Module(module_item))
+        | Some(ResolvedTypeItem::TopModule(module_item)) => {
             if let Some(port) = module_item.ports().get(ident.as_ref()) {
                 Ok((port.ty(), Some(port.dir())))
             } else if module_item.logic_members().get(ident.as_ref()).is_some() {
@@ -2517,20 +2518,29 @@ fn typecheck_block<'a>(
     wrap_errors!(CheckedBlock::new(statements), errors)
 }
 
-fn type_contains_module(
+fn type_contains_module<'a>(
     id: TypeId,
+    member_span: langbox::TextSpan,
     known_types: &HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
-) -> bool {
-    match &known_types[&id] {
-        ResolvedType::Const | ResolvedType::BuiltinBits { .. } => false,
+) -> QuartzResult<'a, bool> {
+    let ty = &known_types[&id];
+    match ty {
+        ResolvedType::Const | ResolvedType::BuiltinBits { .. } => Ok(false),
+        ResolvedType::BuiltinInPort { .. }
+        | ResolvedType::BuiltinOutPort { .. }
+        | ResolvedType::BuiltinInOutPort { .. } => Ok(true),
         ResolvedType::Named { .. } => match &resolved_types[&id] {
             // Structs are checked beforehand to not contain any modules
-            ResolvedTypeItem::Struct(_) | ResolvedTypeItem::Enum(_) => false,
-            ResolvedTypeItem::Module(_) | ResolvedTypeItem::ExternModule(_) => true,
+            ResolvedTypeItem::Struct(_) | ResolvedTypeItem::Enum(_) => Ok(false),
+            ResolvedTypeItem::Module(_) | ResolvedTypeItem::ExternModule(_) => Ok(true),
+            ResolvedTypeItem::TopModule(_) => Err(QuartzError::TopModuleMember {
+                member_span,
+                member_ty: ty.to_string(known_types),
+            }),
         },
         ResolvedType::Array { item_ty, .. } => {
-            type_contains_module(*item_ty, known_types, resolved_types)
+            type_contains_module(*item_ty, member_span, known_types, resolved_types)
         }
     }
 }
@@ -2540,13 +2550,17 @@ pub fn struct_contains_module<'a>(
     known_types: &HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
 ) -> QuartzResult<'a, ()> {
+    let mut errors = Vec::new();
+
     for (_, &(field_ty, field_span)) in struct_item.fields().iter() {
-        if type_contains_module(field_ty, known_types, resolved_types) {
-            return Err(QuartzError::StructModuleField { field_span });
+        match type_contains_module(field_ty, field_span, known_types, resolved_types) {
+            Ok(false) => {}
+            Ok(true) => errors.push(QuartzError::StructModuleField { field_span }),
+            Err(err) => errors.push(err),
         }
     }
 
-    Ok(())
+    wrap_errors!((), errors)
 }
 
 pub fn typecheck_module<'a>(
@@ -2572,12 +2586,14 @@ pub fn typecheck_module<'a>(
     let mut errors = Vec::new();
 
     for port in module_item.ports().values() {
+        let port_span = port.span().expect("generated port in non-extern module");
+
         match (port.dir(), port.kind()) {
             (Direction::In, LogicKind::Register)
             | (Direction::In, LogicKind::Module)
             | (Direction::Out, LogicKind::Module) => {
                 errors.push(QuartzError::InvalidPortKind {
-                    port_span: port.span(),
+                    port_span,
                     port_dir: port.dir(),
                     port_kind: port.kind(),
                 });
@@ -2585,31 +2601,44 @@ pub fn typecheck_module<'a>(
             _ => { /* valid */ }
         }
 
-        let ty_is_mod = type_contains_module(port.ty(), known_types, resolved_types);
-        match (port.kind(), ty_is_mod) {
-            (LogicKind::Signal, true)
-            | (LogicKind::Register, true)
-            | (LogicKind::Module, false) => errors.push(QuartzError::PortKindMismatch {
-                port_span: port.span(),
-                port_ty: known_types[&port.ty()].to_string(known_types),
-            }),
-            (LogicKind::Module, true) => errors.push(QuartzError::PortModuleType {
-                port_span: port.span(),
-            }),
-            _ => { /* valid */ }
+        match type_contains_module(port.ty(), port_span, known_types, resolved_types) {
+            Ok(ty_is_mod) => {
+                match (port.kind(), ty_is_mod) {
+                    (LogicKind::Signal, true)
+                    | (LogicKind::Register, true)
+                    | (LogicKind::Module, false) => errors.push(QuartzError::PortKindMismatch {
+                        port_span,
+                        port_ty: known_types[&port.ty()].to_string(known_types),
+                    }),
+                    (LogicKind::Module, true) => {
+                        errors.push(QuartzError::PortModuleType { port_span })
+                    }
+                    _ => { /* valid */ }
+                }
+            }
+            Err(err) => errors.push(err),
         }
     }
 
     for logic_member in module_item.logic_members().values() {
-        let ty_is_mod = type_contains_module(logic_member.ty(), known_types, resolved_types);
-        match (logic_member.kind(), ty_is_mod) {
-            (LogicKind::Signal, true)
-            | (LogicKind::Register, true)
-            | (LogicKind::Module, false) => errors.push(QuartzError::MemberKindMismatch {
-                member_span: logic_member.span(),
-                member_ty: known_types[&logic_member.ty()].to_string(known_types),
-            }),
-            _ => { /* valid */ }
+        match type_contains_module(
+            logic_member.ty(),
+            logic_member.span(),
+            known_types,
+            resolved_types,
+        ) {
+            Ok(ty_is_mod) => {
+                match (logic_member.kind(), ty_is_mod) {
+                    (LogicKind::Signal, true)
+                    | (LogicKind::Register, true)
+                    | (LogicKind::Module, false) => errors.push(QuartzError::MemberKindMismatch {
+                        member_span: logic_member.span(),
+                        member_ty: known_types[&logic_member.ty()].to_string(known_types),
+                    }),
+                    _ => { /* valid */ }
+                }
+            }
+            Err(err) => errors.push(err),
         }
     }
 

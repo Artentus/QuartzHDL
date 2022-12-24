@@ -175,8 +175,12 @@ extern mod Pll (
     out sig locked: bit,
 );
 
-mod Top() {
+top mod Top {
     let bram: Bram<20, 32>;
     let alu: Alu<32>;
     let pll: Pll;
+
+    let pi: InPort<1>;
+    let po: OutPort<1>;
+    let pio: InOutPort<1>;
 }

@@ -356,6 +356,9 @@ impl WriteColored for crate::error::QuartzError<'_> {
             Self::InvalidBitWidth { width, arg } => {
                 ErrorInfo::new(format!("`{width}` is not a valid bit width"), arg.span())
             }
+            Self::PortInNonTopModule { ty } => {
+                ErrorInfo::new("port members are only allowed in top modules", ty.span())
+            }
             Self::UndefinedType { ty } => {
                 ErrorInfo::new(format!("`the type {ty}` is not defined"), ty.span())
             }
@@ -588,6 +591,13 @@ impl WriteColored for crate::error::QuartzError<'_> {
                 member_ty,
             } => ErrorInfo::new(
                 format!("type `{member_ty}` is not valid for this member"),
+                *member_span,
+            ),
+            Self::TopModuleMember {
+                member_span,
+                ..
+            } => ErrorInfo::new(
+                "top modules cannot be used as types for members",
                 *member_span,
             ),
             Self::StructModuleField { field_span } => {

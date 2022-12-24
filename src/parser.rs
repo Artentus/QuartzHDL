@@ -43,6 +43,7 @@ const KEYWORDS: phf::Map<&'static str, KeywordKind> = phf_macros::phf_map!(
     "continue" => KeywordKind::Continue,
     "break" => KeywordKind::Break,
     "extern" => KeywordKind::Extern,
+    "top" => KeywordKind::Top,
 );
 
 #[derive(Debug)]
@@ -1003,6 +1004,22 @@ fn module_def() -> impl QuartzParser<Module> {
     )
 }
 
+fn top_module_def() -> impl QuartzParser<TopModule> {
+    parser!(
+        {sequence!(
+            kw(KeywordKind::Top),
+            kw(KeywordKind::Mod),
+            parser!({ident()}!![err!("expected identifier")]),
+            parser!({punct(PunctKind::OpenCurl)}!![err!("expected `{`")]),
+            parser!(*{member()}),
+            parser!({punct(PunctKind::CloseCurl)}!![err!("expected `}`")]),
+        )}
+        ->[|(top_kw, mod_kw, name, open_curl, members, close_curl)| {
+            TopModule::new(top_kw, mod_kw, name, open_curl, members, close_curl)
+        }]
+    )
+}
+
 fn extern_module_def() -> impl QuartzParser<ExternModule> {
     parser!(
         {sequence!(
@@ -1043,6 +1060,7 @@ fn item() -> impl QuartzParser<Item> {
         parser!({enum_def()}->[ItemKind::Enum]),
         parser!({const_def()}->[ItemKind::Const]),
         parser!({module_def()}->[ItemKind::Module]),
+        parser!({top_module_def()}->[ItemKind::TopModule]),
         parser!({extern_module_def()}->[ItemKind::ExternModule]),
         parser!({fn_def()}->[ItemKind::Func]),
     );

@@ -510,6 +510,7 @@ pub enum TypeItemKind {
     Struct(Struct),
     Enum(Enum),
     Module(Module),
+    TopModule(TopModule),
     ExternModule(ExternModule),
 }
 
@@ -542,6 +543,15 @@ pub enum ResolvedType {
     BuiltinBits {
         width: u64,
     },
+    BuiltinInPort {
+        width: u64,
+    },
+    BuiltinOutPort {
+        width: u64,
+    },
+    BuiltinInOutPort {
+        width: u64,
+    },
     Named {
         name: SharedString,
         generic_args: Rc<[i64]>,
@@ -563,6 +573,9 @@ impl ResolvedType {
                     format!("bits<{width}>").into()
                 }
             }
+            Self::BuiltinInPort { width } => format!("InPort<{width}>").into(),
+            Self::BuiltinOutPort { width } => format!("OutPort<{width}>").into(),
+            Self::BuiltinInOutPort { width } => format!("InOutPort<{width}>").into(),
             Self::Named { name, generic_args } => {
                 use std::fmt::Write;
 
@@ -595,9 +608,21 @@ impl PartialEq for ResolvedType {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Const, Self::Const) => true,
-            (Self::BuiltinBits { width: lhs_width }, Self::BuiltinBits { width: rhs_width }) => {
-                *lhs_width == *rhs_width
+            (&Self::BuiltinBits { width: lhs_width }, &Self::BuiltinBits { width: rhs_width }) => {
+                lhs_width == rhs_width
             }
+            (
+                &Self::BuiltinInPort { width: lhs_width },
+                &Self::BuiltinInPort { width: rhs_width },
+            ) => lhs_width == rhs_width,
+            (
+                &Self::BuiltinOutPort { width: lhs_width },
+                &Self::BuiltinOutPort { width: rhs_width },
+            ) => lhs_width == rhs_width,
+            (
+                &Self::BuiltinInOutPort { width: lhs_width },
+                &Self::BuiltinInOutPort { width: rhs_width },
+            ) => lhs_width == rhs_width,
             (
                 Self::Named {
                     name: lhs_name,
@@ -634,6 +659,15 @@ impl std::hash::Hash for ResolvedType {
         match self {
             Self::Const => {}
             Self::BuiltinBits { width } => {
+                Hash::hash(width, state);
+            }
+            Self::BuiltinInPort { width } => {
+                Hash::hash(width, state);
+            }
+            Self::BuiltinOutPort { width } => {
+                Hash::hash(width, state);
+            }
+            Self::BuiltinInOutPort { width } => {
                 Hash::hash(width, state);
             }
             Self::Named { name, generic_args } => {
@@ -716,7 +750,7 @@ pub struct ResolvedPort {
     attributes: Vec<Attribute>,
     dir: Direction,
     kind: LogicKind,
-    span: TextSpan,
+    span: Option<TextSpan>,
     ty: TypeId,
 }
 
@@ -726,7 +760,7 @@ impl ResolvedPort {
         attributes: Vec<Attribute>,
         dir: Direction,
         kind: LogicKind,
-        span: TextSpan,
+        span: Option<TextSpan>,
         ty: TypeId,
     ) -> Self {
         Self {
@@ -757,9 +791,12 @@ impl ResolvedPort {
     pub fn ty(&self) -> TypeId {
         self.ty
     }
-}
 
-default_spanned_impl!(ResolvedPort);
+    #[inline]
+    pub fn span(&self) -> Option<TextSpan> {
+        self.span
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct ResolvedLogicMember {
@@ -881,6 +918,7 @@ pub enum ResolvedTypeItem {
     Struct(ResolvedStruct),
     Enum(ResolvedEnum),
     Module(ResolvedModule),
+    TopModule(ResolvedModule),
     ExternModule(ResolvedExternModule),
 }
 
