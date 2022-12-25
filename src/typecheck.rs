@@ -618,6 +618,16 @@ fn find_member_type<'a>(
                 })
             }
         }
+        Some(ResolvedTypeItem::ExternModule(module_item)) => {
+            if let Some(port) = module_item.ports().get(ident.as_ref()) {
+                Ok((port.ty(), Some(port.dir())))
+            } else {
+                Err(QuartzError::UndefinedMember {
+                    ty: known_types[&parent_id].to_string(known_types),
+                    name: ident,
+                })
+            }
+        }
         Some(_) => Err(QuartzError::UndefinedMember {
             ty: known_types[&parent_id].to_string(known_types),
             name: ident,
