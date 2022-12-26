@@ -279,7 +279,7 @@ fn match_expr() -> impl QuartzParser<Expr> {
             (
                 {literal()}
                 <. {punct(PunctKind::DoublePeriod)}
-                <.> ?{punct(PunctKind::Eq)}
+                <.> ?{punct(PunctKind::Assign)}
                 <.> {literal()}!![err!("expected literal")]
             )
             ->[|((start, eq), end)| {
@@ -627,7 +627,7 @@ fn for_loop() -> impl QuartzParser<ForLoop> {
             parser!({kw(KeywordKind::In)}!![err!("expected `in`")]),
             parser!({expr(true)}!![err!("expected expression")]),
             parser!({punct(PunctKind::DoublePeriod)}!![err!("expected `..`")]),
-            parser!(?{punct(PunctKind::Eq)}),
+            parser!(?{punct(PunctKind::Assign)}),
             parser!({expr(true)}!![err!("expected expression")]),
             parser!({block()}!![err!("expected block")]),
         )}
