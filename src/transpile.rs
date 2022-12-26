@@ -428,7 +428,7 @@ pub fn transpile(
                     )?;
                 }
 
-                if let ResolvedModuleItem::TriPort(_, _) = member_module_item {
+                if let ResolvedModuleItem::TriPort(_, width) = member_module_item {
                     for (array_level, array_len) in array_lengths.iter().copied().rev().enumerate()
                     {
                         writeln!(
@@ -445,7 +445,7 @@ pub fn transpile(
 
                     writeln!(
                         writer,
-                        "assign {member_name}__port{indexers} = {member_name}{indexers}.oe ? {member_name}{indexers}.d_out : 'bz;",
+                        "assign {member_name}__port{indexers} = {member_name}{indexers}.oe ? {member_name}{indexers}.d_out : {width}'bz;",
                     )?;
 
                     writeln!(
