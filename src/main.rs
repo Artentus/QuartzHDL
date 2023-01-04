@@ -173,7 +173,7 @@ impl<'a> Iterator for TokenSlices<'a> {
 fn tokenize<'err>(
     file_server: &mut FileServer,
     input_files: &[PathBuf],
-) -> std::io::Result<(Tokens, Vec<QuartzError<'err>>)> {
+) -> std::io::Result<(Vec<Tokens>, Vec<QuartzError<'err>>)> {
     let mut files = HashSet::default();
     for path in input_files.iter() {
         let file = file_server.register_file(path)?;
@@ -181,23 +181,27 @@ fn tokenize<'err>(
     }
 
     let mut errors = Vec::new();
-    let mut tokens = Vec::new();
+    let mut tokens = Vec::with_capacity(files.len());
     for file in files.into_iter() {
         let lexer = QuartzLexer::new(file, file_server);
 
-        tokens.extend(lexer.filter(|token| {
-            if let Some(err) = get_token_error(token) {
-                errors.push(err.into());
-            }
+        let file_tokens: Vec<_> = lexer
+            .filter(|token| {
+                if let Some(err) = get_token_error(token) {
+                    errors.push(err.into());
+                }
 
-            !matches!(
-                &token.kind,
-                QuartzToken::Comment(_) | QuartzToken::InvalidChar(_)
-            )
-        }));
+                !matches!(
+                    &token.kind,
+                    QuartzToken::Comment(_) | QuartzToken::InvalidChar(_)
+                )
+            })
+            .collect();
+
+        tokens.push(Tokens(file_tokens));
     }
 
-    Ok((Tokens(tokens), errors))
+    Ok((tokens, errors))
 }
 
 fn main() -> std::io::Result<()> {
@@ -224,7 +228,7 @@ fn main() -> std::io::Result<()> {
     let (tokens, mut errors) = tokenize(&mut file_server, input_files)?;
 
     let mut design = Vec::new();
-    for tokens in tokens.into_iter() {
+    for tokens in tokens.iter().flatten() {
         match parser::parse(tokens) {
             ParseResult::Match { value, .. } => design.extend(value.into_iter()),
             ParseResult::NoMatch => {}
