@@ -241,7 +241,7 @@ fn lower_match_expr(
     if let Some(ResolvedTypeItem::Enum(_)) = &resolved_types.get(&match_expr.value().ty()) {
         let value = lower_expr(
             match_expr.value(),
-            mode,
+            VAssignMode::Combinatoric,
             tmp_members,
             tmp_comb_statements,
             tmp_proc_statements,
@@ -256,7 +256,7 @@ fn lower_match_expr(
                 CheckedMatchExprBody::Expr(body) => {
                     let result = lower_expr(
                         body,
-                        mode,
+                        VAssignMode::Combinatoric,
                         tmp_members,
                         tmp_comb_statements,
                         tmp_proc_statements,
@@ -316,7 +316,7 @@ fn lower_match_expr(
 
         let value = lower_expr(
             match_expr.value(),
-            mode,
+            VAssignMode::Combinatoric,
             tmp_members,
             tmp_comb_statements,
             tmp_proc_statements,
@@ -391,7 +391,7 @@ fn lower_match_expr(
                     CheckedMatchExprBody::Expr(body) => {
                         let result = lower_expr(
                             body,
-                            mode,
+                            VAssignMode::Combinatoric,
                             tmp_members,
                             tmp_comb_statements,
                             tmp_proc_statements,
@@ -403,7 +403,7 @@ fn lower_match_expr(
 
                         let statements = vec![VStatement::Assignment(VAssignment::new(
                             assign_target,
-                            mode,
+                            VAssignMode::Combinatoric,
                             result,
                         ))];
 
@@ -774,7 +774,7 @@ fn lower_if_statement(
 ) -> VIfStatement {
     let condition = lower_expr(
         if_statement.condition(),
-        mode,
+        VAssignMode::Combinatoric,
         tmp_members,
         tmp_comb_statements,
         tmp_proc_statements,
@@ -796,7 +796,7 @@ fn lower_if_statement(
     for else_if_block in if_statement.else_if_blocks() {
         let condition = lower_expr(
             else_if_block.condition(),
-            mode,
+            VAssignMode::Combinatoric,
             tmp_members,
             tmp_comb_statements,
             tmp_proc_statements,
@@ -853,7 +853,7 @@ fn lower_match_statement(
     if let Some(ResolvedTypeItem::Enum(_)) = &resolved_types.get(&match_statement.value().ty()) {
         let value = lower_expr(
             match_statement.value(),
-            mode,
+            VAssignMode::Combinatoric,
             tmp_members,
             tmp_comb_statements,
             tmp_proc_statements,
@@ -893,7 +893,7 @@ fn lower_match_statement(
 
         let value = lower_expr(
             match_statement.value(),
-            mode,
+            VAssignMode::Combinatoric,
             tmp_members,
             tmp_comb_statements,
             tmp_proc_statements,
