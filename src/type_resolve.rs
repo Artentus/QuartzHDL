@@ -1492,8 +1492,9 @@ fn resolve_module<'a>(
                 }
             }
             MemberKind::Proc(proc_member) => {
-                let mut has_error = false;
+                proc_member.reset_resolved_types();
 
+                let mut has_error = false;
                 for sens in proc_member.sens() {
                     if let Err(err) = resolve_assign_target(
                         sens.sig(),
@@ -1507,22 +1508,24 @@ fn resolve_module<'a>(
                     }
                 }
 
-                if let Err(err) = resolve_block(
+                match resolve_block(
                     proc_member.body(),
                     this_id,
                     &scope,
                     &args.to_local(&local_const_values),
                     registry,
                 ) {
-                    errors.push(err);
-                    has_error = true;
-                }
-
-                if !has_error {
-                    proc_members.push(proc_member.clone());
+                    Ok(_) => {
+                        if !has_error {
+                            proc_members.push(proc_member.clone());
+                        }
+                    }
+                    Err(err) => errors.push(err),
                 }
             }
             MemberKind::Comb(comb_member) => {
+                comb_member.reset_resolved_types();
+
                 let result = resolve_block(
                     comb_member.body(),
                     this_id,
@@ -1645,6 +1648,8 @@ fn resolve_top_module<'a>(
                 }
             }
             MemberKind::Proc(proc_member) => {
+                proc_member.reset_resolved_types();
+
                 let mut has_error = false;
 
                 for sens in proc_member.sens() {
@@ -1676,6 +1681,8 @@ fn resolve_top_module<'a>(
                 }
             }
             MemberKind::Comb(comb_member) => {
+                comb_member.reset_resolved_types();
+
                 let result = resolve_block(
                     comb_member.body(),
                     this_id,

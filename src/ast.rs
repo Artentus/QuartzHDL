@@ -5,7 +5,7 @@ use crate::ir::TypeId;
 use crate::lexer::PunctKind;
 use crate::{default_display_impl, SharedString};
 use langbox::TextSpan;
-use once_cell::sync::OnceCell;
+use std::cell::Cell;
 use std::fmt::Write;
 use std::hash::Hash;
 use std::ops::Range;
@@ -367,6 +367,11 @@ impl ParenExpr {
     pub fn close_paren(&self) -> &Punct {
         &self.close_paren
     }
+
+    #[inline]
+    pub fn reset_resolved_types(&self) {
+        self.inner.reset_resolved_types();
+    }
 }
 
 impl Spanned for ParenExpr {
@@ -421,6 +426,12 @@ impl CallExpr {
     pub fn close_paren(&self) -> &Punct {
         &self.close_paren
     }
+
+    pub fn reset_resolved_types(&self) {
+        for arg in self.args.iter() {
+            arg.reset_resolved_types();
+        }
+    }
 }
 
 impl Spanned for CallExpr {
@@ -472,6 +483,11 @@ impl FieldAssign {
     pub fn value(&self) -> &Expr {
         &self.value
     }
+
+    #[inline]
+    pub fn reset_resolved_types(&self) {
+        self.value.reset_resolved_types();
+    }
 }
 
 impl Spanned for FieldAssign {
@@ -494,7 +510,7 @@ pub struct ConstructExpr {
     open_curl: Punct,
     fields: Vec<FieldAssign>,
     close_curl: Punct,
-    resolved_ty: OnceCell<TypeId>,
+    resolved_ty: Cell<Option<TypeId>>,
 }
 
 impl ConstructExpr {
@@ -510,7 +526,7 @@ impl ConstructExpr {
             open_curl,
             fields,
             close_curl,
-            resolved_ty: OnceCell::new(),
+            resolved_ty: Cell::new(None),
         }
     }
 
@@ -535,14 +551,25 @@ impl ConstructExpr {
     }
 
     pub fn resolve(&self, ty: TypeId) {
-        self.resolved_ty
-            .set(ty)
-            .expect("construct expression was resolved more than once");
+        assert!(
+            self.resolved_ty.get().is_none(),
+            "construct expression was resolved more than once"
+        );
+
+        self.resolved_ty.set(Some(ty));
     }
 
     #[inline]
     pub fn resolved_ty(&self) -> Option<TypeId> {
-        self.resolved_ty.get().copied()
+        self.resolved_ty.get()
+    }
+
+    pub fn reset_resolved_types(&self) {
+        for field in self.fields.iter() {
+            field.reset_resolved_types();
+        }
+
+        self.resolved_ty.set(None);
     }
 }
 
@@ -606,6 +633,12 @@ impl ElseIfBlock {
     pub fn body(&self) -> &Block {
         &self.body
     }
+
+    #[inline]
+    pub fn reset_resolved_types(&self) {
+        self.condition.reset_resolved_types();
+        self.body.reset_resolved_types();
+    }
 }
 
 impl Spanned for ElseIfBlock {
@@ -652,6 +685,11 @@ impl ElseBlock {
     #[inline]
     pub fn body(&self) -> &Block {
         &self.body
+    }
+
+    #[inline]
+    pub fn reset_resolved_types(&self) {
+        self.body.reset_resolved_types();
     }
 }
 
@@ -719,6 +757,19 @@ impl IfExpr {
     #[inline]
     pub fn else_block(&self) -> Option<&ElseBlock> {
         self.else_block.as_ref()
+    }
+
+    pub fn reset_resolved_types(&self) {
+        self.condition.reset_resolved_types();
+        self.body.reset_resolved_types();
+
+        for else_if_block in self.else_if_blocks.iter() {
+            else_if_block.reset_resolved_types();
+        }
+
+        if let Some(else_block) = &self.else_block {
+            else_block.reset_resolved_types();
+        }
     }
 }
 
@@ -796,6 +847,15 @@ pub enum MatchBody {
     Block(Block),
 }
 
+impl MatchBody {
+    pub fn reset_resolved_types(&self) {
+        match self {
+            Self::Expr(expr) => expr.reset_resolved_types(),
+            Self::Block(block) => block.reset_resolved_types(),
+        }
+    }
+}
+
 impl Spanned for MatchBody {
     fn span(&self) -> TextSpan {
         match self {
@@ -846,6 +906,11 @@ impl MatchBranch {
     #[inline]
     pub fn body(&self) -> &MatchBody {
         &self.body
+    }
+
+    #[inline]
+    pub fn reset_resolved_types(&self) {
+        self.body.reset_resolved_types();
     }
 }
 
@@ -926,6 +991,14 @@ impl MatchExpr {
     pub fn close_curl(&self) -> &Punct {
         &self.close_curl
     }
+
+    pub fn reset_resolved_types(&self) {
+        self.value.reset_resolved_types();
+
+        for branch in self.branches.iter() {
+            branch.reset_resolved_types();
+        }
+    }
 }
 
 impl Spanned for MatchExpr {
@@ -954,6 +1027,18 @@ default_display_impl!(MatchExpr);
 pub enum IndexKind {
     Single(Expr),
     Range(Range<Expr>),
+}
+
+impl IndexKind {
+    pub fn reset_resolved_types(&self) {
+        match self {
+            Self::Single(expr) => expr.reset_resolved_types(),
+            Self::Range(range) => {
+                range.start.reset_resolved_types();
+                range.end.reset_resolved_types();
+            }
+        }
+    }
 }
 
 impl Spanned for IndexKind {
@@ -1007,6 +1092,11 @@ impl Indexer {
     pub fn close_paren(&self) -> &Punct {
         &self.close_paren
     }
+
+    #[inline]
+    pub fn reset_resolved_types(&self) {
+        self.index.reset_resolved_types();
+    }
 }
 
 impl Spanned for Indexer {
@@ -1046,6 +1136,12 @@ impl IndexExpr {
     #[inline]
     pub fn indexer(&self) -> &Indexer {
         &self.indexer
+    }
+
+    #[inline]
+    pub fn reset_resolved_types(&self) {
+        self.base.reset_resolved_types();
+        self.indexer.reset_resolved_types();
     }
 }
 
@@ -1124,6 +1220,11 @@ impl MemberAccessExpr {
     pub fn member(&self) -> &MemberAccess {
         &self.member
     }
+
+    #[inline]
+    pub fn reset_resolved_types(&self) {
+        self.base.reset_resolved_types();
+    }
 }
 
 impl Spanned for MemberAccessExpr {
@@ -1164,6 +1265,11 @@ impl UnaryExpr {
     pub fn inner(&self) -> &Expr {
         &self.inner
     }
+
+    #[inline]
+    pub fn reset_resolved_types(&self) {
+        self.inner.reset_resolved_types();
+    }
 }
 
 impl Spanned for UnaryExpr {
@@ -1185,7 +1291,7 @@ pub struct CastExpr {
     value: Box<Expr>,
     as_kw: Keyword,
     target_ty: Box<Type>,
-    resolved_ty: OnceCell<TypeId>,
+    resolved_ty: Cell<Option<TypeId>>,
 }
 
 impl CastExpr {
@@ -1195,7 +1301,7 @@ impl CastExpr {
             value: Box::new(value),
             as_kw,
             target_ty: Box::new(target_ty),
-            resolved_ty: OnceCell::new(),
+            resolved_ty: Cell::new(None),
         }
     }
 
@@ -1215,14 +1321,22 @@ impl CastExpr {
     }
 
     pub fn resolve(&self, ty: TypeId) {
-        self.resolved_ty
-            .set(ty)
-            .expect("cast expression was resolved more than once");
+        assert!(
+            self.resolved_ty.get().is_none(),
+            "construct expression was resolved more than once"
+        );
+
+        self.resolved_ty.set(Some(ty));
     }
 
     #[inline]
     pub fn resolved_ty(&self) -> Option<TypeId> {
-        self.resolved_ty.get().copied()
+        self.resolved_ty.get()
+    }
+
+    pub fn reset_resolved_types(&self) {
+        self.value.reset_resolved_types();
+        self.resolved_ty.set(None);
     }
 }
 
@@ -1270,6 +1384,12 @@ impl BinaryExpr {
     #[inline]
     pub fn rhs(&self) -> &Expr {
         &self.rhs
+    }
+
+    #[inline]
+    pub fn reset_resolved_types(&self) {
+        self.lhs.reset_resolved_types();
+        self.rhs.reset_resolved_types();
     }
 }
 
@@ -1329,6 +1449,49 @@ pub enum Expr {
     Shl(BinaryExpr),
     Lsr(BinaryExpr),
     Asr(BinaryExpr),
+}
+
+impl Expr {
+    pub fn reset_resolved_types(&self) {
+        match self {
+            Self::Literal(_) => {}
+            Self::Path(_) => {}
+            Self::Paren(expr) => expr.reset_resolved_types(),
+            Self::Call(expr) => expr.reset_resolved_types(),
+            Self::Construct(expr) => expr.reset_resolved_types(),
+            Self::If(expr) => expr.reset_resolved_types(),
+            Self::Match(expr) => expr.reset_resolved_types(),
+            Self::Block(expr) => expr.reset_resolved_types(),
+            Self::Index(expr) => expr.reset_resolved_types(),
+            Self::MemberAccess(expr) => expr.reset_resolved_types(),
+            Self::Pos(expr) => expr.reset_resolved_types(),
+            Self::Neg(expr) => expr.reset_resolved_types(),
+            Self::Not(expr) => expr.reset_resolved_types(),
+            Self::Cast(expr) => expr.reset_resolved_types(),
+            Self::Concat(expr) => expr.reset_resolved_types(),
+            Self::Lt(expr) => expr.reset_resolved_types(),
+            Self::Lte(expr) => expr.reset_resolved_types(),
+            Self::Gt(expr) => expr.reset_resolved_types(),
+            Self::Gte(expr) => expr.reset_resolved_types(),
+            Self::Slt(expr) => expr.reset_resolved_types(),
+            Self::Slte(expr) => expr.reset_resolved_types(),
+            Self::Sgt(expr) => expr.reset_resolved_types(),
+            Self::Sgte(expr) => expr.reset_resolved_types(),
+            Self::Eq(expr) => expr.reset_resolved_types(),
+            Self::Ne(expr) => expr.reset_resolved_types(),
+            Self::Add(expr) => expr.reset_resolved_types(),
+            Self::Sub(expr) => expr.reset_resolved_types(),
+            Self::Mul(expr) => expr.reset_resolved_types(),
+            Self::Div(expr) => expr.reset_resolved_types(),
+            Self::Rem(expr) => expr.reset_resolved_types(),
+            Self::And(expr) => expr.reset_resolved_types(),
+            Self::Xor(expr) => expr.reset_resolved_types(),
+            Self::Or(expr) => expr.reset_resolved_types(),
+            Self::Shl(expr) => expr.reset_resolved_types(),
+            Self::Lsr(expr) => expr.reset_resolved_types(),
+            Self::Asr(expr) => expr.reset_resolved_types(),
+        }
+    }
 }
 
 impl Spanned for Expr {
@@ -1663,6 +1826,11 @@ impl Assignment {
     pub fn value(&self) -> &Expr {
         &self.value
     }
+
+    #[inline]
+    pub fn reset_resolved_types(&self) {
+        self.value.reset_resolved_types();
+    }
 }
 
 impl Spanned for Assignment {
@@ -1825,6 +1993,20 @@ pub enum Statement {
     Break(Keyword),
 }
 
+impl Statement {
+    pub fn reset_resolved_types(&self) {
+        match self {
+            Self::Expr(expr) => expr.reset_resolved_types(),
+            Self::Declaration(_) => {}
+            Self::Assignment(assign) => assign.reset_resolved_types(),
+            Self::WhileLoop(_) => {}
+            Self::ForLoop(_) => {}
+            Self::Continue(_) => {}
+            Self::Break(_) => {}
+        }
+    }
+}
+
 impl Spanned for Statement {
     fn span(&self) -> TextSpan {
         match self {
@@ -1900,6 +2082,16 @@ impl Block {
     #[inline]
     pub fn close_curl(&self) -> &Punct {
         &self.close_curl
+    }
+
+    pub fn reset_resolved_types(&self) {
+        for statement in self.statements.iter() {
+            statement.reset_resolved_types();
+        }
+
+        if let Some(result) = &self.result {
+            result.reset_resolved_types();
+        }
     }
 }
 
@@ -3098,6 +3290,11 @@ impl ProcMember {
     pub fn body(&self) -> &Block {
         &self.body
     }
+
+    #[inline]
+    pub fn reset_resolved_types(&self) {
+        self.body.reset_resolved_types();
+    }
 }
 
 impl Spanned for ProcMember {
@@ -3147,6 +3344,11 @@ impl CombMember {
     #[inline]
     pub fn body(&self) -> &Block {
         &self.body
+    }
+
+    #[inline]
+    pub fn reset_resolved_types(&self) {
+        self.body.reset_resolved_types();
     }
 }
 
