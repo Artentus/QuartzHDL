@@ -13,7 +13,6 @@ fn add_tmp_member(ty: TypeId, tmp_members: &mut Vec<(SharedString, TypeId)>) -> 
 fn lower_expr_block(
     block: &CheckedExprBlock,
     target: SharedString,
-    mode: VAssignMode,
     tmp_members: &mut Vec<(SharedString, TypeId)>,
     tmp_comb_statements: &mut Vec<VStatement>,
     tmp_proc_statements: &mut Vec<VStatement>,
@@ -25,7 +24,6 @@ fn lower_expr_block(
     for statement in block.statements() {
         if let Some(statement) = lower_statement(
             statement,
-            VAssignMode::Combinatoric,
             false,
             tmp_members,
             tmp_comb_statements,
@@ -38,7 +36,6 @@ fn lower_expr_block(
 
         if let Some(statement) = lower_statement(
             statement,
-            mode,
             true,
             tmp_members,
             tmp_comb_statements,
@@ -52,7 +49,6 @@ fn lower_expr_block(
 
     let result = lower_expr(
         block.result(),
-        mode,
         tmp_members,
         tmp_comb_statements,
         tmp_proc_statements,
@@ -62,7 +58,6 @@ fn lower_expr_block(
     let assign_target = VAssignTarget::new(target, Vec::new());
     statements_comb.push(VStatement::Assignment(VAssignment::new(
         assign_target,
-        VAssignMode::Combinatoric,
         result,
     )));
 
@@ -88,7 +83,6 @@ fn lower_path(path: &Path) -> String {
 
 fn lower_construct_expr(
     construct_expr: &CheckedConstructExpr,
-    mode: VAssignMode,
     tmp_members: &mut Vec<(SharedString, TypeId)>,
     tmp_comb_statements: &mut Vec<VStatement>,
     tmp_proc_statements: &mut Vec<VStatement>,
@@ -101,7 +95,6 @@ fn lower_construct_expr(
     for (field, value) in construct_expr.fields() {
         let value = lower_expr(
             value,
-            mode,
             tmp_members,
             tmp_comb_statements,
             tmp_proc_statements,
@@ -111,11 +104,7 @@ fn lower_construct_expr(
 
         let suffixes = vec![VSuffixOp::MemberAccess(SharedString::clone(field))];
         let target = VAssignTarget::new(SharedString::clone(&tmp_member), suffixes);
-        statements.push(VStatement::Assignment(VAssignment::new(
-            target,
-            VAssignMode::Combinatoric,
-            value,
-        )));
+        statements.push(VStatement::Assignment(VAssignment::new(target, value)));
     }
 
     let block = VBlock::new(statements);
@@ -126,7 +115,6 @@ fn lower_construct_expr(
 
 fn lower_if_expr(
     if_expr: &CheckedIfExpr,
-    mode: VAssignMode,
     tmp_members: &mut Vec<(SharedString, TypeId)>,
     tmp_comb_statements: &mut Vec<VStatement>,
     tmp_proc_statements: &mut Vec<VStatement>,
@@ -137,7 +125,6 @@ fn lower_if_expr(
 
     let condition = lower_expr(
         if_expr.condition(),
-        VAssignMode::Combinatoric,
         tmp_members,
         tmp_comb_statements,
         tmp_proc_statements,
@@ -147,7 +134,6 @@ fn lower_if_expr(
     let (body_comb, body_proc) = lower_expr_block(
         if_expr.body(),
         SharedString::clone(&tmp_member),
-        mode,
         tmp_members,
         tmp_comb_statements,
         tmp_proc_statements,
@@ -160,7 +146,6 @@ fn lower_if_expr(
     for else_if_block in if_expr.else_if_blocks() {
         let condition = lower_expr(
             else_if_block.condition(),
-            VAssignMode::Combinatoric,
             tmp_members,
             tmp_comb_statements,
             tmp_proc_statements,
@@ -171,7 +156,6 @@ fn lower_if_expr(
         let (body_comb, body_proc) = lower_expr_block(
             else_if_block.body(),
             SharedString::clone(&tmp_member),
-            mode,
             tmp_members,
             tmp_comb_statements,
             tmp_proc_statements,
@@ -188,7 +172,6 @@ fn lower_if_expr(
     let (else_block_comb, else_block_proc) = lower_expr_block(
         if_expr.else_block().body(),
         SharedString::clone(&tmp_member),
-        mode,
         tmp_members,
         tmp_comb_statements,
         tmp_proc_statements,
@@ -227,7 +210,6 @@ fn lower_if_expr(
 
 fn lower_match_expr(
     match_expr: &CheckedMatchExpr,
-    mode: VAssignMode,
     tmp_members: &mut Vec<(SharedString, TypeId)>,
     tmp_comb_statements: &mut Vec<VStatement>,
     tmp_proc_statements: &mut Vec<VStatement>,
@@ -241,7 +223,6 @@ fn lower_match_expr(
     if let Some(ResolvedTypeItem::Enum(_)) = &resolved_types.get(&match_expr.value().ty()) {
         let value = lower_expr(
             match_expr.value(),
-            VAssignMode::Combinatoric,
             tmp_members,
             tmp_comb_statements,
             tmp_proc_statements,
@@ -256,7 +237,6 @@ fn lower_match_expr(
                 CheckedMatchExprBody::Expr(body) => {
                     let result = lower_expr(
                         body,
-                        VAssignMode::Combinatoric,
                         tmp_members,
                         tmp_comb_statements,
                         tmp_proc_statements,
@@ -268,7 +248,6 @@ fn lower_match_expr(
 
                     let statements = vec![VStatement::Assignment(VAssignment::new(
                         assign_target,
-                        mode,
                         result,
                     ))];
 
@@ -277,7 +256,6 @@ fn lower_match_expr(
                 CheckedMatchExprBody::Block(body) => lower_expr_block(
                     body,
                     SharedString::clone(&tmp_member),
-                    mode,
                     tmp_members,
                     tmp_comb_statements,
                     tmp_proc_statements,
@@ -316,7 +294,6 @@ fn lower_match_expr(
 
         let value = lower_expr(
             match_expr.value(),
-            VAssignMode::Combinatoric,
             tmp_members,
             tmp_comb_statements,
             tmp_proc_statements,
@@ -325,7 +302,7 @@ fn lower_match_expr(
         );
 
         let value_target = VAssignTarget::new(SharedString::clone(&value_name), Vec::new());
-        let value_assign = VAssignment::new(value_target, VAssignMode::Combinatoric, value);
+        let value_assign = VAssignment::new(value_target, value);
         tmp_comb_statements.push(VStatement::Assignment(value_assign));
 
         let mut branch_to_cond_body =
@@ -391,7 +368,6 @@ fn lower_match_expr(
                     CheckedMatchExprBody::Expr(body) => {
                         let result = lower_expr(
                             body,
-                            VAssignMode::Combinatoric,
                             tmp_members,
                             tmp_comb_statements,
                             tmp_proc_statements,
@@ -403,7 +379,6 @@ fn lower_match_expr(
 
                         let statements = vec![VStatement::Assignment(VAssignment::new(
                             assign_target,
-                            VAssignMode::Combinatoric,
                             result,
                         ))];
 
@@ -412,7 +387,6 @@ fn lower_match_expr(
                     CheckedMatchExprBody::Block(body) => lower_expr_block(
                         body,
                         SharedString::clone(&tmp_member),
-                        mode,
                         tmp_members,
                         tmp_comb_statements,
                         tmp_proc_statements,
@@ -493,7 +467,6 @@ fn lower_match_expr(
 
 fn lower_cast_expr(
     cast_expr: &CheckedCastExpr,
-    mode: VAssignMode,
     tmp_members: &mut Vec<(SharedString, TypeId)>,
     tmp_comb_statements: &mut Vec<VStatement>,
     tmp_proc_statements: &mut Vec<VStatement>,
@@ -519,7 +492,6 @@ fn lower_cast_expr(
         ) => {
             let value = lower_expr(
                 cast_expr.value(),
-                mode,
                 tmp_members,
                 tmp_comb_statements,
                 tmp_proc_statements,
@@ -552,7 +524,6 @@ fn lower_cast_expr(
 
                 let value = lower_expr(
                     cast_expr.value(),
-                    mode,
                     tmp_members,
                     tmp_comb_statements,
                     tmp_proc_statements,
@@ -581,7 +552,6 @@ fn lower_cast_expr(
 
 fn lower_expr(
     expr: &CheckedExpr,
-    mode: VAssignMode,
     tmp_members: &mut Vec<(SharedString, TypeId)>,
     tmp_comb_statements: &mut Vec<VStatement>,
     tmp_proc_statements: &mut Vec<VStatement>,
@@ -592,7 +562,6 @@ fn lower_expr(
         ($bin_expr:expr, $op:ident) => {{
             let lhs = lower_expr(
                 $bin_expr.lhs(),
-                mode,
                 tmp_members,
                 tmp_comb_statements,
                 tmp_proc_statements,
@@ -601,7 +570,6 @@ fn lower_expr(
             );
             let rhs = lower_expr(
                 $bin_expr.rhs(),
-                mode,
                 tmp_members,
                 tmp_comb_statements,
                 tmp_proc_statements,
@@ -618,7 +586,6 @@ fn lower_expr(
 
         CheckedExpr::Construct(construct_expr) => lower_construct_expr(
             construct_expr,
-            mode,
             tmp_members,
             tmp_comb_statements,
             tmp_proc_statements,
@@ -627,7 +594,6 @@ fn lower_expr(
         ),
         CheckedExpr::If(if_expr) => lower_if_expr(
             if_expr,
-            mode,
             tmp_members,
             tmp_comb_statements,
             tmp_proc_statements,
@@ -636,7 +602,6 @@ fn lower_expr(
         ),
         CheckedExpr::Match(match_expr) => lower_match_expr(
             match_expr,
-            mode,
             tmp_members,
             tmp_comb_statements,
             tmp_proc_statements,
@@ -649,7 +614,6 @@ fn lower_expr(
             let (block_comb, block_proc) = lower_expr_block(
                 block,
                 SharedString::clone(&tmp_member),
-                mode,
                 tmp_members,
                 tmp_comb_statements,
                 tmp_proc_statements,
@@ -668,7 +632,6 @@ fn lower_expr(
         CheckedExpr::Index(index_expr) => {
             let base = lower_expr(
                 index_expr.base(),
-                mode,
                 tmp_members,
                 tmp_comb_statements,
                 tmp_proc_statements,
@@ -679,7 +642,6 @@ fn lower_expr(
             let indexer = match index_expr.indexer() {
                 CheckedIndexKind::Single(index) => VIndexKind::Single(lower_expr(
                     index,
-                    mode,
                     tmp_members,
                     tmp_comb_statements,
                     tmp_proc_statements,
@@ -694,7 +656,6 @@ fn lower_expr(
         CheckedExpr::MemberAccess(member_access) => {
             let base = lower_expr(
                 member_access.base(),
-                mode,
                 tmp_members,
                 tmp_comb_statements,
                 tmp_proc_statements,
@@ -710,7 +671,6 @@ fn lower_expr(
 
         CheckedExpr::Neg(expr) => VExpr::Neg(VUnaryExpr::new(lower_expr(
             expr.inner(),
-            mode,
             tmp_members,
             tmp_comb_statements,
             tmp_proc_statements,
@@ -719,7 +679,6 @@ fn lower_expr(
         ))),
         CheckedExpr::Not(expr) => VExpr::Not(VUnaryExpr::new(lower_expr(
             expr.inner(),
-            mode,
             tmp_members,
             tmp_comb_statements,
             tmp_proc_statements,
@@ -729,7 +688,6 @@ fn lower_expr(
 
         CheckedExpr::Cast(cast_expr) => lower_cast_expr(
             cast_expr,
-            mode,
             tmp_members,
             tmp_comb_statements,
             tmp_proc_statements,
@@ -764,7 +722,6 @@ fn lower_expr(
 
 fn lower_if_statement(
     if_statement: &CheckedIfStatement,
-    mode: VAssignMode,
     emit_assignments: bool,
     tmp_members: &mut Vec<(SharedString, TypeId)>,
     tmp_comb_statements: &mut Vec<VStatement>,
@@ -774,7 +731,6 @@ fn lower_if_statement(
 ) -> VIfStatement {
     let condition = lower_expr(
         if_statement.condition(),
-        VAssignMode::Combinatoric,
         tmp_members,
         tmp_comb_statements,
         tmp_proc_statements,
@@ -783,7 +739,6 @@ fn lower_if_statement(
     );
     let body = lower_block(
         if_statement.body(),
-        mode,
         emit_assignments,
         tmp_members,
         tmp_comb_statements,
@@ -796,7 +751,6 @@ fn lower_if_statement(
     for else_if_block in if_statement.else_if_blocks() {
         let condition = lower_expr(
             else_if_block.condition(),
-            VAssignMode::Combinatoric,
             tmp_members,
             tmp_comb_statements,
             tmp_proc_statements,
@@ -805,7 +759,6 @@ fn lower_if_statement(
         );
         let body = lower_block(
             else_if_block.body(),
-            mode,
             emit_assignments,
             tmp_members,
             tmp_comb_statements,
@@ -819,7 +772,6 @@ fn lower_if_statement(
     let else_block = if_statement.else_block().map(|else_block| {
         lower_block(
             else_block.body(),
-            mode,
             emit_assignments,
             tmp_members,
             tmp_comb_statements,
@@ -840,7 +792,6 @@ enum LoweredMatchStatement {
 
 fn lower_match_statement(
     match_statement: &CheckedMatchStatement,
-    mode: VAssignMode,
     emit_assignments: bool,
     tmp_members: &mut Vec<(SharedString, TypeId)>,
     tmp_comb_statements: &mut Vec<VStatement>,
@@ -853,7 +804,6 @@ fn lower_match_statement(
     if let Some(ResolvedTypeItem::Enum(_)) = &resolved_types.get(&match_statement.value().ty()) {
         let value = lower_expr(
             match_statement.value(),
-            VAssignMode::Combinatoric,
             tmp_members,
             tmp_comb_statements,
             tmp_proc_statements,
@@ -865,7 +815,6 @@ fn lower_match_statement(
         for branch in match_statement.branches() {
             let body = lower_block(
                 branch.body(),
-                mode,
                 emit_assignments,
                 tmp_members,
                 tmp_comb_statements,
@@ -893,7 +842,6 @@ fn lower_match_statement(
 
         let value = lower_expr(
             match_statement.value(),
-            VAssignMode::Combinatoric,
             tmp_members,
             tmp_comb_statements,
             tmp_proc_statements,
@@ -902,7 +850,7 @@ fn lower_match_statement(
         );
 
         let value_target = VAssignTarget::new(SharedString::clone(&value_name), Vec::new());
-        let value_assign = VAssignment::new(value_target, VAssignMode::Combinatoric, value);
+        let value_assign = VAssignment::new(value_target, value);
         tmp_comb_statements.push(VStatement::Assignment(value_assign));
 
         let mut branch_to_cond_body =
@@ -966,7 +914,6 @@ fn lower_match_statement(
 
                 let body = lower_block(
                     branch.body(),
-                    mode,
                     emit_assignments,
                     tmp_members,
                     tmp_comb_statements,
@@ -1016,7 +963,6 @@ fn lower_match_statement(
 
 fn lower_assign_target(
     assign: &CheckedAssignTarget,
-    mode: VAssignMode,
     tmp_members: &mut Vec<(SharedString, TypeId)>,
     tmp_comb_statements: &mut Vec<VStatement>,
     tmp_proc_statements: &mut Vec<VStatement>,
@@ -1032,7 +978,6 @@ fn lower_assign_target(
                 CheckedIndexKind::Single(index) => {
                     let index = lower_expr(
                         index,
-                        mode,
                         tmp_members,
                         tmp_comb_statements,
                         tmp_proc_statements,
@@ -1058,7 +1003,6 @@ fn lower_assign_target(
 
 fn lower_assignment(
     assign: &CheckedAssignment,
-    mode: VAssignMode,
     tmp_members: &mut Vec<(SharedString, TypeId)>,
     tmp_comb_statements: &mut Vec<VStatement>,
     tmp_proc_statements: &mut Vec<VStatement>,
@@ -1067,7 +1011,6 @@ fn lower_assignment(
 ) -> VAssignment {
     let target = lower_assign_target(
         assign.target(),
-        mode,
         tmp_members,
         tmp_comb_statements,
         tmp_proc_statements,
@@ -1076,19 +1019,17 @@ fn lower_assignment(
     );
     let value = lower_expr(
         assign.value(),
-        mode,
         tmp_members,
         tmp_comb_statements,
         tmp_proc_statements,
         known_types,
         resolved_types,
     );
-    VAssignment::new(target, mode, value)
+    VAssignment::new(target, value)
 }
 
 fn lower_statement(
     statement: &CheckedStatement,
-    mode: VAssignMode,
     emit_assignments: bool,
     tmp_members: &mut Vec<(SharedString, TypeId)>,
     tmp_comb_statements: &mut Vec<VStatement>,
@@ -1104,7 +1045,6 @@ fn lower_statement(
         CheckedStatement::Block(body) => {
             let body = lower_block(
                 body,
-                mode,
                 emit_assignments,
                 tmp_members,
                 tmp_comb_statements,
@@ -1117,7 +1057,6 @@ fn lower_statement(
         CheckedStatement::If(if_statement) => {
             let if_statement = lower_if_statement(
                 if_statement,
-                mode,
                 emit_assignments,
                 tmp_members,
                 tmp_comb_statements,
@@ -1130,7 +1069,6 @@ fn lower_statement(
         CheckedStatement::Match(match_statement) => {
             match lower_match_statement(
                 match_statement,
-                mode,
                 emit_assignments,
                 tmp_members,
                 tmp_comb_statements,
@@ -1149,7 +1087,6 @@ fn lower_statement(
             if emit_assignments {
                 let assign = lower_assignment(
                     assign,
-                    mode,
                     tmp_members,
                     tmp_comb_statements,
                     tmp_proc_statements,
@@ -1166,7 +1103,6 @@ fn lower_statement(
 
 fn lower_block(
     block: &CheckedBlock,
-    mode: VAssignMode,
     emit_assignments: bool,
     tmp_members: &mut Vec<(SharedString, TypeId)>,
     tmp_comb_statements: &mut Vec<VStatement>,
@@ -1178,7 +1114,6 @@ fn lower_block(
     for statement in block.statements() {
         if let Some(statement) = lower_statement(
             statement,
-            mode,
             emit_assignments,
             tmp_members,
             tmp_comb_statements,
@@ -1209,7 +1144,6 @@ pub fn lower(
         for s in proc_member.sens() {
             let target = lower_assign_target(
                 s.target(),
-                VAssignMode::Combinatoric,
                 &mut tmp_members,
                 &mut tmp_comb_statements,
                 &mut tmp_proc_statements,
@@ -1221,7 +1155,6 @@ pub fn lower(
 
         let body = lower_block(
             proc_member.body(),
-            VAssignMode::Sequential,
             true,
             &mut tmp_members,
             &mut tmp_comb_statements,
@@ -1245,7 +1178,6 @@ pub fn lower(
 
         let body = lower_block(
             comb_member.body(),
-            VAssignMode::Combinatoric,
             true,
             &mut tmp_members,
             &mut tmp_comb_statements,
@@ -1265,6 +1197,6 @@ pub fn lower(
         VBlock::new(tmp_comb_statements),
         ff_members,
         comb_members,
-        Vec::new(), // TODO:
+        Vec::new(), // Unused
     )
 }

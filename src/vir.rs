@@ -320,37 +320,21 @@ impl VAssignTarget {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VAssignMode {
-    Sequential,
-    Combinatoric,
-}
-
 #[derive(Debug, Clone)]
 pub struct VAssignment {
     target: VAssignTarget,
-    mode: VAssignMode,
     value: VExpr,
 }
 
 impl VAssignment {
     #[inline]
-    pub fn new(target: VAssignTarget, mode: VAssignMode, value: VExpr) -> Self {
-        Self {
-            target,
-            mode,
-            value,
-        }
+    pub fn new(target: VAssignTarget, value: VExpr) -> Self {
+        Self { target, value }
     }
 
     #[inline]
     pub fn target(&self) -> &VAssignTarget {
         &self.target
-    }
-
-    #[inline]
-    pub fn mode(&self) -> VAssignMode {
-        self.mode
     }
 
     #[inline]

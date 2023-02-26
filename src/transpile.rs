@@ -123,6 +123,12 @@ impl ResolvedModuleItem<'_> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AssignMode {
+    Sequential,
+    Combinatoric,
+}
+
 fn get_module_item<'a>(
     id: TypeId,
     known_types: &HashMap<TypeId, ResolvedType>,
@@ -550,7 +556,7 @@ pub fn transpile(
 
         if !module.tmp_statements().statements().is_empty() {
             writeln!(writer, "always_comb begin")?;
-            transpile_block(writer, module.tmp_statements(), 1)?;
+            transpile_block(writer, module.tmp_statements(), 1, AssignMode::Combinatoric)?;
             writeln!(writer, "end\n")?;
         }
 
@@ -585,7 +591,7 @@ pub fn transpile(
 
             writeln!(writer, ") begin")?;
 
-            transpile_block(writer, ff_member.body(), 1)?;
+            transpile_block(writer, ff_member.body(), 1, AssignMode::Sequential)?;
 
             writeln!(writer, "end\n")?;
         }
@@ -593,7 +599,7 @@ pub fn transpile(
         for comb_member in module.comb_members() {
             writeln!(writer, "always_comb begin")?;
 
-            transpile_block(writer, comb_member, 1)?;
+            transpile_block(writer, comb_member, 1, AssignMode::Combinatoric)?;
 
             writeln!(writer, "end\n")?;
         }
@@ -723,6 +729,7 @@ fn transpile_statement(
     writer: &mut impl Write,
     statement: &VStatement,
     level: usize,
+    assign_mode: AssignMode,
 ) -> std::io::Result<()> {
     let leading_ws = str::repeat("    ", level);
 
@@ -730,7 +737,7 @@ fn transpile_statement(
         VStatement::Block(block) => {
             writeln!(writer, "{leading_ws}begin")?;
 
-            transpile_block(writer, block, level + 1)?;
+            transpile_block(writer, block, level + 1, assign_mode)?;
 
             writeln!(writer, "{leading_ws}end")?;
         }
@@ -738,19 +745,19 @@ fn transpile_statement(
             write!(writer, "{leading_ws}if (")?;
             transpile_expr(writer, if_statement.condition())?;
             writeln!(writer, ") begin")?;
-            transpile_block(writer, if_statement.body(), level + 1)?;
+            transpile_block(writer, if_statement.body(), level + 1, assign_mode)?;
 
             for (condition, body) in if_statement.else_if_blocks().iter() {
                 write!(writer, "{leading_ws}end else if (")?;
                 transpile_expr(writer, condition)?;
                 writeln!(writer, ") begin")?;
 
-                transpile_block(writer, body, level + 1)?;
+                transpile_block(writer, body, level + 1, assign_mode)?;
             }
 
             if let Some(else_block) = if_statement.else_block() {
                 writeln!(writer, "{leading_ws}end else begin")?;
-                transpile_block(writer, else_block, level + 1)?;
+                transpile_block(writer, else_block, level + 1, assign_mode)?;
             }
 
             writeln!(writer, "{leading_ws}end")?;
@@ -783,7 +790,7 @@ fn transpile_statement(
                     writeln!(writer, ": begin")?;
                 }
 
-                transpile_block(writer, branch.body(), level + 2)?;
+                transpile_block(writer, branch.body(), level + 2, assign_mode)?;
 
                 writeln!(writer, "{leading_ws}    end")?;
 
@@ -810,9 +817,9 @@ fn transpile_statement(
                 }
             }
 
-            match assign.mode() {
-                VAssignMode::Sequential => write!(writer, " <= ")?,
-                VAssignMode::Combinatoric => write!(writer, " = ")?,
+            match assign_mode {
+                AssignMode::Sequential => write!(writer, " <= ")?,
+                AssignMode::Combinatoric => write!(writer, " = ")?,
             }
 
             transpile_expr(writer, assign.value())?;
@@ -824,9 +831,14 @@ fn transpile_statement(
     Ok(())
 }
 
-fn transpile_block(writer: &mut impl Write, block: &VBlock, level: usize) -> std::io::Result<()> {
+fn transpile_block(
+    writer: &mut impl Write,
+    block: &VBlock,
+    level: usize,
+    assign_mode: AssignMode,
+) -> std::io::Result<()> {
     for statement in block.statements().iter() {
-        transpile_statement(writer, statement, level)?;
+        transpile_statement(writer, statement, level, assign_mode)?;
     }
 
     Ok(())
