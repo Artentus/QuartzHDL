@@ -630,6 +630,8 @@ fn lower_expr(
         }
 
         CheckedExpr::Index(index_expr) => {
+            let tmp_member = add_tmp_member(index_expr.base().ty(), tmp_members);
+
             let base = lower_expr(
                 index_expr.base(),
                 tmp_members,
@@ -638,6 +640,10 @@ fn lower_expr(
                 known_types,
                 resolved_types,
             );
+            tmp_comb_statements.push(VStatement::Assignment(VAssignment::new(
+                VAssignTarget::new(SharedString::clone(&tmp_member), Vec::new()),
+                base,
+            )));
 
             let indexer = match index_expr.indexer() {
                 CheckedIndexKind::Single(index) => VIndexKind::Single(lower_expr(
@@ -651,7 +657,7 @@ fn lower_expr(
                 CheckedIndexKind::Range(range) => VIndexKind::Range(range.clone()),
             };
 
-            VExpr::Index(VIndexExpr::new(base, indexer))
+            VExpr::Index(VIndexExpr::new(VExpr::Ident(tmp_member), indexer))
         }
         CheckedExpr::MemberAccess(member_access) => {
             let base = lower_expr(
