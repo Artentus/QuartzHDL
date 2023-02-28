@@ -1186,11 +1186,11 @@ fn resolve_expr<'a>(
                         errors.push(err);
                     }
                 }
-                IndexKind::Range(range) => {
-                    if let Err(err) = resolve_expr(&range.start, parent_id, scope, args, registry) {
+                IndexKind::Range(start, end) | IndexKind::RangeInclusive(start, end) => {
+                    if let Err(err) = resolve_expr(start, parent_id, scope, args, registry) {
                         errors.push(err);
                     }
-                    if let Err(err) = resolve_expr(&range.end, parent_id, scope, args, registry) {
+                    if let Err(err) = resolve_expr(end, parent_id, scope, args, registry) {
                         errors.push(err);
                     }
                 }
@@ -1246,11 +1246,11 @@ fn resolve_assign_target<'a>(
                         errors.push(err);
                     }
                 }
-                IndexKind::Range(range) => {
-                    if let Err(err) = resolve_expr(&range.start, parent_id, scope, args, registry) {
+                IndexKind::Range(start, end) | IndexKind::RangeInclusive(start, end) => {
+                    if let Err(err) = resolve_expr(start, parent_id, scope, args, registry) {
                         errors.push(err);
                     }
-                    if let Err(err) = resolve_expr(&range.end, parent_id, scope, args, registry) {
+                    if let Err(err) = resolve_expr(end, parent_id, scope, args, registry) {
                         errors.push(err);
                     }
                 }

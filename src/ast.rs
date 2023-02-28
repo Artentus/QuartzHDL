@@ -8,7 +8,6 @@ use langbox::TextSpan;
 use std::cell::Cell;
 use std::fmt::Write;
 use std::hash::Hash;
-use std::ops::Range;
 
 pub trait Spanned {
     fn span(&self) -> TextSpan;
@@ -1026,16 +1025,21 @@ default_display_impl!(MatchExpr);
 #[derive(Debug, Clone)]
 pub enum IndexKind {
     Single(Expr),
-    Range(Range<Expr>),
+    Range(Expr, Expr),
+    RangeInclusive(Expr, Expr),
 }
 
 impl IndexKind {
     pub fn reset_resolved_types(&self) {
         match self {
             Self::Single(expr) => expr.reset_resolved_types(),
-            Self::Range(range) => {
-                range.start.reset_resolved_types();
-                range.end.reset_resolved_types();
+            Self::Range(start, end) => {
+                start.reset_resolved_types();
+                end.reset_resolved_types();
+            }
+            Self::RangeInclusive(start, end) => {
+                start.reset_resolved_types();
+                end.reset_resolved_types();
             }
         }
     }
@@ -1045,7 +1049,8 @@ impl Spanned for IndexKind {
     fn span(&self) -> TextSpan {
         match self {
             Self::Single(index) => index.span(),
-            Self::Range(range) => range.start.span().join(&range.end.span()),
+            Self::Range(start, end) => start.span().join(&end.span()),
+            Self::RangeInclusive(start, end) => start.span().join(&end.span()),
         }
     }
 }
@@ -1054,7 +1059,8 @@ impl DisplayScoped for IndexKind {
     fn fmt(&self, f: &mut ScopedFormatter<'_, '_>) -> std::fmt::Result {
         match self {
             Self::Single(index) => DisplayScoped::fmt(index, f),
-            Self::Range(range) => write!(f, "{}..{}", range.start, range.end),
+            Self::Range(start, end) => write!(f, "{start}..{end}"),
+            Self::RangeInclusive(start, end) => write!(f, "{start}..={end}"),
         }
     }
 }

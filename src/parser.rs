@@ -346,7 +346,8 @@ fn leaf_expr_simple() -> impl QuartzParser<Expr> {
 fn indexer() -> impl QuartzParser<Indexer> {
     let range_end = parser!(
         {punct(PunctKind::DoublePeriod)}
-        .> {expr(true)}!![err!("expected expression")]
+        .> ?{punct(PunctKind::Assign)}
+        <.> {expr(true)}!![err!("expected expression")]
     );
 
     parser!(
@@ -358,10 +359,10 @@ fn indexer() -> impl QuartzParser<Indexer> {
         )
         ->[|(((open_paren, start), end), close_paren)| Indexer::new(
             open_paren,
-            if let Some(end) = end {
-                IndexKind::Range(start..end)
-            } else {
-                IndexKind::Single(start)
+            match end {
+                Some((Some(_), end)) => IndexKind::RangeInclusive(start, end),
+                Some((None, end)) => IndexKind::Range(start, end),
+                None => IndexKind::Single(start),
             },
             close_paren,
         )]

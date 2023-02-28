@@ -99,7 +99,7 @@ mod Alu<BITS>(
             rhs
         };
         adder.c_in = match op {
-            AluOp::Add => 1,
+            AluOp::Add => 0,
             AluOp::AddC => flags_in.c,
             AluOp::Sub => 1,
             AluOp::SubB => flags_in.c,

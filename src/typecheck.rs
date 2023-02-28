@@ -847,9 +847,9 @@ fn typecheck_indexer<'a>(
                 }
             }
         }
-        IndexKind::Range(range) => {
+        IndexKind::Range(range_start, range_end) => {
             // Index ranges can only be constant
-            let start = transform_const_expr(&range.start, scope, false, false)?;
+            let start = transform_const_expr(range_start, scope, false, false)?;
             let start = eval(
                 &start,
                 &mut VarScope::empty(),
@@ -859,7 +859,7 @@ fn typecheck_indexer<'a>(
             )
             .into_result()?;
 
-            let end = transform_const_expr(&range.end, scope, false, false)?;
+            let end = transform_const_expr(range_end, scope, false, false)?;
             let end = eval(
                 &end,
                 &mut VarScope::empty(),
@@ -874,7 +874,7 @@ fn typecheck_indexer<'a>(
                 &ResolvedType::BuiltinBits { width } => {
                     if (start < 0) || (start >= (width as i64)) {
                         return Err(QuartzError::IndexOutOfRange {
-                            index_expr: &range.start,
+                            index_expr: range_start,
                             index: start,
                             len: width,
                         });
@@ -882,7 +882,7 @@ fn typecheck_indexer<'a>(
 
                     if (end <= start) || (end > (width as i64)) {
                         return Err(QuartzError::IndexOutOfRange {
-                            index_expr: &range.end,
+                            index_expr: range_end,
                             index: end,
                             len: width,
                         });
@@ -898,6 +898,69 @@ fn typecheck_indexer<'a>(
                     let result_id = resolve_type_late(&result_ty, known_types);
 
                     let checked_indexer = CheckedIndexKind::Range(start..end);
+                    Ok((checked_indexer, result_id))
+                }
+                ResolvedType::Array { .. } => Err(QuartzError::InvalidRangeIndexing {
+                    indexer,
+                    base_ty: base_ty.to_string(known_types),
+                }),
+                _ => Err(QuartzError::InvalidIndexing {
+                    indexer,
+                    base_ty: base_ty.to_string(known_types),
+                }),
+            }
+        }
+        IndexKind::RangeInclusive(range_start, range_end) => {
+            // Index ranges can only be constant
+            let start = transform_const_expr(range_start, scope, false, false)?;
+            let start = eval(
+                &start,
+                &mut VarScope::empty(),
+                args.global_const_values,
+                Some(args.local_const_values),
+                args.funcs,
+            )
+            .into_result()?;
+
+            let end = transform_const_expr(range_end, scope, false, false)?;
+            let end = eval(
+                &end,
+                &mut VarScope::empty(),
+                args.global_const_values,
+                Some(args.local_const_values),
+                args.funcs,
+            )
+            .into_result()?;
+
+            let base_ty = &known_types[&base_id];
+            match base_ty {
+                &ResolvedType::BuiltinBits { width } => {
+                    if (start < 0) || (start >= (width as i64)) {
+                        return Err(QuartzError::IndexOutOfRange {
+                            index_expr: range_start,
+                            index: start,
+                            len: width,
+                        });
+                    }
+
+                    if (end < start) || (end >= (width as i64)) {
+                        return Err(QuartzError::IndexOutOfRange {
+                            index_expr: range_end,
+                            index: end,
+                            len: width,
+                        });
+                    }
+
+                    let result_width = end - start + 1;
+                    assert!(result_width > 0);
+                    let result_width = result_width as u64;
+
+                    let result_ty = UnresolvedType::BuiltinBits {
+                        width: result_width,
+                    };
+                    let result_id = resolve_type_late(&result_ty, known_types);
+
+                    let checked_indexer = CheckedIndexKind::Range(start..(end + 1));
                     Ok((checked_indexer, result_id))
                 }
                 ResolvedType::Array { .. } => Err(QuartzError::InvalidRangeIndexing {
@@ -980,8 +1043,8 @@ fn typecheck_fixed_indexer<'a>(
                 }),
             }
         }
-        IndexKind::Range(range) => {
-            let start = transform_const_expr(&range.start, scope, false, false)?;
+        IndexKind::Range(range_start, range_end) => {
+            let start = transform_const_expr(range_start, scope, false, false)?;
             let start = eval(
                 &start,
                 &mut VarScope::empty(),
@@ -991,7 +1054,7 @@ fn typecheck_fixed_indexer<'a>(
             )
             .into_result()?;
 
-            let end = transform_const_expr(&range.end, scope, false, false)?;
+            let end = transform_const_expr(range_end, scope, false, false)?;
             let end = eval(
                 &end,
                 &mut VarScope::empty(),
@@ -1006,7 +1069,7 @@ fn typecheck_fixed_indexer<'a>(
                 &ResolvedType::BuiltinBits { width } => {
                     if (start < 0) || (start >= (width as i64)) {
                         return Err(QuartzError::IndexOutOfRange {
-                            index_expr: &range.start,
+                            index_expr: range_start,
                             index: start,
                             len: width,
                         });
@@ -1014,7 +1077,7 @@ fn typecheck_fixed_indexer<'a>(
 
                     if (end <= start) || (end > (width as i64)) {
                         return Err(QuartzError::IndexOutOfRange {
-                            index_expr: &range.end,
+                            index_expr: range_end,
                             index: end,
                             len: width,
                         });
@@ -1030,6 +1093,68 @@ fn typecheck_fixed_indexer<'a>(
                     let result_id = resolve_type_late(&result_ty, known_types);
 
                     let checked_indexer = CheckedIndexKind::Range(start..end);
+                    Ok((checked_indexer, result_id))
+                }
+                ResolvedType::Array { .. } => Err(QuartzError::InvalidRangeIndexing {
+                    indexer,
+                    base_ty: base_ty.to_string(known_types),
+                }),
+                _ => Err(QuartzError::InvalidIndexing {
+                    indexer,
+                    base_ty: base_ty.to_string(known_types),
+                }),
+            }
+        }
+        IndexKind::RangeInclusive(range_start, range_end) => {
+            let start = transform_const_expr(range_start, scope, false, false)?;
+            let start = eval(
+                &start,
+                &mut VarScope::empty(),
+                args.global_const_values,
+                Some(args.local_const_values),
+                args.funcs,
+            )
+            .into_result()?;
+
+            let end = transform_const_expr(range_end, scope, false, false)?;
+            let end = eval(
+                &end,
+                &mut VarScope::empty(),
+                args.global_const_values,
+                Some(args.local_const_values),
+                args.funcs,
+            )
+            .into_result()?;
+
+            let base_ty = &known_types[&base_id];
+            match base_ty {
+                &ResolvedType::BuiltinBits { width } => {
+                    if (start < 0) || (start >= (width as i64)) {
+                        return Err(QuartzError::IndexOutOfRange {
+                            index_expr: range_start,
+                            index: start,
+                            len: width,
+                        });
+                    }
+
+                    if (end < start) || (end >= (width as i64)) {
+                        return Err(QuartzError::IndexOutOfRange {
+                            index_expr: range_end,
+                            index: end,
+                            len: width,
+                        });
+                    }
+
+                    let result_width = end - start + 1;
+                    assert!(result_width > 0);
+                    let result_width = result_width as u64;
+
+                    let result_ty = UnresolvedType::BuiltinBits {
+                        width: result_width,
+                    };
+                    let result_id = resolve_type_late(&result_ty, known_types);
+
+                    let checked_indexer = CheckedIndexKind::Range(start..(end + 1));
                     Ok((checked_indexer, result_id))
                 }
                 ResolvedType::Array { .. } => Err(QuartzError::InvalidRangeIndexing {
