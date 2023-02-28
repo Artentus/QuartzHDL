@@ -318,13 +318,13 @@ fn lower_match_expr(
                 for pattern in branch.patterns() {
                     match pattern {
                         MatchPattern::Literal(value) => {
-                            let value = VExpr::Value(value.value());
+                            let value = VExpr::Literal(VLiteral::new(value.value(), 32));
                             let term = VExpr::Eq(VBinaryExpr::new(value!(), value));
                             cond_terms.push(term);
                         }
                         MatchPattern::Range(start, end) => {
-                            let start = VExpr::Value(start.value());
-                            let end = VExpr::Value(end.value());
+                            let start = VExpr::Literal(VLiteral::new(start.value(), 32));
+                            let end = VExpr::Literal(VLiteral::new(end.value(), 32));
 
                             let lower_bound = VExpr::Gte(VBinaryExpr::new(value!(), start));
                             let upper_bound = VExpr::Lt(VBinaryExpr::new(value!(), end));
@@ -333,8 +333,8 @@ fn lower_match_expr(
                             cond_terms.push(term);
                         }
                         MatchPattern::RangeInclusive(start, end) => {
-                            let start = VExpr::Value(start.value());
-                            let end = VExpr::Value(end.value());
+                            let start = VExpr::Literal(VLiteral::new(start.value(), 32));
+                            let end = VExpr::Literal(VLiteral::new(end.value(), 32));
 
                             let lower_bound = VExpr::Gte(VBinaryExpr::new(value!(), start));
                             let upper_bound = VExpr::Lte(VBinaryExpr::new(value!(), end));
@@ -478,11 +478,11 @@ fn lower_cast_expr(
         &known_types[&cast_expr.target_ty()],
     ) {
         (ResolvedType::Const, &ResolvedType::BuiltinBits { width }) => {
-            let &CheckedExpr::Value(value) = cast_expr.value() else {
+            let CheckedExpr::Value(value) = cast_expr.value() else {
                 unreachable!();
             };
 
-            VExpr::Literal(VLiteral::new(value, width))
+            VExpr::Literal(VLiteral::new(value.value(), width))
         }
         (
             &ResolvedType::BuiltinBits { width: value_width },
@@ -581,7 +581,7 @@ fn lower_expr(
     }
 
     match expr {
-        CheckedExpr::Value(value) => VExpr::Value(*value),
+        CheckedExpr::Value(value) => VExpr::Literal(VLiteral::new(value.value(), value.width())),
         CheckedExpr::Path(path) => VExpr::Ident(lower_path(path.path()).into()),
 
         CheckedExpr::Construct(construct_expr) => lower_construct_expr(
@@ -872,13 +872,13 @@ fn lower_match_statement(
                 for pattern in branch.patterns() {
                     match pattern {
                     MatchPattern::Literal(value) => {
-                        let value = VExpr::Value(value.value());
+                        let value = VExpr::Literal(VLiteral::new(value.value(), 32));
                         let term = VExpr::Eq(VBinaryExpr::new(value!(), value));
                         cond_terms.push(term);
                     }
                     MatchPattern::Range(start, end) => {
-                        let start = VExpr::Value(start.value());
-                        let end = VExpr::Value(end.value());
+                        let start = VExpr::Literal(VLiteral::new(start.value(), 32));
+                        let end = VExpr::Literal(VLiteral::new(end.value(), 32));
 
                         let lower_bound = VExpr::Gte(VBinaryExpr::new(value!(), start));
                         let upper_bound = VExpr::Lt(VBinaryExpr::new(value!(), end));
@@ -887,8 +887,8 @@ fn lower_match_statement(
                         cond_terms.push(term);
                     }
                     MatchPattern::RangeInclusive(start, end) => {
-                        let start = VExpr::Value(start.value());
-                        let end = VExpr::Value(end.value());
+                        let start = VExpr::Literal(VLiteral::new(start.value(), 32));
+                        let end = VExpr::Literal(VLiteral::new(end.value(), 32));
 
                         let lower_bound = VExpr::Gte(VBinaryExpr::new(value!(), start));
                         let upper_bound = VExpr::Lte(VBinaryExpr::new(value!(), end));

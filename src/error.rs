@@ -241,6 +241,14 @@ pub enum QuartzError<'a> {
     NonConstLoopControl {
         kw: &'a Keyword,
     },
+    NotInferrable {
+        expr_span: TextSpan,
+    },
+    ConstantOutOfRange {
+        expr_span: TextSpan,
+        value: i64,
+        width: u64,
+    },
     LexerError(QuartzLexerError),
     ParseError(QuartzParserError),
     ArithmeticError(ArithmeticError),

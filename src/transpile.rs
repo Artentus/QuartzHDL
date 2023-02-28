@@ -662,7 +662,6 @@ fn transpile_expr(writer: &mut impl Write, expr: &VExpr) -> std::io::Result<()> 
     }
 
     match expr {
-        VExpr::Value(value) => write!(writer, "{value}")?,
         VExpr::Literal(literal) => write!(writer, "{literal}")?,
         VExpr::HighZLiteral(width) => write!(writer, "{width}'dZ")?,
         VExpr::Ident(ident) => write!(writer, "{ident}")?,

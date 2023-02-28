@@ -313,6 +313,39 @@ pub enum ConstExpr {
     Asr(ConstBinaryExpr),
 }
 
+impl Spanned for ConstExpr {
+    fn span(&self) -> TextSpan {
+        match self {
+            ConstExpr::Value(_) => panic!("Expression does not have a span"),
+            ConstExpr::Literal(literal) => literal.span(),
+            ConstExpr::Ident(ident) => ident.span(),
+            ConstExpr::Call(expr) => expr.span(),
+            ConstExpr::If(expr) => expr.span(),
+            ConstExpr::Match(expr) => expr.span(),
+            ConstExpr::Block(expr) => expr.span(),
+            ConstExpr::Neg(expr) => expr.span(),
+            ConstExpr::Not(expr) => expr.span(),
+            ConstExpr::Lt(expr) => expr.span(),
+            ConstExpr::Lte(expr) => expr.span(),
+            ConstExpr::Gt(expr) => expr.span(),
+            ConstExpr::Gte(expr) => expr.span(),
+            ConstExpr::Eq(expr) => expr.span(),
+            ConstExpr::Ne(expr) => expr.span(),
+            ConstExpr::Add(expr) => expr.span(),
+            ConstExpr::Sub(expr) => expr.span(),
+            ConstExpr::Mul(expr) => expr.span(),
+            ConstExpr::Div(expr) => expr.span(),
+            ConstExpr::Rem(expr) => expr.span(),
+            ConstExpr::And(expr) => expr.span(),
+            ConstExpr::Xor(expr) => expr.span(),
+            ConstExpr::Or(expr) => expr.span(),
+            ConstExpr::Shl(expr) => expr.span(),
+            ConstExpr::Lsr(expr) => expr.span(),
+            ConstExpr::Asr(expr) => expr.span(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ConstDeclaration {
     name: Ident,
@@ -562,10 +595,12 @@ pub enum ResolvedType {
     },
 }
 
+pub const CONST_TYPE_NAME: Cow<'static, str> = Cow::Borrowed("const int");
+
 impl ResolvedType {
     pub fn to_string(&self, known_types: &HashMap<TypeId, ResolvedType>) -> Cow<'static, str> {
         match self {
-            Self::Const => "const int".into(),
+            Self::Const => CONST_TYPE_NAME,
             Self::BuiltinBits { width } => {
                 if *width == 1 {
                     "bit".into()
@@ -1418,10 +1453,41 @@ impl Typed for CheckedExprBlock {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct TypedValue {
+    value: i64,
+    width: u64,
+    ty: TypeId,
+}
+
+impl TypedValue {
+    #[inline]
+    pub fn new(value: i64, width: u64, ty: TypeId) -> Self {
+        Self { value, width, ty }
+    }
+
+    #[inline]
+    pub fn value(&self) -> i64 {
+        self.value
+    }
+
+    #[inline]
+    pub fn width(&self) -> u64 {
+        self.width
+    }
+}
+
+impl Typed for TypedValue {
+    #[inline]
+    fn ty(&self) -> TypeId {
+        self.ty
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum CheckedExpr {
     // Leaf expressions
-    Value(i64),
+    Value(TypedValue),
     Path(CheckedPath),
     Construct(CheckedConstructExpr),
 
@@ -1462,7 +1528,7 @@ pub enum CheckedExpr {
 impl Typed for CheckedExpr {
     fn ty(&self) -> TypeId {
         match self {
-            Self::Value(_) => *CONST_TYPE_ID,
+            Self::Value(value) => value.ty(),
             Self::Path(path) => path.ty(),
             Self::Construct(expr) => expr.ty(),
             Self::If(expr) => expr.ty(),

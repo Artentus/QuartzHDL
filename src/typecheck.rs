@@ -45,6 +45,40 @@ impl<A, B: Typed> Either<A, B> {
     }
 }
 
+fn eval_const_expr<'a>(
+    expr: ConstExpr,
+    width: u64,
+    known_types: &mut HashMap<TypeId, ResolvedType>,
+    args: &TypecheckArgs,
+) -> QuartzResult<'a, CheckedExpr> {
+    let value = eval(
+        &expr,
+        &mut VarScope::empty(),
+        args.global_const_values,
+        Some(args.local_const_values),
+        args.funcs,
+    )
+    .into_result()?;
+
+    let value_width = if value >= 0 {
+        ((value + 1) as u64).clog2()
+    } else {
+        (value.abs() as u64).clog2() + 1
+    };
+    if value_width > width {
+        return Err(QuartzError::ConstantOutOfRange {
+            expr_span: expr.span(),
+            value,
+            width,
+        });
+    }
+
+    let ty = UnresolvedType::BuiltinBits { width };
+    let ty = resolve_type_late(&ty, known_types);
+
+    Ok(CheckedExpr::Value(TypedValue::new(value, width, ty)))
+}
+
 fn typecheck_unary_expr<'a>(
     expr: &'a UnaryExpr,
     parent_module: &ResolvedModule,
@@ -53,6 +87,7 @@ fn typecheck_unary_expr<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
+    infer_width: Option<u64>,
 ) -> QuartzResult<'a, Either<ConstUnaryExpr, CheckedUnaryExpr>> {
     let inner = typecheck_expr(
         expr.inner(),
@@ -62,6 +97,7 @@ fn typecheck_unary_expr<'a>(
         known_types,
         resolved_types,
         args,
+        infer_width,
     )?;
 
     match inner {
@@ -91,6 +127,7 @@ fn typecheck_binary_expr<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
+    infer_width: Option<u64>,
 ) -> QuartzResult<'a, Either<ConstBinaryExpr, CheckedBinaryExpr>> {
     let mut errors = Vec::new();
 
@@ -102,6 +139,7 @@ fn typecheck_binary_expr<'a>(
         known_types,
         resolved_types,
         args,
+        infer_width,
     ) {
         Ok(lhs) => Some(lhs),
         Err(err) => {
@@ -118,6 +156,7 @@ fn typecheck_binary_expr<'a>(
         known_types,
         resolved_types,
         args,
+        infer_width,
     ) {
         Ok(rhs) => Some(rhs),
         Err(err) => {
@@ -137,44 +176,41 @@ fn typecheck_binary_expr<'a>(
         (Either::Const(lhs), Either::Const(rhs)) => {
             Ok(Either::Const(ConstBinaryExpr::new(lhs, rhs, expr.span())))
         }
-        (lhs, rhs) => {
-            let lhs = match merge_expr(lhs, args) {
-                Ok(lhs) => Some(lhs),
-                Err(err) => {
-                    errors.push(err);
-                    None
-                }
-            };
+        (Either::Checked(lhs), Either::Const(rhs)) => {
+            let ty = lhs.ty();
+            let lhs_ty = &known_types[&ty];
 
-            let rhs = match merge_expr(rhs, args) {
-                Ok(rhs) => Some(rhs),
-                Err(err) => {
-                    errors.push(err);
-                    None
-                }
-            };
-
-            if !errors.is_empty() {
-                return Err(QuartzError::new_list(errors));
+            if let &ResolvedType::BuiltinBits { width } = lhs_ty {
+                let rhs = eval_const_expr(rhs, width, known_types, args)?;
+                Ok(Either::Checked(CheckedBinaryExpr::new(lhs, rhs, ty)))
+            } else {
+                Err(QuartzError::IncompatibleTypes {
+                    expr,
+                    lhs_ty: lhs_ty.to_string(known_types),
+                    rhs_ty: CONST_TYPE_NAME,
+                })
             }
+        }
+        (Either::Const(lhs), Either::Checked(rhs)) => {
+            let ty = rhs.ty();
+            let rhs_ty = &known_types[&ty];
 
-            let lhs = lhs.unwrap();
-            let rhs = rhs.unwrap();
+            if let &ResolvedType::BuiltinBits { width } = rhs_ty {
+                let lhs = eval_const_expr(lhs, width, known_types, args)?;
+                Ok(Either::Checked(CheckedBinaryExpr::new(lhs, rhs, ty)))
+            } else {
+                Err(QuartzError::IncompatibleTypes {
+                    expr,
+                    lhs_ty: CONST_TYPE_NAME,
+                    rhs_ty: rhs_ty.to_string(known_types),
+                })
+            }
+        }
+        (Either::Checked(lhs), Either::Checked(rhs)) => {
             let lhs_ty = &known_types[&lhs.ty()];
             let rhs_ty = &known_types[&rhs.ty()];
 
             match (lhs_ty, rhs_ty) {
-                (ResolvedType::Const, ResolvedType::Const) => {
-                    unreachable!("error in constant folding")
-                }
-                (ResolvedType::Const, &ResolvedType::BuiltinBits { .. }) => {
-                    let id = rhs.ty();
-                    Ok(Either::Checked(CheckedBinaryExpr::new(lhs, rhs, id)))
-                }
-                (&ResolvedType::BuiltinBits { .. }, ResolvedType::Const) => {
-                    let id = lhs.ty();
-                    Ok(Either::Checked(CheckedBinaryExpr::new(lhs, rhs, id)))
-                }
                 (
                     &ResolvedType::BuiltinBits { width: lhs_width },
                     &ResolvedType::BuiltinBits { width: rhs_width },
@@ -211,6 +247,7 @@ fn typecheck_compare_expr<'a>(
         known_types,
         resolved_types,
         args,
+        None,
     ) {
         Ok(lhs) => Some(lhs),
         Err(err) => {
@@ -227,6 +264,7 @@ fn typecheck_compare_expr<'a>(
         known_types,
         resolved_types,
         args,
+        None,
     ) {
         Ok(rhs) => Some(rhs),
         Err(err) => {
@@ -246,45 +284,49 @@ fn typecheck_compare_expr<'a>(
         (Either::Const(lhs), Either::Const(rhs)) => {
             Ok(Either::Const(ConstBinaryExpr::new(lhs, rhs, expr.span())))
         }
-        (lhs, rhs) => {
-            let lhs = match merge_expr(lhs, args) {
-                Ok(lhs) => Some(lhs),
-                Err(err) => {
-                    errors.push(err);
-                    None
-                }
-            };
+        (Either::Checked(lhs), Either::Const(rhs)) => {
+            let lhs_ty = &known_types[&lhs.ty()];
 
-            let rhs = match merge_expr(rhs, args) {
-                Ok(rhs) => Some(rhs),
-                Err(err) => {
-                    errors.push(err);
-                    None
-                }
-            };
+            if let &ResolvedType::BuiltinBits { width } = lhs_ty {
+                let rhs = eval_const_expr(rhs, width, known_types, args)?;
 
-            if !errors.is_empty() {
-                return Err(QuartzError::new_list(errors));
+                // Returns a single bit (boolean)
+                let result_ty = UnresolvedType::BuiltinBits { width: 1 };
+                let result_id = resolve_type_late(&result_ty, known_types);
+                Ok(Either::Checked(CheckedBinaryExpr::new(lhs, rhs, result_id)))
+            } else {
+                Err(QuartzError::IncompatibleTypes {
+                    expr,
+                    lhs_ty: lhs_ty.to_string(known_types),
+                    rhs_ty: CONST_TYPE_NAME,
+                })
             }
+        }
+        (Either::Const(lhs), Either::Checked(rhs)) => {
+            let rhs_ty = &known_types[&rhs.ty()];
 
-            let lhs = lhs.unwrap();
-            let rhs = rhs.unwrap();
+            if let &ResolvedType::BuiltinBits { width } = rhs_ty {
+                let lhs = eval_const_expr(lhs, width, known_types, args)?;
+
+                // Returns a single bit (boolean)
+                let result_ty = UnresolvedType::BuiltinBits { width: 1 };
+                let result_id = resolve_type_late(&result_ty, known_types);
+                Ok(Either::Checked(CheckedBinaryExpr::new(lhs, rhs, result_id)))
+            } else {
+                Err(QuartzError::IncompatibleTypes {
+                    expr,
+                    lhs_ty: CONST_TYPE_NAME,
+                    rhs_ty: rhs_ty.to_string(known_types),
+                })
+            }
+        }
+        (Either::Checked(lhs), Either::Checked(rhs)) => {
             let lhs_id = lhs.ty();
             let rhs_id = rhs.ty();
             let lhs_ty = &known_types[&lhs_id];
             let rhs_ty = &known_types[&rhs_id];
 
             match (lhs_ty, rhs_ty) {
-                (ResolvedType::Const, ResolvedType::Const) => {
-                    unreachable!("error in constant folding")
-                }
-                (ResolvedType::Const, &ResolvedType::BuiltinBits { .. })
-                | (&ResolvedType::BuiltinBits { .. }, ResolvedType::Const) => {
-                    // Returns a single bit (boolean)
-                    let result_ty = UnresolvedType::BuiltinBits { width: 1 };
-                    let result_id = resolve_type_late(&result_ty, known_types);
-                    Ok(Either::Checked(CheckedBinaryExpr::new(lhs, rhs, result_id)))
-                }
                 (
                     &ResolvedType::BuiltinBits { width: lhs_width },
                     &ResolvedType::BuiltinBits { width: rhs_width },
@@ -332,6 +374,7 @@ fn typecheck_concat_expr<'a>(
         known_types,
         resolved_types,
         args,
+        None,
     ) {
         Ok(lhs) => Some(lhs),
         Err(err) => {
@@ -348,6 +391,7 @@ fn typecheck_concat_expr<'a>(
         known_types,
         resolved_types,
         args,
+        None,
     ) {
         Ok(rhs) => Some(rhs),
         Err(err) => {
@@ -412,6 +456,7 @@ fn typecheck_cast_expr<'a>(
         known_types,
         resolved_types,
         args,
+        None,
     )?;
 
     let target_id = expr.resolved_ty().expect("type not properly resolved");
@@ -419,18 +464,11 @@ fn typecheck_cast_expr<'a>(
 
     let value = match target_ty {
         ResolvedType::Const => unreachable!("type cannot be declared"),
-        ResolvedType::BuiltinBits { .. } => match value {
+        &ResolvedType::BuiltinBits { width } => match value {
             Either::Const(value) => {
-                let value = eval(
-                    &value,
-                    &mut VarScope::empty(),
-                    args.global_const_values,
-                    Some(args.local_const_values),
-                    args.funcs,
-                )
-                .into_result()?;
+                let value = eval_const_expr(value, width, known_types, args)?;
 
-                return Ok(CheckedCastExpr::new(CheckedExpr::Value(value), target_id));
+                return Ok(CheckedCastExpr::new(value, target_id));
             }
             Either::Checked(value) => {
                 let value_ty = &known_types[&value.ty()];
@@ -459,26 +497,6 @@ fn typecheck_cast_expr<'a>(
         value_ty: value.ty_string(known_types),
         expr,
     })
-}
-
-fn merge_expr<'a>(
-    expr: Either<ConstExpr, CheckedExpr>,
-    args: &TypecheckArgs,
-) -> QuartzResult<'a, CheckedExpr> {
-    match expr {
-        Either::Const(expr) => {
-            let value = eval(
-                &expr,
-                &mut VarScope::empty(),
-                args.global_const_values,
-                Some(args.local_const_values),
-                args.funcs,
-            )
-            .into_result()?;
-            Ok(CheckedExpr::Value(value))
-        }
-        Either::Checked(expr) => Ok(expr),
-    }
 }
 
 fn typecheck_construct_expr<'a>(
@@ -517,6 +535,12 @@ fn typecheck_construct_expr<'a>(
 
                         match assign {
                             Some(assign) => {
+                                let field_ty = &known_types[&field_id];
+                                let infer_width = match field_ty {
+                                    &ResolvedType::BuiltinBits { width } => Some(width),
+                                    _ => None,
+                                };
+
                                 let value = typecheck_expr(
                                     assign.value(),
                                     parent_module,
@@ -525,30 +549,38 @@ fn typecheck_construct_expr<'a>(
                                     known_types,
                                     resolved_types,
                                     args,
+                                    infer_width,
                                 );
 
+                                let field_ty = &known_types[&field_id];
                                 match value {
-                                    Ok(value) => {
-                                        let value = merge_expr(value, args);
-                                        match value {
-                                            Ok(value) => {
-                                                if value.ty() == field_id {
+                                    Ok(Either::Const(value)) => match field_ty {
+                                        &ResolvedType::BuiltinBits { width } => {
+                                            match eval_const_expr(value, width, known_types, args) {
+                                                Ok(value) => {
                                                     fields.insert(SharedString::clone(name), value);
-                                                } else {
-                                                    let field_ty = &known_types[&field_id];
-                                                    let value_ty = &known_types[&value.ty()];
-                                                    errors.push(
-                                                        QuartzError::IncompatibleFieldType {
-                                                            assign,
-                                                            field_ty: field_ty
-                                                                .to_string(known_types),
-                                                            value_ty: value_ty
-                                                                .to_string(known_types),
-                                                        },
-                                                    );
                                                 }
+                                                Err(err) => errors.push(err),
                                             }
-                                            Err(err) => errors.push(err),
+                                        }
+                                        _ => {
+                                            errors.push(QuartzError::IncompatibleFieldType {
+                                                assign,
+                                                field_ty: field_ty.to_string(known_types),
+                                                value_ty: CONST_TYPE_NAME,
+                                            });
+                                        }
+                                    },
+                                    Ok(Either::Checked(value)) => {
+                                        if value.ty() == field_id {
+                                            fields.insert(SharedString::clone(name), value);
+                                        } else {
+                                            let value_ty = &known_types[&value.ty()];
+                                            errors.push(QuartzError::IncompatibleFieldType {
+                                                assign,
+                                                field_ty: field_ty.to_string(known_types),
+                                                value_ty: value_ty.to_string(known_types),
+                                            });
                                         }
                                     }
                                     Err(err) => errors.push(err),
@@ -709,6 +741,7 @@ fn typecheck_indexer<'a>(
                 known_types,
                 resolved_types,
                 args,
+                None,
             )?;
 
             match index {
@@ -721,34 +754,47 @@ fn typecheck_indexer<'a>(
                         args.funcs,
                     )
                     .into_result()?;
-                    let checked_indexer = CheckedIndexKind::Single(CheckedExpr::Value(index));
 
                     let base_ty = &known_types[&base_id];
                     match base_ty {
-                        ResolvedType::BuiltinBits { width } => {
-                            if (index < 0) || (index >= (*width as i64)) {
+                        &ResolvedType::BuiltinBits { width } => {
+                            if (index < 0) || (index >= (width as i64)) {
                                 return Err(QuartzError::IndexOutOfRange {
                                     index_expr,
                                     index,
-                                    len: *width,
+                                    len: width,
                                 });
                             }
 
                             let result_ty = UnresolvedType::BuiltinBits { width: 1 };
                             let result_id = resolve_type_late(&result_ty, known_types);
 
+                            let index_ty = UnresolvedType::BuiltinBits {
+                                width: width.clog2(),
+                            };
+                            let index_id = resolve_type_late(&index_ty, known_types);
+                            let checked_indexer = CheckedIndexKind::Single(CheckedExpr::Value(
+                                TypedValue::new(index, width.clog2(), index_id),
+                            ));
+
                             Ok((checked_indexer, result_id))
                         }
-                        ResolvedType::Array { item_ty, len } => {
-                            if (index < 0) || (index >= (*len as i64)) {
+                        &ResolvedType::Array { item_ty, len } => {
+                            if (index < 0) || (index >= (len as i64)) {
                                 return Err(QuartzError::IndexOutOfRange {
                                     index_expr,
                                     index,
-                                    len: *len,
+                                    len,
                                 });
                             }
 
-                            Ok((checked_indexer, *item_ty))
+                            let index_ty = UnresolvedType::BuiltinBits { width: len.clog2() };
+                            let index_id = resolve_type_late(&index_ty, known_types);
+                            let checked_indexer = CheckedIndexKind::Single(CheckedExpr::Value(
+                                TypedValue::new(index, len.clog2(), index_id),
+                            ));
+
+                            Ok((checked_indexer, item_ty))
                         }
                         _ => Err(QuartzError::InvalidIndexing {
                             indexer,
@@ -759,8 +805,8 @@ fn typecheck_indexer<'a>(
                 Either::Checked(index) => {
                     let base_ty = &known_types[&base_id];
                     let required_index_width = match base_ty {
-                        ResolvedType::BuiltinBits { width } => width.clog2(),
-                        ResolvedType::Array { len, .. } => len.clog2(),
+                        &ResolvedType::BuiltinBits { width } => width.clog2(),
+                        &ResolvedType::Array { len, .. } => len.clog2(),
                         _ => {
                             return Err(QuartzError::InvalidIndexing {
                                 indexer,
@@ -777,7 +823,7 @@ fn typecheck_indexer<'a>(
 
                     let base_ty = &known_types[&base_id];
                     let index_ty = &known_types[&index.ty()];
-                    if let ResolvedType::BuiltinBits { width } = index_ty && (*width == required_index_width) {
+                    if let &ResolvedType::BuiltinBits { width } = index_ty && (width == required_index_width) {
                         let indexer = CheckedIndexKind::Single(index);
 
                         match base_ty {
@@ -786,8 +832,8 @@ fn typecheck_indexer<'a>(
                                 let result_id = resolve_type_late(&result_ty, known_types);
                                 Ok((indexer, result_id))
                             }
-                            ResolvedType::Array { item_ty, .. } => {
-                                Ok((indexer, *item_ty))
+                            &ResolvedType::Array { item_ty, .. } => {
+                                Ok((indexer, item_ty))
                             }
                             _ => unreachable!(),
                         }
@@ -825,20 +871,20 @@ fn typecheck_indexer<'a>(
 
             let base_ty = &known_types[&base_id];
             match base_ty {
-                ResolvedType::BuiltinBits { width } => {
-                    if (start < 0) || (start >= (*width as i64)) {
+                &ResolvedType::BuiltinBits { width } => {
+                    if (start < 0) || (start >= (width as i64)) {
                         return Err(QuartzError::IndexOutOfRange {
                             index_expr: &range.start,
                             index: start,
-                            len: *width,
+                            len: width,
                         });
                     }
 
-                    if (end <= start) || (end > (*width as i64)) {
+                    if (end <= start) || (end > (width as i64)) {
                         return Err(QuartzError::IndexOutOfRange {
                             index_expr: &range.end,
                             index: end,
-                            len: *width,
+                            len: width,
                         });
                     }
 
@@ -874,7 +920,7 @@ fn typecheck_fixed_indexer<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     args: &TypecheckArgs,
 ) -> QuartzResult<'a, (CheckedIndexKind, TypeId)> {
-    // Fixed indexer only accept constant indices
+    // Fixed indexers only accept constant indices
     match indexer.index() {
         IndexKind::Single(index_expr) => {
             let index = transform_const_expr(index_expr, scope, false, false)?;
@@ -886,34 +932,47 @@ fn typecheck_fixed_indexer<'a>(
                 args.funcs,
             )
             .into_result()?;
-            let checked_indexer = CheckedIndexKind::Single(CheckedExpr::Value(index));
 
             let base_ty = &known_types[&base_id];
             match base_ty {
-                ResolvedType::BuiltinBits { width } => {
-                    if (index < 0) || (index >= (*width as i64)) {
+                &ResolvedType::BuiltinBits { width } => {
+                    if (index < 0) || (index >= (width as i64)) {
                         return Err(QuartzError::IndexOutOfRange {
                             index_expr,
                             index,
-                            len: *width,
+                            len: width,
                         });
                     }
 
                     let result_ty = UnresolvedType::BuiltinBits { width: 1 };
                     let result_id = resolve_type_late(&result_ty, known_types);
 
+                    let index_ty = UnresolvedType::BuiltinBits {
+                        width: width.clog2(),
+                    };
+                    let index_id = resolve_type_late(&index_ty, known_types);
+                    let checked_indexer = CheckedIndexKind::Single(CheckedExpr::Value(
+                        TypedValue::new(index, width.clog2(), index_id),
+                    ));
+
                     Ok((checked_indexer, result_id))
                 }
-                ResolvedType::Array { item_ty, len } => {
-                    if (index < 0) || (index >= (*len as i64)) {
+                &ResolvedType::Array { item_ty, len } => {
+                    if (index < 0) || (index >= (len as i64)) {
                         return Err(QuartzError::IndexOutOfRange {
                             index_expr,
                             index,
-                            len: *len,
+                            len,
                         });
                     }
 
-                    Ok((checked_indexer, *item_ty))
+                    let index_ty = UnresolvedType::BuiltinBits { width: len.clog2() };
+                    let index_id = resolve_type_late(&index_ty, known_types);
+                    let checked_indexer = CheckedIndexKind::Single(CheckedExpr::Value(
+                        TypedValue::new(index, len.clog2(), index_id),
+                    ));
+
+                    Ok((checked_indexer, item_ty))
                 }
                 _ => Err(QuartzError::InvalidIndexing {
                     indexer,
@@ -944,20 +1003,20 @@ fn typecheck_fixed_indexer<'a>(
 
             let base_ty = &known_types[&base_id];
             match base_ty {
-                ResolvedType::BuiltinBits { width } => {
-                    if (start < 0) || (start >= (*width as i64)) {
+                &ResolvedType::BuiltinBits { width } => {
+                    if (start < 0) || (start >= (width as i64)) {
                         return Err(QuartzError::IndexOutOfRange {
                             index_expr: &range.start,
                             index: start,
-                            len: *width,
+                            len: width,
                         });
                     }
 
-                    if (end <= start) || (end > (*width as i64)) {
+                    if (end <= start) || (end > (width as i64)) {
                         return Err(QuartzError::IndexOutOfRange {
                             index_expr: &range.end,
                             index: end,
-                            len: *width,
+                            len: width,
                         });
                     }
 
@@ -1003,8 +1062,17 @@ fn typecheck_index_expr<'a>(
         known_types,
         resolved_types,
         args,
+        None,
     )?;
-    let base = merge_expr(base, args)?;
+
+    let base = match base {
+        Either::Const(base) => {
+            return Err(QuartzError::NotInferrable {
+                expr_span: base.span(),
+            });
+        }
+        Either::Checked(base) => base,
+    };
 
     let (indexer, ty) = typecheck_indexer(
         expr.indexer(),
@@ -1037,8 +1105,17 @@ fn typecheck_member_access_expr<'a>(
         known_types,
         resolved_types,
         args,
+        None,
     )?;
-    let base = merge_expr(base, args)?;
+
+    let base = match base {
+        Either::Const(base) => {
+            return Err(QuartzError::NotInferrable {
+                expr_span: base.span(),
+            });
+        }
+        Either::Checked(base) => base,
+    };
 
     let (ty, dir) = find_member_type(
         expr.member().member(),
@@ -1069,6 +1146,7 @@ fn typecheck_if_expr<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
+    infer_width: Option<u64>,
 ) -> QuartzResult<'a, CheckedIfExpr> {
     let mut errors = Vec::new();
 
@@ -1080,26 +1158,28 @@ fn typecheck_if_expr<'a>(
         known_types,
         resolved_types,
         args,
+        Some(1),
     ) {
-        Ok(cond) => match merge_expr(cond, args) {
-            Ok(cond) => {
-                let cond_ty = &known_types[&cond.ty()];
-                match cond_ty {
-                    ResolvedType::Const | ResolvedType::BuiltinBits { width: 1 } => Some(cond),
-                    _ => {
-                        errors.push(QuartzError::InvalidConditionType {
-                            cond: expr.condition(),
-                            cond_ty: cond_ty.to_string(known_types),
-                        });
-                        None
-                    }
+        Ok(Either::Const(_)) => {
+            errors.push(QuartzError::InvalidConditionType {
+                cond: expr.condition(),
+                cond_ty: CONST_TYPE_NAME,
+            });
+            None
+        }
+        Ok(Either::Checked(cond)) => {
+            let cond_ty = &known_types[&cond.ty()];
+            match cond_ty {
+                ResolvedType::BuiltinBits { width: 1 } => Some(cond),
+                _ => {
+                    errors.push(QuartzError::InvalidConditionType {
+                        cond: expr.condition(),
+                        cond_ty: cond_ty.to_string(known_types),
+                    });
+                    None
                 }
             }
-            Err(err) => {
-                errors.push(err);
-                None
-            }
-        },
+        }
         Err(err) => {
             errors.push(err);
             None
@@ -1114,6 +1194,7 @@ fn typecheck_if_expr<'a>(
         known_types,
         resolved_types,
         args,
+        infer_width,
     ) {
         Ok(body) => Some(body),
         Err(err) => {
@@ -1132,26 +1213,28 @@ fn typecheck_if_expr<'a>(
             known_types,
             resolved_types,
             args,
+            Some(1),
         ) {
-            Ok(cond) => match merge_expr(cond, args) {
-                Ok(cond) => {
-                    let cond_ty = &known_types[&cond.ty()];
-                    match cond_ty {
-                        ResolvedType::Const | ResolvedType::BuiltinBits { width: 1 } => Some(cond),
-                        _ => {
-                            errors.push(QuartzError::InvalidConditionType {
-                                cond: expr.condition(),
-                                cond_ty: cond_ty.to_string(known_types),
-                            });
-                            None
-                        }
+            Ok(Either::Const(_)) => {
+                errors.push(QuartzError::InvalidConditionType {
+                    cond: expr.condition(),
+                    cond_ty: CONST_TYPE_NAME,
+                });
+                None
+            }
+            Ok(Either::Checked(cond)) => {
+                let cond_ty = &known_types[&cond.ty()];
+                match cond_ty {
+                    ResolvedType::BuiltinBits { width: 1 } => Some(cond),
+                    _ => {
+                        errors.push(QuartzError::InvalidConditionType {
+                            cond: expr.condition(),
+                            cond_ty: cond_ty.to_string(known_types),
+                        });
+                        None
                     }
                 }
-                Err(err) => {
-                    errors.push(err);
-                    None
-                }
-            },
+            }
             Err(err) => {
                 errors.push(err);
                 None
@@ -1166,6 +1249,7 @@ fn typecheck_if_expr<'a>(
             known_types,
             resolved_types,
             args,
+            infer_width,
         ) {
             Ok(body) => Some(body),
             Err(err) => {
@@ -1188,6 +1272,7 @@ fn typecheck_if_expr<'a>(
             known_types,
             resolved_types,
             args,
+            infer_width,
         ) {
             Ok(body) => Some(CheckedIfExprElseBlock::new(body)),
             Err(err) => {
@@ -1426,6 +1511,7 @@ fn typecheck_match_expr<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
+    infer_width: Option<u64>,
 ) -> QuartzResult<'a, CheckedMatchExpr> {
     let mut errors = Vec::new();
 
@@ -1437,14 +1523,16 @@ fn typecheck_match_expr<'a>(
         known_types,
         resolved_types,
         args,
+        None,
     ) {
-        Ok(value) => match merge_expr(value, args) {
-            Ok(value) => Some(value),
-            Err(err) => {
-                errors.push(err);
-                None
-            }
-        },
+        Ok(Either::Const(_)) => {
+            errors.push(QuartzError::InvalidMatchType {
+                value: expr.value(),
+                value_ty: CONST_TYPE_NAME,
+            });
+            None
+        }
+        Ok(Either::Checked(value)) => Some(value),
         Err(err) => {
             errors.push(err);
             None
@@ -1464,17 +1552,31 @@ fn typecheck_match_expr<'a>(
                     known_types,
                     resolved_types,
                     args,
+                    infer_width,
                 ) {
-                    Ok(body_expr) => match merge_expr(body_expr, args) {
-                        Ok(body_expr) => CheckedMatchExprBranch::new(
-                            branch.patterns().to_vec(),
-                            CheckedMatchExprBody::Expr(body_expr),
-                        ),
-                        Err(err) => {
-                            errors.push(err);
+                    Ok(Either::Const(body_expr)) => {
+                        if let Some(infer_width) = infer_width {
+                            match eval_const_expr(body_expr, infer_width, known_types, args) {
+                                Ok(body_expr) => CheckedMatchExprBranch::new(
+                                    branch.patterns().to_vec(),
+                                    CheckedMatchExprBody::Expr(body_expr),
+                                ),
+                                Err(err) => {
+                                    errors.push(err);
+                                    continue;
+                                }
+                            }
+                        } else {
+                            errors.push(QuartzError::NotInferrable {
+                                expr_span: body_expr.span(),
+                            });
                             continue;
                         }
-                    },
+                    }
+                    Ok(Either::Checked(body_expr)) => CheckedMatchExprBranch::new(
+                        branch.patterns().to_vec(),
+                        CheckedMatchExprBody::Expr(body_expr),
+                    ),
                     Err(err) => {
                         errors.push(err);
                         continue;
@@ -1490,6 +1592,7 @@ fn typecheck_match_expr<'a>(
                     known_types,
                     resolved_types,
                     args,
+                    infer_width,
                 ) {
                     Ok(body) => CheckedMatchExprBranch::new(
                         branch.patterns().to_vec(),
@@ -1524,16 +1627,9 @@ fn typecheck_match_expr<'a>(
     if let Some(value) = &value {
         let value_ty = &known_types[&value.ty()];
         match value_ty {
-            ResolvedType::Const => {
+            &ResolvedType::BuiltinBits { width } => {
                 if let Err(err) =
-                    typecheck_numeric_match_expr(expr, value_ty, 64, scope, known_types, args)
-                {
-                    errors.push(err);
-                }
-            }
-            ResolvedType::BuiltinBits { width } => {
-                if let Err(err) =
-                    typecheck_numeric_match_expr(expr, value_ty, *width, scope, known_types, args)
+                    typecheck_numeric_match_expr(expr, value_ty, width, scope, known_types, args)
                 {
                     errors.push(err);
                 }
@@ -1579,6 +1675,7 @@ fn typecheck_expr<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
+    infer_width: Option<u64>,
 ) -> QuartzResult<'a, Either<ConstExpr, CheckedExpr>> {
     macro_rules! wrap_expr {
         ($inner:expr, $variant:ident) => {
@@ -1599,6 +1696,7 @@ fn typecheck_expr<'a>(
                 known_types,
                 resolved_types,
                 args,
+                infer_width,
             )?;
             Ok(wrap_expr!(inner, $op))
         }};
@@ -1614,6 +1712,7 @@ fn typecheck_expr<'a>(
                 known_types,
                 resolved_types,
                 args,
+                infer_width,
             )?;
             Ok(wrap_expr!(inner, $op))
         }};
@@ -1667,6 +1766,7 @@ fn typecheck_expr<'a>(
                 known_types,
                 resolved_types,
                 args,
+                infer_width,
             )?;
             Ok(Either::Checked(CheckedExpr::If(if_expr)))
         }
@@ -1679,6 +1779,7 @@ fn typecheck_expr<'a>(
                 known_types,
                 resolved_types,
                 args,
+                infer_width,
             )?;
             Ok(Either::Checked(CheckedExpr::Match(match_expr)))
         }
@@ -1691,6 +1792,7 @@ fn typecheck_expr<'a>(
                 known_types,
                 resolved_types,
                 args,
+                infer_width,
             )?;
             Ok(Either::Checked(CheckedExpr::Block(block)))
         }
@@ -1768,6 +1870,7 @@ fn typecheck_expr<'a>(
             known_types,
             resolved_types,
             args,
+            infer_width,
         ),
         Expr::Paren(expr) => typecheck_expr(
             expr.inner(),
@@ -1777,6 +1880,7 @@ fn typecheck_expr<'a>(
             known_types,
             resolved_types,
             args,
+            infer_width,
         ),
         Expr::Neg(expr) => unary_expr!(expr, Neg),
         Expr::Not(expr) => unary_expr!(expr, Not),
@@ -1823,26 +1927,28 @@ fn typecheck_if_statement<'a>(
         known_types,
         resolved_types,
         args,
+        Some(1),
     ) {
-        Ok(cond) => match merge_expr(cond, args) {
-            Ok(cond) => {
-                let cond_ty = &known_types[&cond.ty()];
-                match cond_ty {
-                    ResolvedType::Const | ResolvedType::BuiltinBits { width: 1 } => Some(cond),
-                    _ => {
-                        errors.push(QuartzError::InvalidConditionType {
-                            cond: expr.condition(),
-                            cond_ty: cond_ty.to_string(known_types),
-                        });
-                        None
-                    }
+        Ok(Either::Const(_)) => {
+            errors.push(QuartzError::InvalidConditionType {
+                cond: expr.condition(),
+                cond_ty: CONST_TYPE_NAME,
+            });
+            None
+        }
+        Ok(Either::Checked(cond)) => {
+            let cond_ty = &known_types[&cond.ty()];
+            match cond_ty {
+                ResolvedType::BuiltinBits { width: 1 } => Some(cond),
+                _ => {
+                    errors.push(QuartzError::InvalidConditionType {
+                        cond: expr.condition(),
+                        cond_ty: cond_ty.to_string(known_types),
+                    });
+                    None
                 }
             }
-            Err(err) => {
-                errors.push(err);
-                None
-            }
-        },
+        }
         Err(err) => {
             errors.push(err);
             None
@@ -1875,26 +1981,28 @@ fn typecheck_if_statement<'a>(
             known_types,
             resolved_types,
             args,
+            Some(1),
         ) {
-            Ok(cond) => match merge_expr(cond, args) {
-                Ok(cond) => {
-                    let cond_ty = &known_types[&cond.ty()];
-                    match cond_ty {
-                        ResolvedType::Const | ResolvedType::BuiltinBits { width: 1 } => Some(cond),
-                        _ => {
-                            errors.push(QuartzError::InvalidConditionType {
-                                cond: expr.condition(),
-                                cond_ty: cond_ty.to_string(known_types),
-                            });
-                            None
-                        }
+            Ok(Either::Const(_)) => {
+                errors.push(QuartzError::InvalidConditionType {
+                    cond: expr.condition(),
+                    cond_ty: CONST_TYPE_NAME,
+                });
+                None
+            }
+            Ok(Either::Checked(cond)) => {
+                let cond_ty = &known_types[&cond.ty()];
+                match cond_ty {
+                    ResolvedType::BuiltinBits { width: 1 } => Some(cond),
+                    _ => {
+                        errors.push(QuartzError::InvalidConditionType {
+                            cond: expr.condition(),
+                            cond_ty: cond_ty.to_string(known_types),
+                        });
+                        None
                     }
                 }
-                Err(err) => {
-                    errors.push(err);
-                    None
-                }
-            },
+            }
             Err(err) => {
                 errors.push(err);
                 None
@@ -1967,14 +2075,16 @@ fn typecheck_match_statement<'a>(
         known_types,
         resolved_types,
         args,
+        None,
     ) {
-        Ok(value) => match merge_expr(value, args) {
-            Ok(value) => Some(value),
-            Err(err) => {
-                errors.push(err);
-                None
-            }
-        },
+        Ok(Either::Const(_)) => {
+            errors.push(QuartzError::InvalidMatchType {
+                value: expr.value(),
+                value_ty: CONST_TYPE_NAME,
+            });
+            None
+        }
+        Ok(Either::Checked(value)) => Some(value),
         Err(err) => {
             errors.push(err);
             None
@@ -1995,6 +2105,7 @@ fn typecheck_match_statement<'a>(
                     known_types,
                     resolved_types,
                     args,
+                    None,
                 ) {
                     Ok(_) => {}
                     Err(err) => errors.push(err),
@@ -2028,11 +2139,8 @@ fn typecheck_match_statement<'a>(
         let value = value.unwrap();
         let value_ty = &known_types[&value.ty()];
         match value_ty {
-            ResolvedType::Const => {
-                typecheck_numeric_match_expr(expr, value_ty, 64, scope, known_types, args)?;
-            }
-            ResolvedType::BuiltinBits { width } => {
-                typecheck_numeric_match_expr(expr, value_ty, *width, scope, known_types, args)?;
+            &ResolvedType::BuiltinBits { width } => {
+                typecheck_numeric_match_expr(expr, value_ty, width, scope, known_types, args)?;
             }
             ResolvedType::Named { .. } => {
                 let value_ty_item = &resolved_types[&value.ty()];
@@ -2166,28 +2274,6 @@ fn typecheck_assignment<'a>(
 
     let base = assign.target().path().head();
 
-    let value = match typecheck_expr(
-        assign.value(),
-        parent_module,
-        mode,
-        scope,
-        known_types,
-        resolved_types,
-        args,
-    ) {
-        Ok(value) => match merge_expr(value, args) {
-            Ok(value) => Some(value),
-            Err(err) => {
-                errors.push(err);
-                None
-            }
-        },
-        Err(err) => {
-            errors.push(err);
-            None
-        }
-    };
-
     match find_module_member_type(base, parent_module) {
         Ok((base_ty, kind, dir)) => {
             if let Some(Direction::In) = dir {
@@ -2264,17 +2350,65 @@ fn typecheck_assignment<'a>(
                 }
             }
 
-            if let Some(value) = &value {
-                if value.ty() != ty {
-                    let target_ty = &known_types[&ty];
-                    let value_ty = &known_types[&value.ty()];
-                    errors.push(QuartzError::IncompatibleAssignType {
-                        assign,
-                        target_ty: target_ty.to_string(known_types),
-                        value_ty: value_ty.to_string(known_types),
-                    })
+            let target_ty = &known_types[&ty];
+            let infer_width = match target_ty {
+                &ResolvedType::BuiltinBits { width } => Some(width),
+                _ => None,
+            };
+
+            let value = match typecheck_expr(
+                assign.value(),
+                parent_module,
+                mode,
+                scope,
+                known_types,
+                resolved_types,
+                args,
+                infer_width,
+            ) {
+                Ok(value) => Some(value),
+                Err(err) => {
+                    errors.push(err);
+                    None
                 }
-            }
+            };
+
+            let target_ty = &known_types[&ty];
+            let value = match value {
+                Some(Either::Const(value)) => match target_ty {
+                    &ResolvedType::BuiltinBits { width } => {
+                        match eval_const_expr(value, width, known_types, args) {
+                            Ok(value) => Some(value),
+                            Err(err) => {
+                                errors.push(err);
+                                None
+                            }
+                        }
+                    }
+                    _ => {
+                        errors.push(QuartzError::IncompatibleAssignType {
+                            assign,
+                            target_ty: target_ty.to_string(known_types),
+                            value_ty: CONST_TYPE_NAME,
+                        });
+                        None
+                    }
+                },
+                Some(Either::Checked(value)) => {
+                    if value.ty() != ty {
+                        let value_ty = &known_types[&value.ty()];
+                        errors.push(QuartzError::IncompatibleAssignType {
+                            assign,
+                            target_ty: target_ty.to_string(known_types),
+                            value_ty: value_ty.to_string(known_types),
+                        });
+                        None
+                    } else {
+                        Some(value)
+                    }
+                }
+                None => None,
+            };
 
             let target = CheckedAssignTarget::new(base.clone(), base_ty, suffixes);
             wrap_errors!(CheckedAssignment::new(target, value.unwrap()), errors)
@@ -2342,8 +2476,18 @@ fn typecheck_statement<'a>(
                     known_types,
                     resolved_types,
                     args,
+                    None,
                 )?;
-                let checked_expr = merge_expr(checked_expr, args)?;
+
+                let checked_expr = match checked_expr {
+                    Either::Const(expr) => {
+                        return Err(QuartzError::NotInferrable {
+                            expr_span: expr.span(),
+                        });
+                    }
+                    Either::Checked(expr) => expr,
+                };
+
                 Ok(CheckedStatement::Expr(checked_expr))
             }
         },
@@ -2376,6 +2520,7 @@ fn typecheck_expr_block<'a>(
     known_types: &mut HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
     args: &TypecheckArgs,
+    infer_width: Option<u64>,
 ) -> QuartzResult<'a, CheckedExprBlock> {
     let mut errors = Vec::new();
     let scope = Scope::new(parent_scope);
@@ -2406,16 +2551,27 @@ fn typecheck_expr_block<'a>(
                 known_types,
                 resolved_types,
                 args,
+                infer_width,
             );
 
             match result {
-                Ok(result) => match merge_expr(result, args) {
-                    Ok(result) => Some(result),
-                    Err(err) => {
-                        errors.push(err);
+                Ok(Either::Const(result)) => {
+                    if let Some(infer_width) = infer_width {
+                        match eval_const_expr(result, infer_width, known_types, args) {
+                            Ok(result) => Some(result),
+                            Err(err) => {
+                                errors.push(err);
+                                None
+                            }
+                        }
+                    } else {
+                        errors.push(QuartzError::NotInferrable {
+                            expr_span: result.span(),
+                        });
                         None
                     }
-                },
+                }
+                Ok(Either::Checked(result)) => Some(result),
                 Err(err) => {
                     errors.push(err);
                     None
@@ -2516,6 +2672,7 @@ fn typecheck_block<'a>(
                     known_types,
                     resolved_types,
                     args,
+                    None,
                 ) {
                     errors.push(err);
                 }

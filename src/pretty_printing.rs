@@ -626,6 +626,16 @@ impl WriteColored for crate::error::QuartzError<'_> {
                 format!("`{kw}` statement is not allowed in this context"),
                 kw.span(),
             ),
+            Self::NotInferrable { expr_span } => {
+                ErrorInfo::new("unable to infer type for constant expression", *expr_span)
+            }
+            Self::ConstantOutOfRange { expr_span, value, width } => {
+                if *width == 1 {
+                    ErrorInfo::new(format!("value `{value}` is out of range for type `bit`"), *expr_span)
+                } else {
+                    ErrorInfo::new(format!("value `{value}` is out of range for type `bits<{width}>`"), *expr_span)
+                }
+            }
             Self::LexerError(err) => {
                 return err.write_colored(stream, file_server);
             }

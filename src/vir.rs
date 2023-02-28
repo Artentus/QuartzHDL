@@ -133,7 +133,6 @@ impl VBinaryExpr {
 
 #[derive(Debug, Clone)]
 pub enum VExpr {
-    Value(i64),
     Literal(VLiteral),
     HighZLiteral(u64),
     Ident(SharedString),
