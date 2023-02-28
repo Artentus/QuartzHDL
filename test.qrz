@@ -184,14 +184,4 @@ top mod Top {
     let pi: InPort<1>;
     let po: OutPort<1>;
     let pio: InOutPort<1>;
-
-    sig s32: bits<32>;
-    comb {
-        s32 = 0x12345678;
-    }
-
-    sig s16: bits<16>;
-    comb {
-        s16 = s32 as bits::<16>;
-    }
 }

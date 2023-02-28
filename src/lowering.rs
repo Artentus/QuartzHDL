@@ -220,7 +220,8 @@ fn lower_match_expr(
 
     let tmp_member = add_tmp_member(match_expr.ty(), tmp_members);
 
-    if let Some(ResolvedTypeItem::Enum(_)) = &resolved_types.get(&match_expr.value().ty()) {
+    let value_ty = match_expr.value().ty();
+    if let Some(ResolvedTypeItem::Enum(_)) = &resolved_types.get(&value_ty) {
         let value = lower_expr(
             match_expr.value(),
             tmp_members,
@@ -289,8 +290,8 @@ fn lower_match_expr(
         tmp_comb_statements.push(VStatement::Case(case_statement_comb));
 
         VExpr::Ident(tmp_member)
-    } else {
-        let value_name = add_tmp_member(match_expr.value().ty(), tmp_members);
+    } else if let &ResolvedType::BuiltinBits { width } = &known_types[&value_ty] {
+        let value_name = add_tmp_member(value_ty, tmp_members);
 
         let value = lower_expr(
             match_expr.value(),
@@ -318,13 +319,13 @@ fn lower_match_expr(
                 for pattern in branch.patterns() {
                     match pattern {
                         MatchPattern::Literal(value) => {
-                            let value = VExpr::Literal(VLiteral::new(value.value(), 32));
+                            let value = VExpr::Literal(VLiteral::new(value.value(), width));
                             let term = VExpr::Eq(VBinaryExpr::new(value!(), value));
                             cond_terms.push(term);
                         }
                         MatchPattern::Range(start, end) => {
-                            let start = VExpr::Literal(VLiteral::new(start.value(), 32));
-                            let end = VExpr::Literal(VLiteral::new(end.value(), 32));
+                            let start = VExpr::Literal(VLiteral::new(start.value(), width));
+                            let end = VExpr::Literal(VLiteral::new(end.value(), width));
 
                             let lower_bound = VExpr::Gte(VBinaryExpr::new(value!(), start));
                             let upper_bound = VExpr::Lt(VBinaryExpr::new(value!(), end));
@@ -333,8 +334,8 @@ fn lower_match_expr(
                             cond_terms.push(term);
                         }
                         MatchPattern::RangeInclusive(start, end) => {
-                            let start = VExpr::Literal(VLiteral::new(start.value(), 32));
-                            let end = VExpr::Literal(VLiteral::new(end.value(), 32));
+                            let start = VExpr::Literal(VLiteral::new(start.value(), width));
+                            let end = VExpr::Literal(VLiteral::new(end.value(), width));
 
                             let lower_bound = VExpr::Gte(VBinaryExpr::new(value!(), start));
                             let upper_bound = VExpr::Lte(VBinaryExpr::new(value!(), end));
@@ -462,6 +463,8 @@ fn lower_match_expr(
         }
 
         VExpr::Ident(tmp_member)
+    } else {
+        unreachable!("invalid match value type")
     }
 }
 
@@ -807,7 +810,8 @@ fn lower_match_statement(
 ) -> LoweredMatchStatement {
     use crate::ast::MatchPattern;
 
-    if let Some(ResolvedTypeItem::Enum(_)) = &resolved_types.get(&match_statement.value().ty()) {
+    let value_ty = match_statement.value().ty();
+    if let Some(ResolvedTypeItem::Enum(_)) = &resolved_types.get(&value_ty) {
         let value = lower_expr(
             match_statement.value(),
             tmp_members,
@@ -843,8 +847,8 @@ fn lower_match_statement(
         }
 
         LoweredMatchStatement::Case(VCaseStatement::new(value, branches))
-    } else {
-        let value_name = add_tmp_member(match_statement.value().ty(), tmp_members);
+    } else if let &ResolvedType::BuiltinBits { width } = &known_types[&value_ty] {
+        let value_name = add_tmp_member(value_ty, tmp_members);
 
         let value = lower_expr(
             match_statement.value(),
@@ -872,13 +876,13 @@ fn lower_match_statement(
                 for pattern in branch.patterns() {
                     match pattern {
                     MatchPattern::Literal(value) => {
-                        let value = VExpr::Literal(VLiteral::new(value.value(), 32));
+                        let value = VExpr::Literal(VLiteral::new(value.value(), width));
                         let term = VExpr::Eq(VBinaryExpr::new(value!(), value));
                         cond_terms.push(term);
                     }
                     MatchPattern::Range(start, end) => {
-                        let start = VExpr::Literal(VLiteral::new(start.value(), 32));
-                        let end = VExpr::Literal(VLiteral::new(end.value(), 32));
+                        let start = VExpr::Literal(VLiteral::new(start.value(), width));
+                        let end = VExpr::Literal(VLiteral::new(end.value(), width));
 
                         let lower_bound = VExpr::Gte(VBinaryExpr::new(value!(), start));
                         let upper_bound = VExpr::Lt(VBinaryExpr::new(value!(), end));
@@ -887,8 +891,8 @@ fn lower_match_statement(
                         cond_terms.push(term);
                     }
                     MatchPattern::RangeInclusive(start, end) => {
-                        let start = VExpr::Literal(VLiteral::new(start.value(), 32));
-                        let end = VExpr::Literal(VLiteral::new(end.value(), 32));
+                        let start = VExpr::Literal(VLiteral::new(start.value(), width));
+                        let end = VExpr::Literal(VLiteral::new(end.value(), width));
 
                         let lower_bound = VExpr::Gte(VBinaryExpr::new(value!(), start));
                         let upper_bound = VExpr::Lte(VBinaryExpr::new(value!(), end));
@@ -964,6 +968,8 @@ fn lower_match_statement(
         } else {
             LoweredMatchStatement::Block(body)
         }
+    } else {
+        unreachable!("invalid match value type")
     }
 }
 
