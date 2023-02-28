@@ -502,7 +502,7 @@ fn lower_cast_expr(
             match target_width.cmp(&value_width) {
                 Ordering::Equal => value,
                 Ordering::Less => {
-                    let indexer = VIndexKind::Range(((target_width - 1) as i64)..0);
+                    let indexer = VIndexKind::Range(0..(target_width as i64));
                     VExpr::Index(VIndexExpr::new(value, indexer))
                 }
                 Ordering::Greater => {
@@ -534,7 +534,7 @@ fn lower_cast_expr(
                 match target_width.cmp(&value_width) {
                     Ordering::Equal => value,
                     Ordering::Less => {
-                        let indexer = VIndexKind::Range(((target_width - 1) as i64)..0);
+                        let indexer = VIndexKind::Range(0..(target_width as i64));
                         VExpr::Index(VIndexExpr::new(value, indexer))
                     }
                     Ordering::Greater => {
