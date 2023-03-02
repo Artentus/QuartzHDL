@@ -30,7 +30,11 @@ impl VLiteral {
 
 impl std::fmt::Display for VLiteral {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}'d{}", self.width, self.value)
+        if self.value < 0 {
+            write!(f, "-{}'d{}", self.width, -self.value)
+        } else {
+            write!(f, "{}'d{}", self.width, self.value)
+        }
     }
 }
 
