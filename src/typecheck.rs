@@ -660,11 +660,10 @@ fn find_member_type<'a>(
                 })
             }
         }
-        Some(_) => Err(QuartzError::UndefinedMember {
+        _ => Err(QuartzError::UndefinedMember {
             ty: known_types[&parent_id].to_string(known_types),
             name: ident,
         }),
-        None => unreachable!("type incorrectly resolved"),
     }
 }
 
