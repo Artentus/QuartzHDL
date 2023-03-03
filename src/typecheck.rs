@@ -1876,6 +1876,16 @@ fn typecheck_expr<'a>(
     }
 
     match expr {
+        Expr::BoolLiteral(l) => {
+            let result_ty = UnresolvedType::BuiltinBits { width: 1 };
+            let result_id = resolve_type_late(&result_ty, known_types);
+
+            Ok(Either::Checked(CheckedExpr::Value(TypedValue::new(
+                l.value() as i64,
+                1,
+                result_id,
+            ))))
+        }
         Expr::Literal(l) => Ok(Either::Const(ConstExpr::Literal(*l))),
         Expr::Path(path) => {
             let path = typecheck_path(path, parent_module, resolved_types, args)?;

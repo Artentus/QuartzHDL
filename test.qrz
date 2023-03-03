@@ -10,14 +10,14 @@ fn clog2(n_bits) {
 
 struct WritePort<ADDR_BITS, DATA_BITS> {
     clk: bit,
-    en: bit,
+    en: bool,
     addr: bits<ADDR_BITS>,
     data: bits<DATA_BITS>,
 }
 
 struct ReadPort<ADDR_BITS> {
     clk: bit,
-    en: bit,
+    en: bool,
     addr: bits<ADDR_BITS>,
 }
 
@@ -172,7 +172,7 @@ extern mod Pll (
     out sig clk200: bit,
     out sig clk120: bit,
     out sig clk40: bit,
-    out sig locked: bit,
+    out sig locked: bool,
 );
 
 top mod Top {

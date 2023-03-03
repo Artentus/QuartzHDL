@@ -79,6 +79,14 @@ impl DisplayScoped for crate::SharedString {
     }
 }
 
+impl DisplayScoped for bool {
+    #[inline]
+    fn fmt(&self, f: &mut ScopedFormatter<'_, '_>) -> fmt::Result {
+        use std::fmt::Write;
+        write!(f, "{self}")
+    }
+}
+
 impl DisplayScoped for i64 {
     #[inline]
     fn fmt(&self, f: &mut ScopedFormatter<'_, '_>) -> fmt::Result {

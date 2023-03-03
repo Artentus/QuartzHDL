@@ -12,7 +12,7 @@ pub fn check_for_duplicate_items<'a>(
     items: impl Iterator<Item = &'a Item>,
 ) -> QuartzResult<'a, ()> {
     const BUILTINS: phf::Set<&'static str> =
-        phf_macros::phf_set!("bit", "bits", "InPort", "OutPort", "InOutPort");
+        phf_macros::phf_set!("bool", "bit", "bits", "InPort", "OutPort", "InOutPort");
 
     let mut errors = Vec::new();
     let mut set = HashSet::default();
@@ -314,6 +314,7 @@ pub fn transform_const_expr<'a>(
     }
 
     match expr {
+        Expr::BoolLiteral(_) => Err(QuartzError::InvalidConstExpr { expr }),
         Expr::Literal(l) => Ok(ConstExpr::Literal(*l)),
         Expr::Path(p) => {
             if let Some(ident) = p.as_ident() {
@@ -689,7 +690,7 @@ fn resolve_named_type<'a>(
     }
 
     let resolved_ty = match (name, is_inside_top_module) {
-        ("bit", _) => {
+        ("bool", _) | ("bit", _) => {
             if generic_arg_count == 0 {
                 ResolvedType::BuiltinBits { width: 1 }
             } else {
@@ -1113,6 +1114,7 @@ fn resolve_expr<'a>(
             }
         }
 
+        Expr::BoolLiteral(_) => {}
         Expr::Literal(_) => {}
         Expr::Path(_) => {}
         Expr::MemberAccess(_) => {}

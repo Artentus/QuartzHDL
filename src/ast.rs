@@ -52,6 +52,8 @@ pub enum KeywordKind {
     Break,
     Extern,
     Top,
+    False,
+    True,
 }
 
 impl DisplayScoped for KeywordKind {
@@ -85,6 +87,8 @@ impl DisplayScoped for KeywordKind {
                 Self::Break => "break",
                 Self::Extern => "extern",
                 Self::Top => "top",
+                Self::False => "false",
+                Self::True => "true",
             }
         )
     }
@@ -169,6 +173,42 @@ impl From<&Ident> for SharedString {
     #[inline]
     fn from(value: &Ident) -> Self {
         value.as_string()
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct BoolLiteral {
+    value: bool,
+    span: TextSpan,
+}
+
+impl BoolLiteral {
+    #[inline]
+    pub fn new(value: bool, span: TextSpan) -> Self {
+        Self { value, span }
+    }
+
+    #[inline]
+    pub fn value(&self) -> bool {
+        self.value
+    }
+}
+
+default_spanned_impl!(BoolLiteral);
+
+impl DisplayScoped for BoolLiteral {
+    #[inline]
+    fn fmt(&self, f: &mut ScopedFormatter<'_, '_>) -> std::fmt::Result {
+        DisplayScoped::fmt(&self.value, f)
+    }
+}
+
+default_display_impl!(BoolLiteral);
+
+impl AsRef<bool> for BoolLiteral {
+    #[inline]
+    fn as_ref(&self) -> &bool {
+        &self.value
     }
 }
 
@@ -1416,6 +1456,7 @@ default_display_impl!(BinaryExpr);
 #[derive(Debug, Clone)]
 pub enum Expr {
     // Leaf expressions
+    BoolLiteral(BoolLiteral),
     Literal(Literal),
     Path(Path),
     Paren(ParenExpr),
@@ -1460,6 +1501,7 @@ pub enum Expr {
 impl Expr {
     pub fn reset_resolved_types(&self) {
         match self {
+            Self::BoolLiteral(_) => {}
             Self::Literal(_) => {}
             Self::Path(_) => {}
             Self::Paren(expr) => expr.reset_resolved_types(),
@@ -1503,6 +1545,7 @@ impl Expr {
 impl Spanned for Expr {
     fn span(&self) -> TextSpan {
         match self {
+            Self::BoolLiteral(l) => l.span(),
             Self::Literal(l) => l.span(),
             Self::Path(p) => p.span(),
             Self::Paren(expr) => expr.span(),
@@ -1548,6 +1591,7 @@ impl Spanned for Expr {
 impl DisplayScoped for Expr {
     fn fmt(&self, f: &mut ScopedFormatter<'_, '_>) -> std::fmt::Result {
         match self {
+            Self::BoolLiteral(l) => DisplayScoped::fmt(l, f),
             Self::Literal(l) => DisplayScoped::fmt(l, f),
             Self::Path(p) => DisplayScoped::fmt(p, f),
             Self::Paren(expr) => DisplayScoped::fmt(expr, f),

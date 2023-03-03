@@ -44,6 +44,8 @@ const KEYWORDS: phf::Map<&'static str, KeywordKind> = phf_macros::phf_map!(
     "break" => KeywordKind::Break,
     "extern" => KeywordKind::Extern,
     "top" => KeywordKind::Top,
+    "false" => KeywordKind::False,
+    "true" => KeywordKind::True,
 );
 
 #[derive(Debug)]
@@ -322,8 +324,29 @@ fn match_expr() -> impl QuartzParser<Expr> {
     )
 }
 
+fn bool_literal() -> impl QuartzParser<BoolLiteral> {
+    let keywords = parser!({kw(KeywordKind::False)}=>[false] <|> {kw(KeywordKind::True)}=>[true]);
+
+    parse_fn!(|input| {
+        match keywords.run(input) {
+            ParseResult::Match {
+                value,
+                span,
+                remaining,
+            } => ParseResult::Match {
+                value: BoolLiteral::new(value, span),
+                span,
+                remaining,
+            },
+            ParseResult::NoMatch => ParseResult::NoMatch,
+            ParseResult::Err(err) => ParseResult::Err(err),
+        }
+    })
+}
+
 fn leaf_expr() -> impl QuartzParser<Expr> {
     choice!(
+        parser!({bool_literal()}->[Expr::BoolLiteral]),
         parser!({literal()}->[Expr::Literal]),
         if_expr(),
         match_expr(),

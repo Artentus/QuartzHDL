@@ -20,7 +20,7 @@
 			"patterns": [
 				{
 					"name": "keyword.type.quartz-hdl",
-					"match": "\\b(bit|bits|as|rising|falling|const)\\b"
+					"match": "\\b(bool|bit|bits|as|rising|falling|const|false|true)\\b"
 				},
 				{
 					"match": "\\b(enum|mod)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\b",
@@ -73,7 +73,7 @@
 					},
 					"patterns": [
 						{
-							"match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*:\\s*(\\[\\s*)*(?!((bit|bits)\\b))([a-zA-Z_][a-zA-Z0-9_]*)\\b",
+							"match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*:\\s*(\\[\\s*)*(?!((bool|bit|bits)\\b))([a-zA-Z_][a-zA-Z0-9_]*)\\b",
 							"captures": {
 								"5": {
 									"name": "entity.name.type.quartz-hdl"
@@ -81,7 +81,7 @@
 							}
 						},
 						{
-							"match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*:\\s*(\\[\\s*)*(bit|bits)\\b",
+							"match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*:\\s*(\\[\\s*)*(bool|bit|bits)\\b",
 							"captures": {
 								"3": {
 									"name": "keyword.type.quartz-hdl"
@@ -107,7 +107,7 @@
 					"match": "\\b(if|else|match|while|for|proc|comb|continue|break)\\b"
 				},
 				{
-					"match": "\\b(in|out)\\s+(sig|reg)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*:\\s*(\\[\\s*)*(?!((bit|bits)\\b))([a-zA-Z_][a-zA-Z0-9_]*)\\b",
+					"match": "\\b(in|out)\\s+(sig|reg)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*:\\s*(\\[\\s*)*(?!((bool|bit|bits)\\b))([a-zA-Z_][a-zA-Z0-9_]*)\\b",
 					"captures": {
 						"1": {
 							"name": "keyword.type.quartz-hdl"
@@ -121,7 +121,7 @@
 					}
 				},
 				{
-					"match": "\\b(sig|reg|let)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*:\\s*(\\[\\s*)*(?!((bit|bits)\\b))([a-zA-Z_][a-zA-Z0-9_]*)\\b",
+					"match": "\\b(sig|reg|let)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*:\\s*(\\[\\s*)*(?!((bool|bit|bits)\\b))([a-zA-Z_][a-zA-Z0-9_]*)\\b",
 					"captures": {
 						"1": {
 							"name": "keyword.type.quartz-hdl"
@@ -132,7 +132,7 @@
 					}
 				},
 				{
-					"match": "\\b(in|out)\\s+(sig|reg)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*:\\s*(\\[\\s*)*(bit|bits)\\b",
+					"match": "\\b(in|out)\\s+(sig|reg)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*:\\s*(\\[\\s*)*(bool|bit|bits)\\b",
 					"captures": {
 						"1": {
 							"name": "keyword.type.quartz-hdl"
@@ -146,7 +146,7 @@
 					}
 				},
 				{
-					"match": "\\b(sig|reg|let)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*:\\s*(\\[\\s*)*(bit|bits)\\b",
+					"match": "\\b(sig|reg|let)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*:\\s*(\\[\\s*)*(bool|bit|bits)\\b",
 					"captures": {
 						"1": {
 							"name": "keyword.type.quartz-hdl"
@@ -157,7 +157,7 @@
 					}
 				},
 				{
-					"match": "\\b(?!((bit|bits)\\b))([a-zA-Z_][a-zA-Z0-9_]*)\\b\\s*::",
+					"match": "\\b(?!((bool|bit|bits)\\b))([a-zA-Z_][a-zA-Z0-9_]*)\\b\\s*::",
 					"captures": {
 						"3": {
 							"name": "entity.name.type.quartz-hdl"
