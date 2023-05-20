@@ -670,6 +670,7 @@ fn transpile_expr(writer: &mut impl Write, expr: &VExpr) -> std::io::Result<()> 
     match expr {
         VExpr::Literal(literal) => write!(writer, "{literal}")?,
         VExpr::HighZLiteral(width) => write!(writer, "{width}'dZ")?,
+        VExpr::Genvar(depth) => write!(writer, "i{depth}")?,
         VExpr::Ident(ident) => write!(writer, "{ident}")?,
         VExpr::Index(index_expr) => {
             transpile_expr(writer, index_expr.base())?;
@@ -830,6 +831,20 @@ fn transpile_statement(
             transpile_expr(writer, assign.value())?;
 
             writeln!(writer, ";")?
+        }
+        VStatement::Generate(generate) => {
+            writeln!(
+                writer,
+                "{0}for (genvar i{1} = {2}; i{1} < {3}; i{1}++) begin",
+                leading_ws,
+                generate.depth(),
+                generate.range().start,
+                generate.range().end,
+            )?;
+
+            transpile_block(writer, generate.body(), level + 1, assign_mode)?;
+
+            write!(writer, "{leading_ws}end")?;
         }
     }
 
