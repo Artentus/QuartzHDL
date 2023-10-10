@@ -436,7 +436,7 @@ fn unary_suffix_expr(simple: bool) -> impl QuartzParser<Expr> {
                     remaining,
                 } => ParseResult::Match {
                     value: concat_unary_suffix_exprs(base, suffixes),
-                    span: s1.join(&s2),
+                    span: s1.join(s2),
                     remaining,
                 },
                 InfallibleParseResult::NoMatch => ParseResult::NoMatch,
@@ -494,7 +494,7 @@ fn cast_expr(simple: bool) -> impl QuartzParser<Expr> {
                         remaining,
                     } => ParseResult::Match {
                         value: concat_cast_exprs(value, targets),
-                        span: s1.join(&s2),
+                        span: s1.join(s2),
                         remaining,
                     },
                     InfallibleParseResult::NoMatch => ParseResult::NoMatch,

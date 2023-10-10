@@ -1579,7 +1579,10 @@ fn typecheck_enum_match_expr<'a>(
     enum_item: &ResolvedEnum,
     known_types: &HashMap<TypeId, ResolvedType>,
 ) -> QuartzResult<'a, ()> {
-    let ResolvedType::Named { name: enum_name, .. } = value_ty else {
+    let ResolvedType::Named {
+        name: enum_name, ..
+    } = value_ty
+    else {
         unreachable!("enums must be named types");
     };
     let mut errors = Vec::new();

@@ -116,7 +116,7 @@ fn _write_error(
     let mut end_line;
     let mut end_column;
     if let Some(slice) = &info.slice {
-        let text = info.span.text(file_server);
+        let text = info.span.source(file_server);
         let mut chars = text.char_indices();
 
         for (i, c) in chars.by_ref() {
@@ -293,7 +293,7 @@ impl WriteColored for crate::error::QuartzError<'_> {
                 match_expr
                     .match_kw()
                     .span()
-                    .join(&match_expr.value().span()),
+                    .join(match_expr.value().span()),
             ),
             Self::InvalidConstOp { op } => ErrorInfo::new(
                 format!("`{op}` operator is not valid in constant context"),
@@ -546,15 +546,15 @@ impl WriteColored for crate::error::QuartzError<'_> {
             ),
             Self::InvalidAssignIn { assign } => ErrorInfo::new(
                 "cannot assign to input port",
-                assign.target().span().join(&assign.op().span()),
+                assign.target().span().join(assign.op().span()),
             ),
             Self::InvalidSeqAssign { assign } => ErrorInfo::new(
                 "cannot assign to signal in sequential context",
-                assign.target().span().join(&assign.op().span()),
+                assign.target().span().join(assign.op().span()),
             ),
             Self::InvalidCombAssign { assign } => ErrorInfo::new(
                 "cannot assign to register in combinatoric context",
-                assign.target().span().join(&assign.op().span()),
+                assign.target().span().join(assign.op().span()),
             ),
             Self::InvalidPortKind {
                 port_span,
@@ -635,6 +635,15 @@ impl WriteColored for crate::error::QuartzError<'_> {
                 } else {
                     ErrorInfo::new(format!("value `{value}` is out of range for type `bits<{width}>`"), *expr_span)
                 }
+            }
+            Self::TooManyFilesRegistered => {
+                return write_error("too many files specified", stream);
+            }
+            Self::FileTooLarge(path) => {
+                return write_error(&format!("file `{}` is too large", path.display()), stream);
+            }
+            Self::NotAFile(path) => {
+                return write_error(&format!("`{}` is not a file", path.display()), stream);
             }
             Self::LexerError(err) => {
                 return err.write_colored(stream, file_server);

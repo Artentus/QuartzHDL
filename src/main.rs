@@ -172,15 +172,29 @@ impl<'a> Iterator for TokenSlices<'a> {
 
 fn tokenize<'err>(
     file_server: &mut FileServer,
-    input_files: &[PathBuf],
+    input_files: &'err [PathBuf],
 ) -> std::io::Result<(Vec<Tokens>, Vec<QuartzError<'err>>)> {
+    let mut errors = Vec::new();
+
     let mut files = HashSet::default();
     for path in input_files.iter() {
-        let file = file_server.register_file(path)?;
-        files.insert(file);
+        match file_server.register_file(path) {
+            Ok(file) => {
+                files.insert(file);
+            }
+            Err(RegisterFileError::TooManyFilesRegistered) => {
+                errors.push(QuartzError::TooManyFilesRegistered);
+            }
+            Err(RegisterFileError::FileTooLarge) => {
+                errors.push(QuartzError::FileTooLarge(path));
+            }
+            Err(RegisterFileError::NotAFile) => {
+                errors.push(QuartzError::NotAFile(path));
+            }
+            Err(RegisterFileError::IoError(err)) => return Err(err),
+        }
     }
 
-    let mut errors = Vec::new();
     let mut tokens = Vec::with_capacity(files.len());
     for file in files.into_iter() {
         let lexer = QuartzLexer::new(file, file_server);

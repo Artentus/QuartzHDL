@@ -418,9 +418,9 @@ fn parse_string(text: &str) -> Option<ReadTokenResult<QuartzToken>> {
 
 pub struct QuartzTokenReader;
 impl TokenReader for QuartzTokenReader {
-    type Token = QuartzToken;
+    type TokenKind = QuartzToken;
 
-    fn read_token(text: &str) -> ReadTokenResult<Self::Token> {
+    fn read_token(text: &str) -> ReadTokenResult<Self::TokenKind> {
         if let Some(result) = parse_comment(text) {
             return result;
         }

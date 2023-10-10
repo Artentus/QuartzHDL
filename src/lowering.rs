@@ -521,7 +521,9 @@ fn lower_cast_expr(
             },
         ) => {
             if let ResolvedTypeItem::Enum(enum_item) = &resolved_types[&cast_expr.value().ty()] {
-                let &ResolvedType::BuiltinBits { width: value_width } = &known_types[&enum_item.base_ty()] else {
+                let &ResolvedType::BuiltinBits { width: value_width } =
+                    &known_types[&enum_item.base_ty()]
+                else {
                     unreachable!();
                 };
 

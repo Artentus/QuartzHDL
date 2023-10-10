@@ -416,7 +416,9 @@ pub fn transpile(
         for (member_name, member) in module_item.logic_members() {
             let member_ty_name = get_transpiled_type_name(member.ty(), known_types);
             if member.kind() == LogicKind::Module {
-                let Some((member_module_item, array_lengths)) = get_module_item(member.ty(), known_types, resolved_types) else {
+                let Some((member_module_item, array_lengths)) =
+                    get_module_item(member.ty(), known_types, resolved_types)
+                else {
                     unreachable!("invalid module type");
                 };
 
