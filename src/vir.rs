@@ -139,6 +139,7 @@ impl VBinaryExpr {
 pub enum VExpr {
     Literal(VLiteral),
     HighZLiteral(u64),
+    Genvar(u64),
     Ident(SharedString),
     Index(VIndexExpr),
     MemberAccess(VMemberAccessExpr),
@@ -347,11 +348,41 @@ impl VAssignment {
 }
 
 #[derive(Debug, Clone)]
+pub struct VGenerate {
+    depth: u64,
+    range: Range<u64>,
+    body: VBlock,
+}
+
+impl VGenerate {
+    #[inline]
+    pub fn new(depth: u64, range: Range<u64>, body: VBlock) -> Self {
+        Self { depth, range, body }
+    }
+
+    #[inline]
+    pub fn depth(&self) -> u64 {
+        self.depth
+    }
+
+    #[inline]
+    pub fn range(&self) -> Range<u64> {
+        self.range.clone()
+    }
+
+    #[inline]
+    pub fn body(&self) -> &VBlock {
+        &self.body
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum VStatement {
     Block(VBlock),
     If(VIfStatement),
     Case(VCaseStatement),
     Assignment(VAssignment),
+    Generate(VGenerate),
 }
 
 #[derive(Debug, Clone)]

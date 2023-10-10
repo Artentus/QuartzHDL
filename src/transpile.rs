@@ -302,6 +302,8 @@ pub fn transpile(
                 writeln!(writer)?;
             }
 
+            write!(writer, "    ")?;
+
             if !port.attributes().is_empty() {
                 write!(writer, "(* ")?;
                 for (i, attribute) in port.attributes().iter().enumerate() {
@@ -318,8 +320,8 @@ pub fn transpile(
             }
 
             match port.dir() {
-                Direction::In => write!(writer, "    input var ")?,
-                Direction::Out => write!(writer, "    output var ")?,
+                Direction::In => write!(writer, "input var ")?,
+                Direction::Out => write!(writer, "output var ")?,
             }
 
             let port_type_name = get_transpiled_type_name(port.ty(), known_types);
@@ -345,6 +347,8 @@ pub fn transpile(
                         }
                         has_prev = true;
 
+                        write!(writer, "    ")?;
+
                         if !member.attributes().is_empty() {
                             write!(writer, "(* ")?;
                             for (i, attribute) in member.attributes().iter().enumerate() {
@@ -361,8 +365,8 @@ pub fn transpile(
                         }
 
                         match dir {
-                            Direction::In => write!(writer, "    input var ")?,
-                            Direction::Out => write!(writer, "    output var ")?,
+                            Direction::In => write!(writer, "input var ")?,
+                            Direction::Out => write!(writer, "output var ")?,
                         }
 
                         write!(
@@ -381,6 +385,8 @@ pub fn transpile(
                         }
                         has_prev = true;
 
+                        write!(writer, "    ")?;
+
                         if !member.attributes().is_empty() {
                             write!(writer, "(* ")?;
                             for (i, attribute) in member.attributes().iter().enumerate() {
@@ -396,7 +402,7 @@ pub fn transpile(
                             write!(writer, " *) ")?;
                         }
 
-                        write!(writer, "    inout tri ")?;
+                        write!(writer, "inout tri ")?;
 
                         if width == 1 {
                             write!(writer, "logic ")?;
@@ -666,6 +672,7 @@ fn transpile_expr(writer: &mut impl Write, expr: &VExpr) -> std::io::Result<()> 
     match expr {
         VExpr::Literal(literal) => write!(writer, "{literal}")?,
         VExpr::HighZLiteral(width) => write!(writer, "{width}'dZ")?,
+        VExpr::Genvar(depth) => write!(writer, "i{depth}")?,
         VExpr::Ident(ident) => write!(writer, "{ident}")?,
         VExpr::Index(index_expr) => {
             transpile_expr(writer, index_expr.base())?;
@@ -826,6 +833,20 @@ fn transpile_statement(
             transpile_expr(writer, assign.value())?;
 
             writeln!(writer, ";")?
+        }
+        VStatement::Generate(generate) => {
+            writeln!(
+                writer,
+                "{0}for (genvar i{1} = {2}; i{1} < {3}; i{1}++) begin",
+                leading_ws,
+                generate.depth(),
+                generate.range().start,
+                generate.range().end,
+            )?;
+
+            transpile_block(writer, generate.body(), level + 1, assign_mode)?;
+
+            write!(writer, "{leading_ws}end")?;
         }
     }
 

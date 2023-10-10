@@ -635,7 +635,8 @@ fn lower_expr(
         }
 
         CheckedExpr::Index(index_expr) => {
-            let tmp_member = add_tmp_member(index_expr.base().ty(), tmp_members);
+            let base_ty = index_expr.base().ty();
+            let tmp_member = add_tmp_member(base_ty, tmp_members);
 
             let base = lower_expr(
                 index_expr.base(),
@@ -645,10 +646,9 @@ fn lower_expr(
                 known_types,
                 resolved_types,
             );
-            tmp_comb_statements.push(VStatement::Assignment(VAssignment::new(
-                VAssignTarget::new(SharedString::clone(&tmp_member), Vec::new()),
-                base,
-            )));
+
+            let target = VAssignTarget::new(SharedString::clone(&tmp_member), vec![]);
+            tmp_comb_statements.push(VStatement::Assignment(VAssignment::new(target, base)));
 
             let indexer = match index_expr.indexer() {
                 CheckedIndexKind::Single(index) => VIndexKind::Single(lower_expr(
