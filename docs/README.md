@@ -1,16 +1,127 @@
-# Quartz Hardware Description Language (HDL)
+# Quartz Hardware Description Language (QuartzHDL)
 
-Quartz is a Hardware Description Language (HDL) that compiles to Verilog. The language enables users to write more maintainable, reusable, and safe code for FPGAs and ASICs. Quartz provides a higher level of abstraction for describing digital circuits than Verilog, reducing the likelihood of bugs and making the code more readable.
+Quartz is a strongly typed hardware description language with Rust-like syntax that compiles to SystemVerilog.  
+As it is still work-in-progress some planned features are not or only partially implemented.  
+Quartz is designed for FPGA synthesis only and as such has only limited support for tri-state logic.
 
-## Quartz Code Structure
+## Inbuilt types
 
-A Quartz program is composed of functions, data structures, and modules, which describe the behavior and structure of the hardware. 
+On its core Quartz only has one inbuilt type, `bits<N>`, which is a vector of N bits.  
+A bit in Quartz must always be in a valid logic state, Z and X as in Verilog are not valid states.
+
+The inbuilt type names `bit` and `bool` are aliases for `bits<1>`, and the literals `true` and `false` are aliases for `1` and `0` respectively.
+
+## Variables
+
+Variables in Quartz can be of two kinds:
+- `sig`: a wire connection that carries a signal
+- `reg`: a memory cell that stores a state
+
+```rust
+sig a: bits<8>;
+reg b: bits<16>;
+```
+
+### Ports
+
+Ports are a special kind of variable that also defines a direction, either `in` or `out`. Combining `in` with `reg` is not legal.  
+Note that tri-state port declarations are not supported in Quartz.
+
+```rust
+in sig a: bit,
+out sig b: bit,
+out reg c: bit,
+
+// illegal
+in reg d: bit,
+```
+
+## Arrays
+
+Quartz supports arrays to define multiple values of the same type at once.  
+Arrays are often used to define memory blocks but are also supported with signals, ports, and in structures.
+
+```rust
+reg mem: [bits<8>; 1024];
+```
+
+Array items are accessed using the postfix `[]` syntax.
+
+## Structures
+
+Quartz allows the declaration of structs to group multiple values together.  
+Structs consist of one or more fields where each can have a different type (including other structures and arrays).
+
+```rust
+struct S1 {
+    a: bits<1>,
+    b: bits<2>,
+}
+
+struct S2 {
+    c: bits<3>,
+    d: S1,
+}
+```
+
+Struct fields are accessed using the `.` syntax.
+
+## Modules
+
+Like Verilog, Quartz divides digital designs into modules.  
+A module consists of ports, variables, sub-modules and processes.
+
+```rust
+mod M (
+    // port list
+) {
+    // body: contains variables, sub-modules and processes
+}
+```
+
+### Sub-modules
+
+To instantiate a sub-module use the `let` keyword:
+```rust
+let sub: SubModule;
+```
+
+### Processes
+
+Processes define the behaviour of the module. There are two kinds of processes in Quartz:
+- `comb`: a combinatorial process which is executed continuously
+- `proc`: a sequential process which is executed on the edges of clock signals
+
+To specify which clock edges a sequential process is sensitive to, use a comma separated list of `rising(clk)` or `falling(clk)`.
+
+```rust
+comb {
+    // body
+}
+
+proc rising(clk) {
+    // body
+}
+```
+
+Only `sig` variables can be assigned in `comb` processes, and only `reg` variables can be assigned in `proc` processes.
+
+## Constant evaluation
+
+Quartz has a constant evaluation context that operates on signed 64 bit integers only.  
+Constants can be defined inside and outside of modules, but not inside processes.  
+If a constant is defined inside a module, it is only accessible inside that module and its port declarations.
+
+```rust
+const C = 10;
+```
 
 ### Functions
 
-Functions in Quartz are similar to those in many other programming languages. Here's a function that calculates the binary logarithm (base 2):
+Functions can be defined to perform more complex computations on constants.  
+All functions must return a value.
 
-```Quartz
+```rust
 fn clog2(n_bits) {
     n_bits -= 1;
     let log = 0;
@@ -22,92 +133,57 @@ fn clog2(n_bits) {
 }
 ```
 
-### Data Structures
+### Generic constants
 
-Data structures in Quartz include structs, enums, and arrays. The `struct` keyword is used to define composite data types, much like in C or Rust. The `enum` keyword is used to define enumerated types.
+Modules in Quatz can be generic over constants. Generic constants behave like constants defined inside the module.
 
-```Quartz
-struct WritePort<ADDR_BITS, DATA_BITS> {
-    clk: bit,
-    en: bool,
-    addr: bits<ADDR_BITS>,
-    data: bits<DATA_BITS>,
-}
-
-enum AluOp: bits<4> {
-    Add,
-    AddC,
-    Sub,
-    SubB,
-    And,
-    Or,
-    Xor,
-    Shl,
-    Lsr,
-    Asr,
-    Mul,
-}
-```
-
-### Modules
-
-The `mod` keyword defines a hardware module. Modules can have input (`in`), output (`out`), and internal (`reg`, `sig`, `proc`) signals.
-
-```Quartz
-mod Bram<ADDR_BITS, DATA_BITS>(
-    in sig wport: WritePort<ADDR_BITS, DATA_BITS>,
-    in sig rport: ReadPort<ADDR_BITS>,
-    out reg rdata: bits<DATA_BITS>,
+```rust
+mod M<N> (
+    in sig data: bits<N>,
 ) {
-    reg mem: [bits<DATA_BITS>; 1 << ADDR_BITS];
-    
-    proc rising(wport.clk) {
-        if wport.en {
-            mem[wport.addr] = wport.data;
-        }
-    }
-    proc rising(rport.clk) {
-        if rport.en {
-            rdata = mem[rport.addr];
-        }
-    }
+    // ...
 }
 ```
 
-## Key Concepts
+## Top module
 
-### Signals
+Every design in Quartz must define exactly one top module.  
+This module does not define a port list but instead connects to FPGA pins though special inbuilt sub-modules.
 
-Signals in Quartz (`sig`) represent wires in the hardware design. A signal can be an input, output, or an internal signal of a module.
+```rust
+top mod Top {
+    // access the pin with pi.d_in
+    let pi: InPort<1>;
 
-### Registers
+    // access the pin with po.d_out
+    let po: OutPort<1>;
 
-Registers (`reg`) in Quartz represent stateful elements in hardware design that can store a value and present it to other components in the system.
+    // access the pin with pio.d_in and pio.d_out, and swap direction with pio.oe (1 = output)
+    let pio: InOutPort<1>;
+}
+```
 
-### Processes
+## Extern module
 
-Processes (`proc`) define behavior of the module on different events. In Quartz, these events are clock edges (`rising`, `falling`). A process is a set of statements that is executed when its triggering event occurs.
+Extern modules are modules without body. They offer a way to interface with existing Verilog modules.  
+The actual Verilog implementation of the module must be supplied to the synthesis software together with the code generated by Quartz.
 
-### Combinational Logic
+```rust
+extern mod Pll (
+    in sig clk25: bit,
 
-The `comb` block defines combinational logic, i.e., logic that isn't dependent on a clock signal. The statements in a `comb` block are executed every time any of its dependent signals changes.
+    out sig clk200: bit,
+    out sig clk120: bit,
+    out sig clk40: bit,
+    out sig locked: bool,
+);
+```
 
-## Generics
+## Attributes
 
-Quartz also supports generics (denoted by `<...>`), which allows for writing reusable modules and functions that work with different types or sizes of data.
+Quartz supports attributes on modules, ports and variables. Attributes are converted into equivalent Verilog attributes.
 
-## Concurrency and Synchronization
-
-Unlike many high-level programming languages, Quartz does not execute line by line in a sequential manner. Instead, it describes a hardware circuit, where every part of the code is executing concurrently.
-
-Synchronization in Quartz, as in other HDLs, is accomplished through the use of clock signals
-
-. A `proc` block executes when its associated clock signal transitions (usually on a rising or falling edge).
-
-## Operators
-
-Quartz includes many operators for performing operations on bits, including bit-wise AND (`&`), OR (`|`), XOR (`^`), bit-wise negation (`!`), bit-wise shifts (`<<`, `>>`, `>>>`), and addition (`+`), subtraction (`-`), and multiplication (`*`).
-
-## Conclusion
-
-Quartz provides an alternative to traditional HDLs that is easier to write, understand, and maintain. This high-level abstraction is particularly useful for complex designs, where the risk of bugs increases with the complexity of the design. With its higher level of abstraction and more intuitive syntax, Quartz can make hardware design more accessible to those used to high-level programming languages.
+```rust
+#[attr1, attr2(param)]
+sig a: bits<16>;
+```
