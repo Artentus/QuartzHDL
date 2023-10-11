@@ -69,20 +69,13 @@ fn punct<const N: usize>(punct: impl Into<[PunctKind; N]>) -> impl QuartzParser<
     let punct = punct.into();
 
     parse_fn!(|input| {
-        if let Some(token) = input.peek() {
-            if let QuartzToken::Punct(found_punct) = &token.kind
-              && punct.iter().any(|p| (*p).eq(found_punct)) {
-                ParseResult::Match {
-                    value: Punct::new(
-                        *found_punct,
-                        token.span,
-                    ),
-                    span: token.span,
-                    remaining: input.advance(),
-                }
-            } else {
-                ParseResult::NoMatch
-            }
+        if let Some(&Token { kind: QuartzToken::Punct(found_punct), span }) = input.peek()
+          && punct.iter().any(|&p| p == found_punct) {
+            ParseResult::Match(ParsedValue {
+                value: Punct::new(found_punct, span),
+                span,
+                remaining: input.advance(),
+            })
         } else {
             ParseResult::NoMatch
         }
@@ -91,55 +84,45 @@ fn punct<const N: usize>(punct: impl Into<[PunctKind; N]>) -> impl QuartzParser<
 
 fn ident() -> impl QuartzParser<Ident> {
     parse_fn!(|input| {
-        if let Some(token) = input.peek() {
-            match &token.kind {
-                QuartzToken::Ident(name) => {
-                    if KEYWORDS.contains_key(name) {
-                        ParseResult::Err(QuartzParserError {
-                            message: format!(
-                                "'{name}' is a reserved keyword and cannot be used as an identifier",
-                            )
-                            .into(),
-                            span: token.span,
-                        })
-                    } else {
-                        ParseResult::Match {
-                            value: Ident::new(name, token.span),
-                            span: token.span,
-                            remaining: input.advance(),
-                        }
-                    }
+        match input.peek() {
+            Some(&Token {
+                kind: QuartzToken::Ident(ref name),
+                span,
+            })
+            | Some(&Token {
+                kind: QuartzToken::InvalidIdent(ref name),
+                span,
+            }) => {
+                if KEYWORDS.contains_key(name) {
+                    ParseResult::Err(QuartzParserError {
+                        message: format!(
+                            "'{name}' is a reserved keyword and cannot be used as an identifier",
+                        )
+                        .into(),
+                        span,
+                    })
+                } else {
+                    ParseResult::Match(ParsedValue {
+                        value: Ident::new(name, span),
+                        span,
+                        remaining: input.advance(),
+                    })
                 }
-                QuartzToken::InvalidIdent(name) => ParseResult::Match {
-                    value: Ident::new(name, token.span),
-                    span: token.span,
-                    remaining: input.advance(),
-                },
-                _ => ParseResult::NoMatch,
             }
-        } else {
-            ParseResult::NoMatch
+            _ => ParseResult::NoMatch,
         }
     })
 }
 
 fn kw(kw: KeywordKind) -> impl QuartzParser<Keyword> {
     parse_fn!(|input| {
-        if let Some(token) = input.peek() {
-            match &token.kind {
-                QuartzToken::Ident(name) => {
-                    if let Some(found_kw) = KEYWORDS.get(name) && kw.eq(found_kw) {
-                        ParseResult::Match {
-                            value: Keyword::new(kw, token.span),
-                            span: token.span,
-                            remaining: input.advance(),
-                        }
-                    } else {
-                        ParseResult::NoMatch
-                    }
-                }
-                _ => ParseResult::NoMatch,
-            }
+        if let Some(&Token { kind: QuartzToken::Ident(ref name), span }) = input.peek()
+          && Some(kw) == KEYWORDS.get(name).copied() {
+            ParseResult::Match(ParsedValue {
+                value: Keyword::new(kw, span),
+                span,
+                remaining: input.advance(),
+            })
         } else {
             ParseResult::NoMatch
         }
@@ -148,44 +131,43 @@ fn kw(kw: KeywordKind) -> impl QuartzParser<Keyword> {
 
 fn literal() -> impl QuartzParser<Literal> {
     parse_fn!(|input| {
-        if let Some(token) = input.peek() {
-            match &token.kind {
-                QuartzToken::Literal(value) => ParseResult::Match {
-                    value: Literal::new(*value, token.span),
-                    span: token.span,
-                    remaining: input.advance(),
-                },
-                QuartzToken::InvalidLiteral(_) => ParseResult::Match {
-                    value: Literal::new(0, token.span),
-                    span: token.span,
-                    remaining: input.advance(),
-                },
-                _ => ParseResult::NoMatch,
-            }
-        } else {
-            ParseResult::NoMatch
+        match input.peek() {
+            Some(&Token {
+                kind: QuartzToken::Literal(value),
+                span,
+            })
+            | Some(&Token {
+                kind: QuartzToken::InvalidLiteral(value, _),
+                span,
+            }) => ParseResult::Match(ParsedValue {
+                value: Literal::new(value, span),
+                span,
+                remaining: input.advance(),
+            }),
+            _ => ParseResult::NoMatch,
         }
     })
 }
 
 fn string() -> impl QuartzParser<SharedString> {
     parse_fn!(|input| {
-        if let Some(token) = input.peek() {
-            match &token.kind {
-                QuartzToken::String(value) => ParseResult::Match {
-                    value: SharedString::clone(value),
-                    span: token.span,
-                    remaining: input.advance(),
-                },
-                QuartzToken::InvalidString { string: value, .. } => ParseResult::Match {
-                    value: SharedString::clone(value),
-                    span: token.span,
-                    remaining: input.advance(),
-                },
-                _ => ParseResult::NoMatch,
-            }
-        } else {
-            ParseResult::NoMatch
+        match input.peek() {
+            Some(&Token {
+                kind: QuartzToken::String(ref value),
+                span,
+            })
+            | Some(&Token {
+                kind:
+                    QuartzToken::InvalidString {
+                        string: ref value, ..
+                    },
+                span,
+            }) => ParseResult::Match(ParsedValue {
+                value: SharedString::clone(value),
+                span,
+                remaining: input.advance(),
+            }),
+            _ => ParseResult::NoMatch,
         }
     })
 }
@@ -328,19 +310,17 @@ fn bool_literal() -> impl QuartzParser<BoolLiteral> {
     let keywords = parser!({kw(KeywordKind::False)}=>[false] <|> {kw(KeywordKind::True)}=>[true]);
 
     parse_fn!(|input| {
-        match keywords.run(input) {
-            ParseResult::Match {
-                value,
-                span,
-                remaining,
-            } => ParseResult::Match {
-                value: BoolLiteral::new(value, span),
-                span,
-                remaining,
-            },
-            ParseResult::NoMatch => ParseResult::NoMatch,
-            ParseResult::Err(err) => ParseResult::Err(err),
-        }
+        let ParsedValue {
+            value,
+            span,
+            remaining,
+        } = keywords.run(input)?;
+
+        ParseResult::Match(ParsedValue {
+            value: BoolLiteral::new(value, span),
+            span,
+            remaining,
+        })
     })
 }
 
@@ -418,31 +398,27 @@ fn concat_unary_suffix_exprs(base: Expr, suffixes: Vec<SuffixOp>) -> Expr {
 
 fn unary_suffix_expr(simple: bool) -> impl QuartzParser<Expr> {
     parse_fn!(|input| {
-        let leaf_expr_result = if simple {
+        let ParsedValue {
+            value: base,
+            span: s1,
+            remaining,
+        } = if simple {
             leaf_expr_simple().run(input)?
         } else {
             leaf_expr().run(input)?
         };
 
-        match leaf_expr_result {
-            InfallibleParseResult::Match {
-                value: base,
-                span: s1,
-                remaining,
-            } => match parser!(*{ suffix_op() }).run(remaining)? {
-                InfallibleParseResult::Match {
-                    value: suffixes,
-                    span: s2,
-                    remaining,
-                } => ParseResult::Match {
-                    value: concat_unary_suffix_exprs(base, suffixes),
-                    span: s1.join(s2),
-                    remaining,
-                },
-                InfallibleParseResult::NoMatch => ParseResult::NoMatch,
-            },
-            InfallibleParseResult::NoMatch => ParseResult::NoMatch,
-        }
+        let ParsedValue {
+            value: suffixes,
+            span: s2,
+            remaining,
+        } = parser!(*{ suffix_op() }).run(remaining)?;
+
+        ParseResult::Match(ParsedValue {
+            value: concat_unary_suffix_exprs(base, suffixes),
+            span: s1.join(s2),
+            remaining,
+        })
     })
 }
 
@@ -479,29 +455,26 @@ fn concat_cast_exprs(value: Expr, targets: Vec<(Keyword, Type)>) -> Expr {
 }
 
 fn cast_expr(simple: bool) -> impl QuartzParser<Expr> {
+    let tail = parser!({kw(KeywordKind::As)} <.> {expr_ty()});
+
     parse_fn!(|input| {
-        match unary_prefix_expr(simple).run(input)? {
-            InfallibleParseResult::Match {
-                value,
-                span: s1,
-                remaining,
-            } => {
-                let tail = parser!({kw(KeywordKind::As)} <.> {expr_ty()});
-                match parser!(*tail).run(remaining)? {
-                    InfallibleParseResult::Match {
-                        value: targets,
-                        span: s2,
-                        remaining,
-                    } => ParseResult::Match {
-                        value: concat_cast_exprs(value, targets),
-                        span: s1.join(s2),
-                        remaining,
-                    },
-                    InfallibleParseResult::NoMatch => ParseResult::NoMatch,
-                }
-            }
-            InfallibleParseResult::NoMatch => ParseResult::NoMatch,
-        }
+        let ParsedValue {
+            value,
+            span: s1,
+            remaining,
+        } = unary_prefix_expr(simple).run(input)?;
+
+        let ParsedValue {
+            value: targets,
+            span: s2,
+            remaining,
+        } = parser!(*tail).run(remaining)?;
+
+        ParseResult::Match(ParsedValue {
+            value: concat_cast_exprs(value, targets),
+            span: s1.join(s2),
+            remaining,
+        })
     })
 }
 
@@ -1094,7 +1067,7 @@ fn item() -> impl QuartzParser<Item> {
 
 pub fn parse(
     tokens: &[Token<QuartzToken>],
-) -> ParseResult<QuartzToken, Vec<Item>, QuartzParserError> {
+) -> ParseResult<ParsedValue<QuartzToken, Vec<Item>>, QuartzParserError> {
     let parser = parser!(*{ item() });
     let input = TokenStream::new(tokens);
     parser.run(input)

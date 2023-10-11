@@ -183,7 +183,7 @@ pub enum QuartzToken {
     Literal(i64),
     String(SharedString),
     InvalidIdent(SharedString),
-    InvalidLiteral(SharedString),
+    InvalidLiteral(i64, SharedString),
     InvalidString {
         string: SharedString,
         invalid_escape_offsets: Vec<usize>,
@@ -336,7 +336,7 @@ fn parse_literal(text: &str) -> Option<ReadTokenResult<QuartzToken>> {
         // We parse as u64 because literal tokens are always unsigned but we still want to support the whole 64bit range
         let token = match u64::from_str_radix(&literal, radix) {
             Ok(value) => QuartzToken::Literal(value as i64),
-            Err(_) => QuartzToken::InvalidLiteral(raw_literal.into()),
+            Err(_) => QuartzToken::InvalidLiteral(0, raw_literal.into()),
         };
 
         Some(ReadTokenResult {
@@ -483,7 +483,7 @@ pub fn get_token_error(token: &Token<QuartzToken>) -> Option<QuartzLexerError> {
             ident: SharedString::clone(ident),
             span: token.span,
         }),
-        QuartzToken::InvalidLiteral(literal) => Some(QuartzLexerError::InvalidLiteral {
+        QuartzToken::InvalidLiteral(_, literal) => Some(QuartzLexerError::InvalidLiteral {
             literal: SharedString::clone(literal),
             span: token.span,
         }),
