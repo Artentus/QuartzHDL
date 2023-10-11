@@ -66,6 +66,29 @@ struct S2 {
 
 Struct fields are accessed using the `.` syntax.
 
+## Enumerations
+
+Enumerations map bit values to human readable names and improve exhaustiveness chaecks.  
+An enum must always specify its underlying `bits` type and is castable to that type.
+
+```rust
+enum AluOp: bits<4> {
+    Add = 0,
+    AddC,
+    Sub,
+    SubB,
+    And,
+    Or,
+    Xor,
+    Shl,
+    Lsr,
+    Asr,
+    Mul,
+}
+```
+
+If no value is specified for a variant it will take the value of the previous variant plus 1, starting at 0 for the first variant.
+
 ## Modules
 
 Like Verilog, Quartz divides digital designs into modules.  
