@@ -20,7 +20,7 @@
 			"patterns": [
 				{
 					"name": "keyword.type.quartz-hdl",
-					"match": "\\b(bool|bit|bits|as|rising|falling|const|false|true|let)\\b"
+					"match": "\\b(bool|bit|bits|as|rising|falling|const|false|true)\\b"
 				},
 				{
 					"match": "\\b(enum|mod)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\b",
@@ -152,6 +152,14 @@
 							"name": "keyword.type.quartz-hdl"
 						},
 						"4": {
+							"name": "keyword.type.quartz-hdl"
+						}
+					}
+				},
+				{
+					"match": "\\b(let)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*=",
+					"captures": {
+						"1": {
 							"name": "keyword.type.quartz-hdl"
 						}
 					}
