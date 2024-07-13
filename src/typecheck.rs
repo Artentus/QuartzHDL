@@ -634,8 +634,7 @@ fn find_member_type<'a>(
                 })
             }
         }
-        Some(ResolvedTypeItem::Module(module_item))
-        | Some(ResolvedTypeItem::TopModule(module_item)) => {
+        Some(ResolvedTypeItem::Module(module_item)) => {
             if let Some(port) = module_item.ports().get(ident.as_ref()) {
                 Ok((port.ty(), Some(port.dir())))
             } else if module_item.logic_members().get(ident.as_ref()).is_some() {
@@ -822,7 +821,9 @@ fn typecheck_indexer<'a>(
 
                     let base_ty = &known_types[&base_id];
                     let index_ty = &known_types[&index.ty()];
-                    if let &ResolvedType::BuiltinBits { width } = index_ty && (width == required_index_width) {
+                    if let &ResolvedType::BuiltinBits { width } = index_ty
+                        && (width == required_index_width)
+                    {
                         let indexer = CheckedIndexKind::Single(index);
 
                         match base_ty {
@@ -831,9 +832,7 @@ fn typecheck_indexer<'a>(
                                 let result_id = resolve_type_late(&result_ty, known_types);
                                 Ok((indexer, result_id))
                             }
-                            &ResolvedType::Array { item_ty, .. } => {
-                                Ok((indexer, item_ty))
-                            }
+                            &ResolvedType::Array { item_ty, .. } => Ok((indexer, item_ty)),
                             _ => unreachable!(),
                         }
                     } else {
@@ -1382,7 +1381,9 @@ fn typecheck_if_expr<'a>(
             }
         };
 
-        if let Some(cond) = cond && let Some(body) = body {
+        if let Some(cond) = cond
+            && let Some(body) = body
+        {
             else_if_blocks.push(CheckedIfExprElseIfBlock::new(cond, body));
         }
     }
@@ -1593,7 +1594,9 @@ fn typecheck_enum_match_expr<'a>(
     for branch in expr.branches().iter() {
         'inner: for pattern in branch.patterns().iter() {
             if let MatchPattern::Path(p) = pattern {
-                if let Some(ident) = p.as_ident() && (ident.as_ref() == "_") {
+                if let Some(ident) = p.as_ident()
+                    && (ident.as_ref() == "_")
+                {
                     unused_variants.clear();
                     continue 'inner;
                 } else if (p.head().as_ref() == enum_name.as_ref()) && (p.tail().len() == 1) {
@@ -2162,7 +2165,9 @@ fn typecheck_if_statement<'a>(
             }
         };
 
-        if let Some(cond) = cond && let Some(body) = body {
+        if let Some(cond) = cond
+            && let Some(body) = body
+        {
             else_if_blocks.push(CheckedIfStatementElseIfBlock::new(cond, body));
         }
     }
@@ -2413,8 +2418,16 @@ fn typecheck_assignment<'a>(
 
     match find_module_member_type(base, parent_module) {
         Ok((base_ty, kind, dir)) => {
-            if let Some(Direction::In) = dir {
-                errors.push(QuartzError::InvalidAssignIn { assign });
+            let mut is_tri = false;
+
+            match dir {
+                Some(Direction::In) => {
+                    errors.push(QuartzError::InvalidAssignIn { assign });
+                }
+                Some(Direction::InOut) => {
+                    is_tri = true;
+                }
+                _ => (),
             }
 
             match (mode, kind) {
@@ -2464,11 +2477,18 @@ fn typecheck_assignment<'a>(
                             resolved_types,
                         ) {
                             Ok((member_ty, dir)) => {
-                                if let Some(Direction::Out) = dir {
-                                    errors.push(QuartzError::MemberNotAssignable {
-                                        ty: known_types[&ty].to_string(known_types),
-                                        name: member.member(),
-                                    })
+                                match dir {
+                                    Some(Direction::Out) => {
+                                        errors.push(QuartzError::MemberNotAssignable {
+                                            ty: known_types[&ty].to_string(known_types),
+                                            name: member.member(),
+                                        });
+                                    }
+                                    Some(Direction::InOut) => {
+                                        assert!(!is_tri);
+                                        is_tri = true;
+                                    }
+                                    _ => (),
                                 }
 
                                 member_ty
@@ -2547,8 +2567,19 @@ fn typecheck_assignment<'a>(
                 None => None,
             };
 
+            let tri_width = is_tri.then(|| {
+                let target_ty = &known_types[&ty];
+                match target_ty {
+                    &ResolvedType::BuiltinBits { width } => width,
+                    _ => panic!("invalid inout port type"),
+                }
+            });
+
             let target = CheckedAssignTarget::new(base.clone(), base_ty, suffixes);
-            wrap_errors!(CheckedAssignment::new(target, value.unwrap()), errors)
+            wrap_errors!(
+                CheckedAssignment::new(target, value.unwrap(), tri_width),
+                errors
+            )
         }
         Err(err) => {
             errors.push(err);
@@ -2831,17 +2862,10 @@ fn type_contains_module<'a>(
     let ty = &known_types[&id];
     match ty {
         ResolvedType::Const | ResolvedType::BuiltinBits { .. } => Ok(false),
-        ResolvedType::BuiltinInPort { .. }
-        | ResolvedType::BuiltinOutPort { .. }
-        | ResolvedType::BuiltinInOutPort { .. } => Ok(true),
         ResolvedType::Named { .. } => match &resolved_types[&id] {
             // Structs are checked beforehand to not contain any modules
             ResolvedTypeItem::Struct(_) | ResolvedTypeItem::Enum(_) => Ok(false),
             ResolvedTypeItem::Module(_) | ResolvedTypeItem::ExternModule(_) => Ok(true),
-            ResolvedTypeItem::TopModule(_) => Err(QuartzError::TopModuleMember {
-                member_span,
-                member_ty: ty.to_string(known_types),
-            }),
         },
         ResolvedType::Array { item_ty, .. } => {
             type_contains_module(*item_ty, member_span, known_types, resolved_types)
@@ -2894,8 +2918,8 @@ pub fn typecheck_module<'a>(
 
         match (port.dir(), port.kind()) {
             (Direction::In, LogicKind::Register)
-            | (Direction::In, LogicKind::Module)
-            | (Direction::Out, LogicKind::Module) => {
+            | (Direction::InOut, LogicKind::Register)
+            | (_, LogicKind::Module) => {
                 errors.push(QuartzError::InvalidPortKind {
                     port_span,
                     port_dir: port.dir(),

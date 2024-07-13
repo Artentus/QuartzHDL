@@ -348,6 +348,29 @@ impl VAssignment {
 }
 
 #[derive(Debug, Clone)]
+pub struct VTriAssignment {
+    target: VAssignTarget,
+    width: u64,
+}
+
+impl VTriAssignment {
+    #[inline]
+    pub fn new(target: VAssignTarget, width: u64) -> Self {
+        Self { target, width }
+    }
+
+    #[inline]
+    pub fn target(&self) -> &VAssignTarget {
+        &self.target
+    }
+
+    #[inline]
+    pub fn width(&self) -> u64 {
+        self.width
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct VGenerate {
     depth: u64,
     range: Range<u64>,
@@ -432,6 +455,29 @@ impl VFFMember {
 }
 
 #[derive(Debug, Clone)]
+pub struct VCombMember {
+    tri_assigns: Vec<VTriAssignment>,
+    body: VBlock,
+}
+
+impl VCombMember {
+    #[inline]
+    pub fn new(tri_assigns: Vec<VTriAssignment>, body: VBlock) -> Self {
+        Self { tri_assigns, body }
+    }
+
+    #[inline]
+    pub fn tri_assigns(&self) -> &[VTriAssignment] {
+        &self.tri_assigns
+    }
+
+    #[inline]
+    pub fn body(&self) -> &VBlock {
+        &self.body
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct VAssignMember {
     target: VAssignTarget,
     condition: VExpr,
@@ -469,7 +515,7 @@ pub struct VModule {
     tmp_members: Vec<(SharedString, TypeId)>,
     tmp_statements: VBlock,
     ff_members: Vec<VFFMember>,
-    comb_members: Vec<VBlock>,
+    comb_members: Vec<VCombMember>,
     assign_members: Vec<VAssignMember>,
 }
 
@@ -479,7 +525,7 @@ impl VModule {
         tmp_members: Vec<(SharedString, TypeId)>,
         tmp_statements: VBlock,
         ff_members: Vec<VFFMember>,
-        comb_members: Vec<VBlock>,
+        comb_members: Vec<VCombMember>,
         assign_members: Vec<VAssignMember>,
     ) -> Self {
         Self {
@@ -507,7 +553,7 @@ impl VModule {
     }
 
     #[inline]
-    pub fn comb_members(&self) -> &[VBlock] {
+    pub fn comb_members(&self) -> &[VCombMember] {
         &self.comb_members
     }
 

@@ -543,7 +543,6 @@ pub enum TypeItemKind {
     Struct(Struct),
     Enum(Enum),
     Module(Module),
-    TopModule(TopModule),
     ExternModule(ExternModule),
 }
 
@@ -576,15 +575,6 @@ pub enum ResolvedType {
     BuiltinBits {
         width: u64,
     },
-    BuiltinInPort {
-        width: u64,
-    },
-    BuiltinOutPort {
-        width: u64,
-    },
-    BuiltinInOutPort {
-        width: u64,
-    },
     Named {
         name: SharedString,
         generic_args: Rc<[i64]>,
@@ -608,9 +598,6 @@ impl ResolvedType {
                     format!("bits<{width}>").into()
                 }
             }
-            Self::BuiltinInPort { width } => format!("InPort<{width}>").into(),
-            Self::BuiltinOutPort { width } => format!("OutPort<{width}>").into(),
-            Self::BuiltinInOutPort { width } => format!("InOutPort<{width}>").into(),
             Self::Named { name, generic_args } => {
                 use std::fmt::Write;
 
@@ -647,18 +634,6 @@ impl PartialEq for ResolvedType {
                 lhs_width == rhs_width
             }
             (
-                &Self::BuiltinInPort { width: lhs_width },
-                &Self::BuiltinInPort { width: rhs_width },
-            ) => lhs_width == rhs_width,
-            (
-                &Self::BuiltinOutPort { width: lhs_width },
-                &Self::BuiltinOutPort { width: rhs_width },
-            ) => lhs_width == rhs_width,
-            (
-                &Self::BuiltinInOutPort { width: lhs_width },
-                &Self::BuiltinInOutPort { width: rhs_width },
-            ) => lhs_width == rhs_width,
-            (
                 Self::Named {
                     name: lhs_name,
                     generic_args: lhs_args,
@@ -694,15 +669,6 @@ impl std::hash::Hash for ResolvedType {
         match self {
             Self::Const => {}
             Self::BuiltinBits { width } => {
-                Hash::hash(width, state);
-            }
-            Self::BuiltinInPort { width } => {
-                Hash::hash(width, state);
-            }
-            Self::BuiltinOutPort { width } => {
-                Hash::hash(width, state);
-            }
-            Self::BuiltinInOutPort { width } => {
                 Hash::hash(width, state);
             }
             Self::Named { name, generic_args } => {
@@ -953,7 +919,6 @@ pub enum ResolvedTypeItem {
     Struct(ResolvedStruct),
     Enum(ResolvedEnum),
     Module(ResolvedModule),
-    TopModule(ResolvedModule),
     ExternModule(ResolvedExternModule),
 }
 
@@ -1781,12 +1746,17 @@ impl Typed for CheckedAssignTarget {
 pub struct CheckedAssignment {
     target: CheckedAssignTarget,
     value: CheckedExpr,
+    tri_width: Option<u64>,
 }
 
 impl CheckedAssignment {
     #[inline]
-    pub fn new(target: CheckedAssignTarget, value: CheckedExpr) -> Self {
-        Self { target, value }
+    pub fn new(target: CheckedAssignTarget, value: CheckedExpr, tri_width: Option<u64>) -> Self {
+        Self {
+            target,
+            value,
+            tri_width,
+        }
     }
 
     #[inline]
@@ -1797,6 +1767,11 @@ impl CheckedAssignment {
     #[inline]
     pub fn value(&self) -> &CheckedExpr {
         &self.value
+    }
+
+    #[inline]
+    pub fn tri_width(&self) -> Option<u64> {
+        self.tri_width
     }
 }
 

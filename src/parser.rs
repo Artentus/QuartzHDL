@@ -43,7 +43,6 @@ const KEYWORDS: phf::Map<&'static str, KeywordKind> = phf_macros::phf_map!(
     "continue" => KeywordKind::Continue,
     "break" => KeywordKind::Break,
     "extern" => KeywordKind::Extern,
-    "top" => KeywordKind::Top,
     "false" => KeywordKind::False,
     "true" => KeywordKind::True,
 );
@@ -69,8 +68,12 @@ fn punct<const N: usize>(punct: impl Into<[PunctKind; N]>) -> impl QuartzParser<
     let punct = punct.into();
 
     parse_fn!(|input| {
-        if let Some(&Token { kind: QuartzToken::Punct(found_punct), span }) = input.peek()
-          && punct.iter().any(|&p| p == found_punct) {
+        if let Some(&Token {
+            kind: QuartzToken::Punct(found_punct),
+            span,
+        }) = input.peek()
+            && punct.iter().any(|&p| p == found_punct)
+        {
             ParseResult::Match(ParsedValue {
                 value: Punct::new(found_punct, span),
                 span,
@@ -116,8 +119,12 @@ fn ident() -> impl QuartzParser<Ident> {
 
 fn kw(kw: KeywordKind) -> impl QuartzParser<Keyword> {
     parse_fn!(|input| {
-        if let Some(&Token { kind: QuartzToken::Ident(ref name), span }) = input.peek()
-          && Some(kw) == KEYWORDS.get(name).copied() {
+        if let Some(&Token {
+            kind: QuartzToken::Ident(ref name),
+            span,
+        }) = input.peek()
+            && Some(kw) == KEYWORDS.get(name).copied()
+        {
             ParseResult::Match(ParsedValue {
                 value: Keyword::new(kw, span),
                 span,
@@ -912,6 +919,7 @@ fn port_mode() -> impl QuartzParser<PortMode> {
     choice!(
         parser!({kw(KeywordKind::In)}->[|kw| PortMode::new(Direction::In, kw.span())]),
         parser!({kw(KeywordKind::Out)}->[|kw| PortMode::new(Direction::Out, kw.span())]),
+        parser!({kw(KeywordKind::InOut)}->[|kw| PortMode::new(Direction::InOut, kw.span())]),
     )
 }
 
@@ -1001,22 +1009,6 @@ fn module_def() -> impl QuartzParser<Module> {
     )
 }
 
-fn top_module_def() -> impl QuartzParser<TopModule> {
-    parser!(
-        {sequence!(
-            kw(KeywordKind::Top),
-            kw(KeywordKind::Mod),
-            parser!({ident()}!![err!("expected identifier")]),
-            parser!({punct(PunctKind::OpenCurl)}!![err!("expected `{`")]),
-            parser!(*{member()}),
-            parser!({punct(PunctKind::CloseCurl)}!![err!("expected `}`")]),
-        )}
-        ->[|(top_kw, mod_kw, name, open_curl, members, close_curl)| {
-            TopModule::new(top_kw, mod_kw, name, open_curl, members, close_curl)
-        }]
-    )
-}
-
 fn extern_module_def() -> impl QuartzParser<ExternModule> {
     parser!(
         {sequence!(
@@ -1057,7 +1049,6 @@ fn item() -> impl QuartzParser<Item> {
         parser!({enum_def()}->[ItemKind::Enum]),
         parser!({const_def()}->[ItemKind::Const]),
         parser!({module_def()}->[ItemKind::Module]),
-        parser!({top_module_def()}->[ItemKind::TopModule]),
         parser!({extern_module_def()}->[ItemKind::ExternModule]),
         parser!({fn_def()}->[ItemKind::Func]),
     );

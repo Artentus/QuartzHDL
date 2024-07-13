@@ -24,8 +24,7 @@ reg b: bits<16>;
 
 ### Ports
 
-Ports are a special kind of variable that also defines a direction, either `in` or `out`. Combining `in` with `reg` is not legal.  
-Note that tri-state port declarations are not supported in Quartz.
+Ports are a special kind of variable that also defines a direction, either `in`, `out` or `inout`. Combining `in` or `inout` with `reg` is not legal.
 
 ```rust
 in sig a: bit,
@@ -165,24 +164,6 @@ mod M<N> (
     in sig data: bits<N>,
 ) {
     // ...
-}
-```
-
-## Top module
-
-Every design in Quartz must define exactly one top module.  
-This module does not define a port list but instead connects to FPGA pins though special inbuilt sub-modules.
-
-```rust
-top mod Top {
-    // access the pin with pi.d_in
-    let pi: InPort<1>;
-
-    // access the pin with po.d_out
-    let po: OutPort<1>;
-
-    // access the pin with pio.d_in and pio.d_out, and swap direction with pio.oe (1 = output)
-    let pio: InOutPort<1>;
 }
 ```
 

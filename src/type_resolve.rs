@@ -146,7 +146,9 @@ fn transform_const_if_expr<'a>(
         errors.push(QuartzError::MissingElseBlock { if_expr: expr })
     }
 
-    if let Some(condition) = condition && let Some(body) = body {
+    if let Some(condition) = condition
+        && let Some(body) = body
+    {
         wrap_errors!(
             ConstIfExpr::new(condition, body, else_if_blocks, else_block, expr.span()),
             errors
@@ -701,12 +703,6 @@ fn resolve_named_type<'a>(
             }
         }
         ("bits", _) => resolve_builtin_width_type!(BuiltinBits),
-        ("InPort", true) => resolve_builtin_width_type!(BuiltinInPort),
-        ("OutPort", true) => resolve_builtin_width_type!(BuiltinOutPort),
-        ("InOutPort", true) => resolve_builtin_width_type!(BuiltinInOutPort),
-        ("InPort", false) | ("OutPort", false) | ("InOutPort", false) => {
-            return Err(QuartzError::PortInNonTopModule { ty: named_ty });
-        }
         _ => {
             if let Some(type_item) = type_items.get(name) {
                 match type_item.kind() {
@@ -728,9 +724,7 @@ fn resolve_named_type<'a>(
                             });
                         }
                     }
-                    TypeItemKind::Enum(_)
-                    | TypeItemKind::TopModule(_)
-                    | TypeItemKind::ExternModule(_) => {
+                    TypeItemKind::Enum(_) | TypeItemKind::ExternModule(_) => {
                         if generic_arg_count > 0 {
                             return Err(QuartzError::GenericCountMismatch {
                                 ty: named_ty,
@@ -1436,6 +1430,19 @@ fn resolve_module<'a>(
         match result {
             Ok(ty_id) => {
                 registry.type_order.add_dependency(ty_id, this_id);
+
+                if port.mode().dir() == Direction::InOut {
+                    let port_ty = &registry.known_types[&ty_id];
+                    match port_ty {
+                        ResolvedType::BuiltinBits { .. } => (),
+                        _ => {
+                            errors.push(QuartzError::InOutPortNotBits {
+                                port_span: port.span(),
+                            });
+                        }
+                    }
+                }
+
                 ports.insert(
                     port.name().as_string(),
                     ResolvedPort::new(
@@ -1563,163 +1570,6 @@ fn resolve_module<'a>(
     )
 }
 
-fn resolve_top_module<'a>(
-    module_item: &'a TopModule,
-    attributes: &'a [AttributeList],
-    args: &ResolveArgs,
-    registry: &mut TypeRegistry,
-) -> QuartzResult<'a, ResolvedModule> {
-    let this_ty = ResolvedType::Named {
-        name: module_item.name().as_string(),
-        generic_args: [].as_slice().into(),
-    };
-    let this_id = TypeId::from_type(&this_ty);
-
-    let mut errors = Vec::new();
-    if let Err(err) = check_for_duplicate_members(None, module_item.members().iter()) {
-        errors.push(err);
-    }
-
-    let mut local_consts = HashMap::default();
-    let mut scope = Scope::new(args.global_scope);
-
-    for member in module_item.members().iter() {
-        if let MemberKind::Const(const_member) = member.kind() {
-            if !local_consts.contains_key(const_member.name().as_ref()) {
-                let const_expr = transform_const_expr(const_member.value(), &scope, false, false)?;
-                local_consts.insert(const_member.name().as_string(), const_expr);
-                scope.add_const(const_member.name());
-            }
-        }
-    }
-
-    let mut local_const_values = HashMap::default();
-    for (name, expr) in local_consts.iter() {
-        let result = eval(
-            expr,
-            &mut VarScope::empty(),
-            args.global_const_values,
-            Some(&local_consts),
-            args.funcs,
-        );
-
-        match result.into_result() {
-            Ok(value) => {
-                local_const_values.insert(SharedString::clone(name), value);
-            }
-            Err(err) => errors.push(err.into()),
-        }
-    }
-
-    let mut logic_members = HashMap::default();
-    let mut proc_members = Vec::new();
-    let mut comb_members = Vec::new();
-    for member in module_item.members().iter() {
-        match member.kind() {
-            MemberKind::Logic(logic_member) => {
-                let result = resolve_type(
-                    logic_member.ty(),
-                    args.type_items,
-                    &mut scope,
-                    true,
-                    args.global_const_values,
-                    Some(&local_const_values),
-                    args.funcs,
-                    registry,
-                );
-
-                match result {
-                    Ok(ty_id) => {
-                        registry.type_order.add_dependency(ty_id, this_id);
-                        logic_members.insert(
-                            logic_member.name().as_string(),
-                            ResolvedLogicMember::new(
-                                member
-                                    .attributes()
-                                    .iter()
-                                    .flat_map(|list| list.attributes())
-                                    .cloned()
-                                    .collect(),
-                                logic_member.mode().kind(),
-                                logic_member.span(),
-                                ty_id,
-                            ),
-                        );
-                    }
-                    Err(err) => errors.push(err),
-                }
-            }
-            MemberKind::Proc(proc_member) => {
-                proc_member.reset_resolved_types();
-
-                let mut has_error = false;
-
-                for sens in proc_member.sens() {
-                    if let Err(err) = resolve_assign_target(
-                        sens.sig(),
-                        this_id,
-                        &mut scope,
-                        &args.to_local(&local_const_values),
-                        registry,
-                    ) {
-                        errors.push(err);
-                        has_error = true;
-                    }
-                }
-
-                if let Err(err) = resolve_block(
-                    proc_member.body(),
-                    this_id,
-                    &scope,
-                    &args.to_local(&local_const_values),
-                    registry,
-                ) {
-                    errors.push(err);
-                    has_error = true;
-                }
-
-                if !has_error {
-                    proc_members.push(proc_member.clone());
-                }
-            }
-            MemberKind::Comb(comb_member) => {
-                comb_member.reset_resolved_types();
-
-                let result = resolve_block(
-                    comb_member.body(),
-                    this_id,
-                    &scope,
-                    &args.to_local(&local_const_values),
-                    registry,
-                );
-
-                if let Err(err) = result {
-                    errors.push(err);
-                } else {
-                    comb_members.push(comb_member.clone());
-                }
-            }
-            _ => {}
-        }
-    }
-
-    wrap_errors!(
-        ResolvedModule::new(
-            attributes
-                .iter()
-                .flat_map(|list| list.attributes())
-                .cloned()
-                .collect(),
-            HashMap::default(),
-            local_const_values,
-            logic_members,
-            proc_members,
-            comb_members,
-        ),
-        errors
-    )
-}
-
 fn resolve_extern_module<'a>(
     module_item: &'a ExternModule,
     args: &ResolveArgs,
@@ -1750,6 +1600,19 @@ fn resolve_extern_module<'a>(
         match result {
             Ok(ty_id) => {
                 registry.type_order.add_dependency(ty_id, this_id);
+
+                if port.mode().dir() == Direction::InOut {
+                    let port_ty = &registry.known_types[&ty_id];
+                    match port_ty {
+                        ResolvedType::BuiltinBits { .. } => (),
+                        _ => {
+                            errors.push(QuartzError::InOutPortNotBits {
+                                port_span: port.span(),
+                            });
+                        }
+                    }
+                }
+
                 ports.insert(
                     port.name().as_string(),
                     ResolvedPort::new(
@@ -1772,81 +1635,6 @@ fn resolve_extern_module<'a>(
     wrap_errors!(ResolvedExternModule::new(ports), errors)
 }
 
-fn resolve_in_port<'a>(
-    width: u64,
-    registry: &mut TypeRegistry,
-) -> QuartzResult<'a, ResolvedExternModule> {
-    let this_ty = ResolvedType::BuiltinInPort { width };
-    let this_id = TypeId::from_type(&this_ty);
-
-    let data_ty = UnresolvedType::BuiltinBits { width };
-    let data_id = resolve_type_late(&data_ty, registry.known_types);
-
-    registry.type_order.add_dependency(data_id, this_id);
-
-    let mut ports = HashMap::default();
-    ports.insert(
-        "d_in".into(),
-        ResolvedPort::new(Vec::new(), Direction::Out, LogicKind::Signal, None, data_id),
-    );
-
-    Ok(ResolvedExternModule::new(ports))
-}
-
-fn resolve_out_port<'a>(
-    width: u64,
-    registry: &mut TypeRegistry,
-) -> QuartzResult<'a, ResolvedExternModule> {
-    let this_ty = ResolvedType::BuiltinInPort { width };
-    let this_id = TypeId::from_type(&this_ty);
-
-    let data_ty = UnresolvedType::BuiltinBits { width };
-    let data_id = resolve_type_late(&data_ty, registry.known_types);
-
-    registry.type_order.add_dependency(data_id, this_id);
-
-    let mut ports = HashMap::default();
-    ports.insert(
-        "d_out".into(),
-        ResolvedPort::new(Vec::new(), Direction::In, LogicKind::Signal, None, data_id),
-    );
-
-    Ok(ResolvedExternModule::new(ports))
-}
-
-fn resolve_inout_port<'a>(
-    width: u64,
-    registry: &mut TypeRegistry,
-) -> QuartzResult<'a, ResolvedExternModule> {
-    let this_ty = ResolvedType::BuiltinInPort { width };
-    let this_id = TypeId::from_type(&this_ty);
-
-    let data_ty = UnresolvedType::BuiltinBits { width };
-    let data_id = resolve_type_late(&data_ty, registry.known_types);
-
-    let en_ty = UnresolvedType::BuiltinBits { width: 1 };
-    let en_id = resolve_type_late(&en_ty, registry.known_types);
-
-    registry.type_order.add_dependency(data_id, this_id);
-    registry.type_order.add_dependency(en_id, this_id);
-
-    let mut ports = HashMap::default();
-    ports.insert(
-        "d_in".into(),
-        ResolvedPort::new(Vec::new(), Direction::Out, LogicKind::Signal, None, data_id),
-    );
-    ports.insert(
-        "d_out".into(),
-        ResolvedPort::new(Vec::new(), Direction::In, LogicKind::Signal, None, data_id),
-    );
-    ports.insert(
-        "oe".into(),
-        ResolvedPort::new(Vec::new(), Direction::In, LogicKind::Signal, None, en_id),
-    );
-
-    Ok(ResolvedExternModule::new(ports))
-}
-
 pub type ResolvedTypes = (
     HashMap<TypeId, ResolvedType>,
     HashMap<TypeId, ResolvedTypeItem>,
@@ -1854,7 +1642,7 @@ pub type ResolvedTypes = (
 );
 
 pub fn resolve_types<'a>(
-    top_module: &'a TopModule,
+    top_module: &'a Module,
     type_items: &'a HashMap<SharedString, TypeItem>,
     global_scope: &Scope,
     global_const_values: &HashMap<SharedString, i64>,
@@ -1878,57 +1666,6 @@ pub fn resolve_types<'a>(
     let mut resolved_type_items = HashMap::default();
     while let Some(ty_id) = type_queue.pop_front() {
         match &known_types[&ty_id] {
-            &ResolvedType::BuiltinInPort { width } => {
-                let mut registry = TypeRegistry {
-                    known_types: &mut known_types,
-                    type_order: &mut type_order,
-                    type_queue: &mut type_queue,
-                };
-
-                let result = resolve_in_port(width, &mut registry);
-
-                match result {
-                    Ok(resolved_module) => {
-                        resolved_type_items
-                            .insert(ty_id, ResolvedTypeItem::ExternModule(resolved_module));
-                    }
-                    Err(err) => errors.push(err),
-                }
-            }
-            &ResolvedType::BuiltinOutPort { width } => {
-                let mut registry = TypeRegistry {
-                    known_types: &mut known_types,
-                    type_order: &mut type_order,
-                    type_queue: &mut type_queue,
-                };
-
-                let result = resolve_out_port(width, &mut registry);
-
-                match result {
-                    Ok(resolved_module) => {
-                        resolved_type_items
-                            .insert(ty_id, ResolvedTypeItem::ExternModule(resolved_module));
-                    }
-                    Err(err) => errors.push(err),
-                }
-            }
-            &ResolvedType::BuiltinInOutPort { width } => {
-                let mut registry = TypeRegistry {
-                    known_types: &mut known_types,
-                    type_order: &mut type_order,
-                    type_queue: &mut type_queue,
-                };
-
-                let result = resolve_inout_port(width, &mut registry);
-
-                match result {
-                    Ok(resolved_module) => {
-                        resolved_type_items
-                            .insert(ty_id, ResolvedTypeItem::ExternModule(resolved_module));
-                    }
-                    Err(err) => errors.push(err),
-                }
-            }
             ResolvedType::Named { name, generic_args } => {
                 let name = SharedString::clone(name);
                 let generic_args = std::rc::Rc::clone(generic_args);
@@ -1988,24 +1725,6 @@ pub fn resolve_types<'a>(
                                 Err(err) => errors.push(err),
                             }
                         }
-                        TypeItemKind::TopModule(module_item) => {
-                            let result = resolve_top_module(
-                                module_item,
-                                item.attributes(),
-                                &args,
-                                &mut registry,
-                            );
-
-                            match result {
-                                Ok(resolved_module) => {
-                                    resolved_type_items.insert(
-                                        ty_id,
-                                        ResolvedTypeItem::TopModule(resolved_module),
-                                    );
-                                }
-                                Err(err) => errors.push(err),
-                            }
-                        }
                         TypeItemKind::ExternModule(module_item) => {
                             let result = resolve_extern_module(module_item, &args, &mut registry);
 
@@ -2053,12 +1772,6 @@ pub fn collect_type_items(
                 type_items.insert(
                     module_item.name().as_string(),
                     TypeItem::new(item.attributes, TypeItemKind::Module(module_item)),
-                );
-            }
-            ItemKind::TopModule(module_item) => {
-                type_items.insert(
-                    module_item.name().as_string(),
-                    TypeItem::new(item.attributes, TypeItemKind::TopModule(module_item)),
                 );
             }
             ItemKind::ExternModule(module_item) => {

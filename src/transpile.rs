@@ -62,27 +62,6 @@ fn get_transpiled_type_name(
                 TranspiledTypeName::new(format!("logic[{}:0]", width - 1))
             }
         }
-        &ResolvedType::BuiltinInPort { width } => {
-            let mut transpiled_name = String::new();
-            transpiled_name.push_str("InPort__");
-            write!(transpiled_name, "{}", width).unwrap();
-
-            TranspiledTypeName::new(transpiled_name)
-        }
-        &ResolvedType::BuiltinOutPort { width } => {
-            let mut transpiled_name = String::new();
-            transpiled_name.push_str("OutPort__");
-            write!(transpiled_name, "{}", width).unwrap();
-
-            TranspiledTypeName::new(transpiled_name)
-        }
-        &ResolvedType::BuiltinInOutPort { width } => {
-            let mut transpiled_name = String::new();
-            transpiled_name.push_str("InOutPort__");
-            write!(transpiled_name, "{}", width).unwrap();
-
-            TranspiledTypeName::new(transpiled_name)
-        }
         ResolvedType::Named { name, generic_args } => {
             if generic_args.is_empty() {
                 TranspiledTypeName::new(name.as_ref())
@@ -108,8 +87,6 @@ fn get_transpiled_type_name(
 enum ResolvedModuleItem<'a> {
     Module(&'a ResolvedModule),
     ExternModule(&'a ResolvedExternModule),
-    Port(&'a ResolvedExternModule, Direction),
-    TriPort(&'a ResolvedExternModule, u64),
 }
 
 impl ResolvedModuleItem<'_> {
@@ -117,8 +94,6 @@ impl ResolvedModuleItem<'_> {
         match self {
             ResolvedModuleItem::Module(module) => module.ports(),
             ResolvedModuleItem::ExternModule(module) => module.ports(),
-            ResolvedModuleItem::Port(module, _) => module.ports(),
-            ResolvedModuleItem::TriPort(module, _) => module.ports(),
         }
     }
 }
@@ -137,37 +112,10 @@ fn get_module_item<'a>(
     match &known_types[&id] {
         ResolvedType::Const => None,
         ResolvedType::BuiltinBits { .. } => None,
-        ResolvedType::BuiltinInPort { .. } => {
-            let ResolvedTypeItem::ExternModule(module_item) = &resolved_types[&id] else {
-                unreachable!("invalid port item");
-            };
-
-            Some((
-                ResolvedModuleItem::Port(module_item, Direction::In),
-                Vec::new(),
-            ))
-        }
-        ResolvedType::BuiltinOutPort { .. } => {
-            let ResolvedTypeItem::ExternModule(module_item) = &resolved_types[&id] else {
-                unreachable!("invalid port item");
-            };
-
-            Some((
-                ResolvedModuleItem::Port(module_item, Direction::Out),
-                Vec::new(),
-            ))
-        }
-        &ResolvedType::BuiltinInOutPort { width } => {
-            let ResolvedTypeItem::ExternModule(module_item) = &resolved_types[&id] else {
-                unreachable!("invalid port item");
-            };
-
-            Some((ResolvedModuleItem::TriPort(module_item, width), Vec::new()))
-        }
         ResolvedType::Named { .. } => match &resolved_types[&id] {
             ResolvedTypeItem::Struct(_) => None,
             ResolvedTypeItem::Enum(_) => None,
-            ResolvedTypeItem::Module(module_item) | ResolvedTypeItem::TopModule(module_item) => {
+            ResolvedTypeItem::Module(module_item) => {
                 Some((ResolvedModuleItem::Module(module_item), Vec::new()))
             }
             ResolvedTypeItem::ExternModule(module_item) => {
@@ -249,15 +197,13 @@ pub fn transpile(
                     writeln!(writer, "}} {}__Interface;\n", item_name.base)?;
                 }
             }
-            ResolvedTypeItem::Module(_) | ResolvedTypeItem::TopModule(_) => {}
+            ResolvedTypeItem::Module(_) => {}
         }
     }
 
     for (module_ty, module) in v_modules {
         let module_item = match &resolved_types[module_ty] {
-            ResolvedTypeItem::Module(module_item) | ResolvedTypeItem::TopModule(module_item) => {
-                module_item
-            }
+            ResolvedTypeItem::Module(module_item) => module_item,
             _ => unreachable!(),
         };
 
@@ -322,6 +268,7 @@ pub fn transpile(
             match port.dir() {
                 Direction::In => write!(writer, "input var ")?,
                 Direction::Out => write!(writer, "output var ")?,
+                Direction::InOut => write!(writer, "inout tri ")?,
             }
 
             let port_type_name = get_transpiled_type_name(port.ty(), known_types);
@@ -332,89 +279,6 @@ pub fn transpile(
                 port_name,
                 port_type_name.array()
             )?;
-        }
-
-        let mut has_prev = !module_item.ports().is_empty();
-        for (member_name, member) in module_item.logic_members() {
-            let member_ty_name = get_transpiled_type_name(member.ty(), known_types);
-            if member.kind() == LogicKind::Module {
-                match get_module_item(member.ty(), known_types, resolved_types) {
-                    Some((ResolvedModuleItem::Port(_, dir), _)) => {
-                        if has_prev {
-                            writeln!(writer, ",")?;
-                        } else {
-                            writeln!(writer)?;
-                        }
-                        has_prev = true;
-
-                        write!(writer, "    ")?;
-
-                        if !member.attributes().is_empty() {
-                            write!(writer, "(* ")?;
-                            for (i, attribute) in member.attributes().iter().enumerate() {
-                                if i > 0 {
-                                    write!(writer, ", ")?;
-                                }
-
-                                write!(writer, "{}", attribute.name().as_ref())?;
-                                if let Some(value) = attribute.value() {
-                                    write!(writer, "=\"{}\"", value.value().as_ref())?;
-                                }
-                            }
-                            write!(writer, " *) ")?;
-                        }
-
-                        match dir {
-                            Direction::In => write!(writer, "input var ")?,
-                            Direction::Out => write!(writer, "output var ")?,
-                        }
-
-                        write!(
-                            writer,
-                            "{}__Interface {}{}",
-                            member_ty_name.base(),
-                            member_name,
-                            member_ty_name.array()
-                        )?;
-                    }
-                    Some((ResolvedModuleItem::TriPort(_, width), _)) => {
-                        if has_prev {
-                            writeln!(writer, ",")?;
-                        } else {
-                            writeln!(writer)?;
-                        }
-                        has_prev = true;
-
-                        write!(writer, "    ")?;
-
-                        if !member.attributes().is_empty() {
-                            write!(writer, "(* ")?;
-                            for (i, attribute) in member.attributes().iter().enumerate() {
-                                if i > 0 {
-                                    write!(writer, ", ")?;
-                                }
-
-                                write!(writer, "{}", attribute.name().as_ref())?;
-                                if let Some(value) = attribute.value() {
-                                    write!(writer, "=\"{}\"", value.value().as_ref())?;
-                                }
-                            }
-                            write!(writer, " *) ")?;
-                        }
-
-                        write!(writer, "inout tri ")?;
-
-                        if width == 1 {
-                            write!(writer, "logic ")?;
-                        } else {
-                            write!(writer, "logic[{}:0] ", width - 1)?;
-                        }
-
-                        write!(writer, "{}__port{}", member_name, member_ty_name.array())?;
-                    }
-                    _ => {}
-                }
-            }
         }
 
         writeln!(writer, "\n);\n")?;
@@ -428,10 +292,6 @@ pub fn transpile(
                     unreachable!("invalid module type");
                 };
 
-                if let ResolvedModuleItem::Port(_, _) = member_module_item {
-                    continue;
-                }
-
                 if !member_module_item.ports().is_empty() {
                     writeln!(
                         writer,
@@ -440,38 +300,6 @@ pub fn transpile(
                         member_name,
                         member_ty_name.array(),
                     )?;
-                }
-
-                if let ResolvedModuleItem::TriPort(_, width) = member_module_item {
-                    for (array_level, array_len) in array_lengths.iter().copied().rev().enumerate()
-                    {
-                        writeln!(
-                            writer,
-                            "for (genvar i{array_level} = 0; i{array_level} < {array_len}; i{array_level}++) begin",
-                        )?;
-                    }
-
-                    let mut indexers = String::new();
-                    for i in 0..array_lengths.len() {
-                        use std::fmt::Write;
-                        write!(indexers, "[i{i}]",).unwrap();
-                    }
-
-                    writeln!(
-                        writer,
-                        "assign {member_name}__port{indexers} = {member_name}{indexers}.oe ? {member_name}{indexers}.d_out : {width}'bz;",
-                    )?;
-
-                    writeln!(
-                        writer,
-                        "assign {member_name}{indexers}.d_in = {member_name}__port{indexers};",
-                    )?;
-
-                    for _ in 0..array_lengths.len() {
-                        writeln!(writer, "end")?;
-                    }
-
-                    continue;
                 }
 
                 if !member.attributes().is_empty() {
@@ -607,7 +435,11 @@ pub fn transpile(
         for comb_member in module.comb_members() {
             writeln!(writer, "always_comb begin")?;
 
-            transpile_block(writer, comb_member, 1, AssignMode::Combinatoric)?;
+            for tri_assign in comb_member.tri_assigns() {
+                transpile_tri_assign(writer, tri_assign, 1)?;
+            }
+
+            transpile_block(writer, comb_member.body(), 1, AssignMode::Combinatoric)?;
 
             writeln!(writer, "end\n")?;
         }
@@ -851,6 +683,31 @@ fn transpile_statement(
     }
 
     Ok(())
+}
+
+fn transpile_tri_assign(
+    writer: &mut impl Write,
+    tri_assign: &VTriAssignment,
+    level: usize,
+) -> std::io::Result<()> {
+    let leading_ws = str::repeat("    ", level);
+    write!(writer, "{}{}", leading_ws, tri_assign.target().base())?;
+
+    for suffix in tri_assign.target().suffixes() {
+        match suffix {
+            VSuffixOp::Indexer(VIndexKind::Single(index)) => {
+                write!(writer, "[")?;
+                transpile_expr(writer, index)?;
+                write!(writer, "]")?;
+            }
+            VSuffixOp::Indexer(VIndexKind::Range(range)) => {
+                write!(writer, "[{}:{}]", range.end - 1, range.start)?;
+            }
+            VSuffixOp::MemberAccess(member) => write!(writer, ".{member}")?,
+        }
+    }
+
+    writeln!(writer, " = {}'bz;", tri_assign.width())
 }
 
 fn transpile_block(

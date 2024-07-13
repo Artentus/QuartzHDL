@@ -42,6 +42,27 @@ mod Bram<ADDR_BITS, DATA_BITS>(
     }
 }
 
+mod Sram<ADDR_BITS, DATA_BITS>(
+    in sig addr: bits<ADDR_BITS>,
+    inout sig data: bits<DATA_BITS>,
+    in sig write: bool,
+    in sig clk: bit,
+) {
+    reg mem: [bits<DATA_BITS>; 1 << ADDR_BITS];
+    
+    proc rising(clk) {
+        if write {
+            mem[addr] = data;
+        }
+    }
+    
+    comb {
+        if !write {
+            data = mem[addr];
+        }
+    }
+}
+
 enum AluOp: bits<4> {
     Add,
     AddC,
@@ -175,13 +196,10 @@ extern mod Pll (
     out sig locked: bool,
 );
 
-top mod Top {
+mod Top() {
     let bram: Bram<20, 32>;
+    let sram: Sram<20, 32>;
     let alu1: Alu<32>;
     let alu2: Alu<16>;
     let pll: Pll;
-
-    let pi: InPort<1>;
-    let po: OutPort<1>;
-    let pio: InOutPort<1>;
 }

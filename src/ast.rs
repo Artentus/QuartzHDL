@@ -51,7 +51,6 @@ pub enum KeywordKind {
     Continue,
     Break,
     Extern,
-    Top,
     False,
     True,
 }
@@ -86,7 +85,6 @@ impl DisplayScoped for KeywordKind {
                 Self::Continue => "continue",
                 Self::Break => "break",
                 Self::Extern => "extern",
-                Self::Top => "top",
                 Self::False => "false",
                 Self::True => "true",
             }
@@ -2960,6 +2958,7 @@ default_display_impl!(LogicMode);
 pub enum Direction {
     In,
     Out,
+    InOut,
 }
 
 impl DisplayScoped for Direction {
@@ -2967,6 +2966,7 @@ impl DisplayScoped for Direction {
         match self {
             Self::In => write!(f, "in"),
             Self::Out => write!(f, "out"),
+            Self::InOut => write!(f, "inout"),
         }
     }
 }
@@ -3632,91 +3632,6 @@ impl DisplayScoped for Module {
 default_display_impl!(Module);
 
 #[derive(Debug, Clone)]
-pub struct TopModule {
-    top_kw: Keyword,
-    mod_kw: Keyword,
-    name: Ident,
-    open_curl: Punct,
-    members: Vec<Member>,
-    close_curl: Punct,
-}
-
-impl TopModule {
-    #[inline]
-    pub fn new(
-        top_kw: Keyword,
-        mod_kw: Keyword,
-        name: Ident,
-        open_curl: Punct,
-        members: Vec<Member>,
-        close_curl: Punct,
-    ) -> Self {
-        Self {
-            top_kw,
-            mod_kw,
-            name,
-            open_curl,
-            members,
-            close_curl,
-        }
-    }
-
-    #[inline]
-    pub fn top_kw(&self) -> &Keyword {
-        &self.top_kw
-    }
-
-    #[inline]
-    pub fn mod_kw(&self) -> &Keyword {
-        &self.mod_kw
-    }
-
-    #[inline]
-    pub fn name(&self) -> &Ident {
-        &self.name
-    }
-
-    #[inline]
-    pub fn open_curl(&self) -> &Punct {
-        &self.open_curl
-    }
-
-    #[inline]
-    pub fn members(&self) -> &[Member] {
-        &self.members
-    }
-
-    #[inline]
-    pub fn close_curl(&self) -> &Punct {
-        &self.close_curl
-    }
-}
-
-impl Spanned for TopModule {
-    fn span(&self) -> TextSpan {
-        self.mod_kw.span().join(self.close_curl.span())
-    }
-}
-
-impl DisplayScoped for TopModule {
-    fn fmt(&self, f: &mut ScopedFormatter<'_, '_>) -> std::fmt::Result {
-        writeln!(
-            f,
-            "{} {} {} {}",
-            self.top_kw, self.mod_kw, self.name, self.open_curl
-        )?;
-        f.enter_scope();
-        for member in self.members.iter() {
-            writeln!(f, "{member}")?;
-        }
-        f.exit_scope();
-        write!(f, "{}", self.close_curl)
-    }
-}
-
-default_display_impl!(TopModule);
-
-#[derive(Debug, Clone)]
 pub struct ExternModule {
     extern_kw: Keyword,
     mod_kw: Keyword,
@@ -3887,7 +3802,6 @@ pub enum ItemKind {
     Enum(Enum),
     Const(Const),
     Module(Module),
-    TopModule(TopModule),
     ExternModule(ExternModule),
     Func(Func),
 }
@@ -3899,7 +3813,6 @@ impl ItemKind {
             Self::Enum(enum_item) => enum_item.name(),
             Self::Const(const_item) => const_item.name(),
             Self::Module(module_item) => module_item.name(),
-            Self::TopModule(module_item) => module_item.name(),
             Self::ExternModule(module_item) => module_item.name(),
             Self::Func(func_item) => func_item.name(),
         }
@@ -3913,7 +3826,6 @@ impl Spanned for ItemKind {
             Self::Enum(enum_item) => enum_item.span(),
             Self::Const(const_item) => const_item.span(),
             Self::Module(module_item) => module_item.span(),
-            Self::TopModule(module_item) => module_item.span(),
             Self::ExternModule(module_item) => module_item.span(),
             Self::Func(func_item) => func_item.span(),
         }
@@ -3927,7 +3839,6 @@ impl DisplayScoped for ItemKind {
             Self::Enum(enum_item) => DisplayScoped::fmt(enum_item, f),
             Self::Const(const_item) => DisplayScoped::fmt(const_item, f),
             Self::Module(module_item) => DisplayScoped::fmt(module_item, f),
-            Self::TopModule(module_item) => DisplayScoped::fmt(module_item, f),
             Self::ExternModule(module_item) => DisplayScoped::fmt(module_item, f),
             Self::Func(fn_item) => DisplayScoped::fmt(fn_item, f),
         }

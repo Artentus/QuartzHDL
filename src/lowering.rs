@@ -16,6 +16,7 @@ fn lower_expr_block(
     tmp_members: &mut Vec<(SharedString, TypeId)>,
     tmp_comb_statements: &mut Vec<VStatement>,
     tmp_proc_statements: &mut Vec<VStatement>,
+    mut tri_assigns: Option<&mut Vec<VTriAssignment>>,
     known_types: &HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
 ) -> (VBlock, Option<VBlock>) {
@@ -28,6 +29,7 @@ fn lower_expr_block(
             tmp_members,
             tmp_comb_statements,
             tmp_proc_statements,
+            tri_assigns.as_deref_mut(),
             known_types,
             resolved_types,
         ) {
@@ -40,6 +42,7 @@ fn lower_expr_block(
             tmp_members,
             tmp_comb_statements,
             tmp_proc_statements,
+            tri_assigns.as_deref_mut(),
             known_types,
             resolved_types,
         ) {
@@ -52,6 +55,7 @@ fn lower_expr_block(
         tmp_members,
         tmp_comb_statements,
         tmp_proc_statements,
+        tri_assigns,
         known_types,
         resolved_types,
     );
@@ -86,6 +90,7 @@ fn lower_construct_expr(
     tmp_members: &mut Vec<(SharedString, TypeId)>,
     tmp_comb_statements: &mut Vec<VStatement>,
     tmp_proc_statements: &mut Vec<VStatement>,
+    mut tri_assigns: Option<&mut Vec<VTriAssignment>>,
     known_types: &HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
 ) -> VExpr {
@@ -98,6 +103,7 @@ fn lower_construct_expr(
             tmp_members,
             tmp_comb_statements,
             tmp_proc_statements,
+            tri_assigns.as_deref_mut(),
             known_types,
             resolved_types,
         );
@@ -118,6 +124,7 @@ fn lower_if_expr(
     tmp_members: &mut Vec<(SharedString, TypeId)>,
     tmp_comb_statements: &mut Vec<VStatement>,
     tmp_proc_statements: &mut Vec<VStatement>,
+    mut tri_assigns: Option<&mut Vec<VTriAssignment>>,
     known_types: &HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
 ) -> VExpr {
@@ -128,6 +135,7 @@ fn lower_if_expr(
         tmp_members,
         tmp_comb_statements,
         tmp_proc_statements,
+        tri_assigns.as_deref_mut(),
         known_types,
         resolved_types,
     );
@@ -137,6 +145,7 @@ fn lower_if_expr(
         tmp_members,
         tmp_comb_statements,
         tmp_proc_statements,
+        tri_assigns.as_deref_mut(),
         known_types,
         resolved_types,
     );
@@ -149,6 +158,7 @@ fn lower_if_expr(
             tmp_members,
             tmp_comb_statements,
             tmp_proc_statements,
+            tri_assigns.as_deref_mut(),
             known_types,
             resolved_types,
         );
@@ -159,6 +169,7 @@ fn lower_if_expr(
             tmp_members,
             tmp_comb_statements,
             tmp_proc_statements,
+            tri_assigns.as_deref_mut(),
             known_types,
             resolved_types,
         );
@@ -175,6 +186,7 @@ fn lower_if_expr(
         tmp_members,
         tmp_comb_statements,
         tmp_proc_statements,
+        tri_assigns,
         known_types,
         resolved_types,
     );
@@ -213,6 +225,7 @@ fn lower_match_expr(
     tmp_members: &mut Vec<(SharedString, TypeId)>,
     tmp_comb_statements: &mut Vec<VStatement>,
     tmp_proc_statements: &mut Vec<VStatement>,
+    mut tri_assigns: Option<&mut Vec<VTriAssignment>>,
     known_types: &HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
 ) -> VExpr {
@@ -227,6 +240,7 @@ fn lower_match_expr(
             tmp_members,
             tmp_comb_statements,
             tmp_proc_statements,
+            tri_assigns.as_deref_mut(),
             known_types,
             resolved_types,
         );
@@ -241,6 +255,7 @@ fn lower_match_expr(
                         tmp_members,
                         tmp_comb_statements,
                         tmp_proc_statements,
+                        tri_assigns.as_deref_mut(),
                         known_types,
                         resolved_types,
                     );
@@ -260,6 +275,7 @@ fn lower_match_expr(
                     tmp_members,
                     tmp_comb_statements,
                     tmp_proc_statements,
+                    tri_assigns.as_deref_mut(),
                     known_types,
                     resolved_types,
                 ),
@@ -298,6 +314,7 @@ fn lower_match_expr(
             tmp_members,
             tmp_comb_statements,
             tmp_proc_statements,
+            tri_assigns.as_deref_mut(),
             known_types,
             resolved_types,
         );
@@ -344,7 +361,9 @@ fn lower_match_expr(
                             cond_terms.push(term);
                         }
                         MatchPattern::Path(p) => {
-                            if let Some(ident) = p.as_ident() && (ident.as_ref() == "_") {
+                            if let Some(ident) = p.as_ident()
+                                && (ident.as_ref() == "_")
+                            {
                                 is_always_cond = true;
                                 break;
                             } else {
@@ -372,6 +391,7 @@ fn lower_match_expr(
                             tmp_members,
                             tmp_comb_statements,
                             tmp_proc_statements,
+                            tri_assigns.as_deref_mut(),
                             known_types,
                             resolved_types,
                         );
@@ -391,6 +411,7 @@ fn lower_match_expr(
                         tmp_members,
                         tmp_comb_statements,
                         tmp_proc_statements,
+                        tri_assigns.as_deref_mut(),
                         known_types,
                         resolved_types,
                     ),
@@ -473,6 +494,7 @@ fn lower_cast_expr(
     tmp_members: &mut Vec<(SharedString, TypeId)>,
     tmp_comb_statements: &mut Vec<VStatement>,
     tmp_proc_statements: &mut Vec<VStatement>,
+    tri_assigns: Option<&mut Vec<VTriAssignment>>,
     known_types: &HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
 ) -> VExpr {
@@ -498,6 +520,7 @@ fn lower_cast_expr(
                 tmp_members,
                 tmp_comb_statements,
                 tmp_proc_statements,
+                tri_assigns,
                 known_types,
                 resolved_types,
             );
@@ -532,6 +555,7 @@ fn lower_cast_expr(
                     tmp_members,
                     tmp_comb_statements,
                     tmp_proc_statements,
+                    tri_assigns,
                     known_types,
                     resolved_types,
                 );
@@ -560,6 +584,7 @@ fn lower_expr(
     tmp_members: &mut Vec<(SharedString, TypeId)>,
     tmp_comb_statements: &mut Vec<VStatement>,
     tmp_proc_statements: &mut Vec<VStatement>,
+    mut tri_assigns: Option<&mut Vec<VTriAssignment>>,
     known_types: &HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
 ) -> VExpr {
@@ -570,6 +595,7 @@ fn lower_expr(
                 tmp_members,
                 tmp_comb_statements,
                 tmp_proc_statements,
+                tri_assigns.as_deref_mut(),
                 known_types,
                 resolved_types,
             );
@@ -578,6 +604,7 @@ fn lower_expr(
                 tmp_members,
                 tmp_comb_statements,
                 tmp_proc_statements,
+                tri_assigns,
                 known_types,
                 resolved_types,
             );
@@ -594,6 +621,7 @@ fn lower_expr(
             tmp_members,
             tmp_comb_statements,
             tmp_proc_statements,
+            tri_assigns,
             known_types,
             resolved_types,
         ),
@@ -602,6 +630,7 @@ fn lower_expr(
             tmp_members,
             tmp_comb_statements,
             tmp_proc_statements,
+            tri_assigns,
             known_types,
             resolved_types,
         ),
@@ -610,6 +639,7 @@ fn lower_expr(
             tmp_members,
             tmp_comb_statements,
             tmp_proc_statements,
+            tri_assigns,
             known_types,
             resolved_types,
         ),
@@ -622,6 +652,7 @@ fn lower_expr(
                 tmp_members,
                 tmp_comb_statements,
                 tmp_proc_statements,
+                tri_assigns,
                 known_types,
                 resolved_types,
             );
@@ -643,6 +674,7 @@ fn lower_expr(
                 tmp_members,
                 tmp_comb_statements,
                 tmp_proc_statements,
+                tri_assigns.as_deref_mut(),
                 known_types,
                 resolved_types,
             );
@@ -656,6 +688,7 @@ fn lower_expr(
                     tmp_members,
                     tmp_comb_statements,
                     tmp_proc_statements,
+                    tri_assigns,
                     known_types,
                     resolved_types,
                 )),
@@ -670,6 +703,7 @@ fn lower_expr(
                 tmp_members,
                 tmp_comb_statements,
                 tmp_proc_statements,
+                tri_assigns,
                 known_types,
                 resolved_types,
             );
@@ -685,6 +719,7 @@ fn lower_expr(
             tmp_members,
             tmp_comb_statements,
             tmp_proc_statements,
+            tri_assigns,
             known_types,
             resolved_types,
         ))),
@@ -693,6 +728,7 @@ fn lower_expr(
             tmp_members,
             tmp_comb_statements,
             tmp_proc_statements,
+            tri_assigns,
             known_types,
             resolved_types,
         ))),
@@ -702,6 +738,7 @@ fn lower_expr(
             tmp_members,
             tmp_comb_statements,
             tmp_proc_statements,
+            tri_assigns,
             known_types,
             resolved_types,
         ),
@@ -737,6 +774,7 @@ fn lower_if_statement(
     tmp_members: &mut Vec<(SharedString, TypeId)>,
     tmp_comb_statements: &mut Vec<VStatement>,
     tmp_proc_statements: &mut Vec<VStatement>,
+    mut tri_assigns: Option<&mut Vec<VTriAssignment>>,
     known_types: &HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
 ) -> VIfStatement {
@@ -745,6 +783,7 @@ fn lower_if_statement(
         tmp_members,
         tmp_comb_statements,
         tmp_proc_statements,
+        tri_assigns.as_deref_mut(),
         known_types,
         resolved_types,
     );
@@ -754,6 +793,7 @@ fn lower_if_statement(
         tmp_members,
         tmp_comb_statements,
         tmp_proc_statements,
+        tri_assigns.as_deref_mut(),
         known_types,
         resolved_types,
     );
@@ -765,6 +805,7 @@ fn lower_if_statement(
             tmp_members,
             tmp_comb_statements,
             tmp_proc_statements,
+            tri_assigns.as_deref_mut(),
             known_types,
             resolved_types,
         );
@@ -774,6 +815,7 @@ fn lower_if_statement(
             tmp_members,
             tmp_comb_statements,
             tmp_proc_statements,
+            tri_assigns.as_deref_mut(),
             known_types,
             resolved_types,
         );
@@ -787,6 +829,7 @@ fn lower_if_statement(
             tmp_members,
             tmp_comb_statements,
             tmp_proc_statements,
+            tri_assigns,
             known_types,
             resolved_types,
         )
@@ -807,6 +850,7 @@ fn lower_match_statement(
     tmp_members: &mut Vec<(SharedString, TypeId)>,
     tmp_comb_statements: &mut Vec<VStatement>,
     tmp_proc_statements: &mut Vec<VStatement>,
+    mut tri_assigns: Option<&mut Vec<VTriAssignment>>,
     known_types: &HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
 ) -> LoweredMatchStatement {
@@ -819,6 +863,7 @@ fn lower_match_statement(
             tmp_members,
             tmp_comb_statements,
             tmp_proc_statements,
+            tri_assigns.as_deref_mut(),
             known_types,
             resolved_types,
         );
@@ -831,6 +876,7 @@ fn lower_match_statement(
                 tmp_members,
                 tmp_comb_statements,
                 tmp_proc_statements,
+                tri_assigns.as_deref_mut(),
                 known_types,
                 resolved_types,
             );
@@ -857,6 +903,7 @@ fn lower_match_statement(
             tmp_members,
             tmp_comb_statements,
             tmp_proc_statements,
+            tri_assigns.as_deref_mut(),
             known_types,
             resolved_types,
         );
@@ -877,40 +924,42 @@ fn lower_match_statement(
                 let mut cond_terms = Vec::with_capacity(branch.patterns().len());
                 for pattern in branch.patterns() {
                     match pattern {
-                    MatchPattern::Literal(value) => {
-                        let value = VExpr::Literal(VLiteral::new(value.value(), width));
-                        let term = VExpr::Eq(VBinaryExpr::new(value!(), value));
-                        cond_terms.push(term);
-                    }
-                    MatchPattern::Range(start, end) => {
-                        let start = VExpr::Literal(VLiteral::new(start.value(), width));
-                        let end = VExpr::Literal(VLiteral::new(end.value(), width));
+                        MatchPattern::Literal(value) => {
+                            let value = VExpr::Literal(VLiteral::new(value.value(), width));
+                            let term = VExpr::Eq(VBinaryExpr::new(value!(), value));
+                            cond_terms.push(term);
+                        }
+                        MatchPattern::Range(start, end) => {
+                            let start = VExpr::Literal(VLiteral::new(start.value(), width));
+                            let end = VExpr::Literal(VLiteral::new(end.value(), width));
 
-                        let lower_bound = VExpr::Gte(VBinaryExpr::new(value!(), start));
-                        let upper_bound = VExpr::Lt(VBinaryExpr::new(value!(), end));
+                            let lower_bound = VExpr::Gte(VBinaryExpr::new(value!(), start));
+                            let upper_bound = VExpr::Lt(VBinaryExpr::new(value!(), end));
 
-                        let term = VExpr::And(VBinaryExpr::new(lower_bound, upper_bound));
-                        cond_terms.push(term);
-                    }
-                    MatchPattern::RangeInclusive(start, end) => {
-                        let start = VExpr::Literal(VLiteral::new(start.value(), width));
-                        let end = VExpr::Literal(VLiteral::new(end.value(), width));
+                            let term = VExpr::And(VBinaryExpr::new(lower_bound, upper_bound));
+                            cond_terms.push(term);
+                        }
+                        MatchPattern::RangeInclusive(start, end) => {
+                            let start = VExpr::Literal(VLiteral::new(start.value(), width));
+                            let end = VExpr::Literal(VLiteral::new(end.value(), width));
 
-                        let lower_bound = VExpr::Gte(VBinaryExpr::new(value!(), start));
-                        let upper_bound = VExpr::Lte(VBinaryExpr::new(value!(), end));
+                            let lower_bound = VExpr::Gte(VBinaryExpr::new(value!(), start));
+                            let upper_bound = VExpr::Lte(VBinaryExpr::new(value!(), end));
 
-                        let term = VExpr::And(VBinaryExpr::new(lower_bound, upper_bound));
-                        cond_terms.push(term);
-                    }
-                    MatchPattern::Path(p) => {
-                        if let Some(ident) = p.as_ident() && (ident.as_ref() == "_") {
-                            is_always_cond = true;
-                            break;
-                        } else {
-                            unreachable!("error in type-checking match expression")
+                            let term = VExpr::And(VBinaryExpr::new(lower_bound, upper_bound));
+                            cond_terms.push(term);
+                        }
+                        MatchPattern::Path(p) => {
+                            if let Some(ident) = p.as_ident()
+                                && (ident.as_ref() == "_")
+                            {
+                                is_always_cond = true;
+                                break;
+                            } else {
+                                unreachable!("error in type-checking match expression")
+                            }
                         }
                     }
-                }
                 }
 
                 let cond = if is_always_cond {
@@ -930,6 +979,7 @@ fn lower_match_statement(
                     tmp_members,
                     tmp_comb_statements,
                     tmp_proc_statements,
+                    tri_assigns.as_deref_mut(),
                     known_types,
                     resolved_types,
                 );
@@ -980,6 +1030,7 @@ fn lower_assign_target(
     tmp_members: &mut Vec<(SharedString, TypeId)>,
     tmp_comb_statements: &mut Vec<VStatement>,
     tmp_proc_statements: &mut Vec<VStatement>,
+    mut tri_assigns: Option<&mut Vec<VTriAssignment>>,
     known_types: &HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
 ) -> VAssignTarget {
@@ -995,6 +1046,7 @@ fn lower_assign_target(
                         tmp_members,
                         tmp_comb_statements,
                         tmp_proc_statements,
+                        tri_assigns.as_deref_mut(),
                         known_types,
                         resolved_types,
                     );
@@ -1020,6 +1072,7 @@ fn lower_assignment(
     tmp_members: &mut Vec<(SharedString, TypeId)>,
     tmp_comb_statements: &mut Vec<VStatement>,
     tmp_proc_statements: &mut Vec<VStatement>,
+    mut tri_assigns: Option<&mut Vec<VTriAssignment>>,
     known_types: &HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
 ) -> VAssignment {
@@ -1028,6 +1081,7 @@ fn lower_assignment(
         tmp_members,
         tmp_comb_statements,
         tmp_proc_statements,
+        tri_assigns.as_deref_mut(),
         known_types,
         resolved_types,
     );
@@ -1036,9 +1090,18 @@ fn lower_assignment(
         tmp_members,
         tmp_comb_statements,
         tmp_proc_statements,
+        tri_assigns.as_deref_mut(),
         known_types,
         resolved_types,
     );
+
+    if let Some(tri_width) = assign.tri_width() {
+        let tri_assign = VTriAssignment::new(target.clone(), tri_width);
+        tri_assigns
+            .expect("tristate assignment in invalid context")
+            .push(tri_assign);
+    }
+
     VAssignment::new(target, value)
 }
 
@@ -1048,6 +1111,7 @@ fn lower_statement(
     tmp_members: &mut Vec<(SharedString, TypeId)>,
     tmp_comb_statements: &mut Vec<VStatement>,
     tmp_proc_statements: &mut Vec<VStatement>,
+    tri_assigns: Option<&mut Vec<VTriAssignment>>,
     known_types: &HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
 ) -> Option<VStatement> {
@@ -1063,6 +1127,7 @@ fn lower_statement(
                 tmp_members,
                 tmp_comb_statements,
                 tmp_proc_statements,
+                tri_assigns,
                 known_types,
                 resolved_types,
             );
@@ -1075,6 +1140,7 @@ fn lower_statement(
                 tmp_members,
                 tmp_comb_statements,
                 tmp_proc_statements,
+                tri_assigns,
                 known_types,
                 resolved_types,
             );
@@ -1087,6 +1153,7 @@ fn lower_statement(
                 tmp_members,
                 tmp_comb_statements,
                 tmp_proc_statements,
+                tri_assigns,
                 known_types,
                 resolved_types,
             ) {
@@ -1104,6 +1171,7 @@ fn lower_statement(
                     tmp_members,
                     tmp_comb_statements,
                     tmp_proc_statements,
+                    tri_assigns,
                     known_types,
                     resolved_types,
                 );
@@ -1121,6 +1189,7 @@ fn lower_block(
     tmp_members: &mut Vec<(SharedString, TypeId)>,
     tmp_comb_statements: &mut Vec<VStatement>,
     tmp_proc_statements: &mut Vec<VStatement>,
+    mut tri_assigns: Option<&mut Vec<VTriAssignment>>,
     known_types: &HashMap<TypeId, ResolvedType>,
     resolved_types: &HashMap<TypeId, ResolvedTypeItem>,
 ) -> VBlock {
@@ -1132,6 +1201,7 @@ fn lower_block(
             tmp_members,
             tmp_comb_statements,
             tmp_proc_statements,
+            tri_assigns.as_deref_mut(),
             known_types,
             resolved_types,
         ) {
@@ -1161,6 +1231,7 @@ pub fn lower(
                 &mut tmp_members,
                 &mut tmp_comb_statements,
                 &mut tmp_proc_statements,
+                None,
                 known_types,
                 resolved_types,
             );
@@ -1173,6 +1244,7 @@ pub fn lower(
             &mut tmp_members,
             &mut tmp_comb_statements,
             &mut tmp_proc_statements,
+            None,
             known_types,
             resolved_types,
         );
@@ -1189,6 +1261,7 @@ pub fn lower(
 
     for comb_member in module.comb_members() {
         let mut tmp_proc_statements = Vec::new();
+        let mut tri_assigns = Vec::new();
 
         let body = lower_block(
             comb_member.body(),
@@ -1196,13 +1269,17 @@ pub fn lower(
             &mut tmp_members,
             &mut tmp_comb_statements,
             &mut tmp_proc_statements,
+            Some(&mut tri_assigns),
             known_types,
             resolved_types,
         );
-        comb_members.push(body);
+        comb_members.push(VCombMember::new(tri_assigns, body));
 
         if !tmp_proc_statements.is_empty() {
-            comb_members.push(VBlock::new(tmp_proc_statements));
+            comb_members.push(VCombMember::new(
+                Vec::new(),
+                VBlock::new(tmp_proc_statements),
+            ));
         }
     }
 

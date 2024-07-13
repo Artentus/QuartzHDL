@@ -65,9 +65,6 @@ pub enum QuartzError<'a> {
         width: i64,
         arg: &'a GenericTypeArg,
     },
-    PortInNonTopModule {
-        ty: &'a NamedType,
-    },
     UndefinedType {
         ty: &'a NamedType,
     },
@@ -215,11 +212,10 @@ pub enum QuartzError<'a> {
     PortModuleType {
         port_span: TextSpan,
     },
-    MemberKindMismatch {
-        member_span: TextSpan,
-        member_ty: Cow<'a, str>,
+    InOutPortNotBits {
+        port_span: TextSpan,
     },
-    TopModuleMember {
+    MemberKindMismatch {
         member_span: TextSpan,
         member_ty: Cow<'a, str>,
     },

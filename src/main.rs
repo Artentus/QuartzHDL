@@ -321,17 +321,14 @@ fn main() -> std::io::Result<()> {
     let Some(top_item) = type_items.get(top_module_name) else {
         let mut stderr = stderr.lock();
         write_error(
-            &format!("top module `{top_module_name}` not found"),
+            &format!("module `{top_module_name}` not found"),
             &mut stderr,
         )?;
         abort!();
     };
-    let ir::TypeItemKind::TopModule(top_module) = top_item.kind() else {
+    let ir::TypeItemKind::Module(top_module) = top_item.kind() else {
         let mut stderr = stderr.lock();
-        write_error(
-            &format!("`{top_module_name}` is not a top module"),
-            &mut stderr,
-        )?;
+        write_error(&format!("`{top_module_name}` is not a module"), &mut stderr)?;
         abort!();
     };
 
@@ -356,8 +353,7 @@ fn main() -> std::io::Result<()> {
                             errors.push(err);
                         }
                     }
-                    Some(ir::ResolvedTypeItem::Module(module_item))
-                    | Some(ir::ResolvedTypeItem::TopModule(module_item)) => {
+                    Some(ir::ResolvedTypeItem::Module(module_item)) => {
                         match typecheck_module(
                             module_item,
                             &global_scope,

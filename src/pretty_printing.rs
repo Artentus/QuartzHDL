@@ -356,9 +356,6 @@ impl WriteColored for crate::error::QuartzError<'_> {
             Self::InvalidBitWidth { width, arg } => {
                 ErrorInfo::new(format!("`{width}` is not a valid bit width"), arg.span())
             }
-            Self::PortInNonTopModule { ty } => {
-                ErrorInfo::new("port members are only allowed in top modules", ty.span())
-            }
             Self::UndefinedType { ty } => {
                 ErrorInfo::new(format!("`the type {ty}` is not defined"), ty.span())
             }
@@ -565,6 +562,7 @@ impl WriteColored for crate::error::QuartzError<'_> {
                 let dir_str = match port_dir {
                     Direction::In => "input",
                     Direction::Out => "output",
+                    Direction::InOut => "bi-directional",
                 };
 
                 use crate::ast::LogicKind;
@@ -586,18 +584,14 @@ impl WriteColored for crate::error::QuartzError<'_> {
             Self::PortModuleType { port_span } => {
                 ErrorInfo::new("ports cannot contain module types", *port_span)
             }
+            Self::InOutPortNotBits { port_span } => {
+                ErrorInfo::new("bi-directional ports must be of type `bits`, `bit` or `bool`", *port_span)
+            }
             Self::MemberKindMismatch {
                 member_span,
                 member_ty,
             } => ErrorInfo::new(
                 format!("type `{member_ty}` is not valid for this member"),
-                *member_span,
-            ),
-            Self::TopModuleMember {
-                member_span,
-                ..
-            } => ErrorInfo::new(
-                "top modules cannot be used as types for members",
                 *member_span,
             ),
             Self::StructModuleField { field_span } => {
