@@ -293,7 +293,8 @@ impl WriteColored for crate::error::QuartzError<'_> {
                 match_expr
                     .match_kw()
                     .span()
-                    .join(match_expr.value().span()),
+                    .join(match_expr.value().span())
+                    .unwrap(),
             ),
             Self::InvalidConstOp { op } => ErrorInfo::new(
                 format!("`{op}` operator is not valid in constant context"),
@@ -543,15 +544,15 @@ impl WriteColored for crate::error::QuartzError<'_> {
             ),
             Self::InvalidAssignIn { assign } => ErrorInfo::new(
                 "cannot assign to input port",
-                assign.target().span().join(assign.op().span()),
+                assign.target().span().join(assign.op().span()).unwrap(),
             ),
             Self::InvalidSeqAssign { assign } => ErrorInfo::new(
                 "cannot assign to signal in sequential context",
-                assign.target().span().join(assign.op().span()),
+                assign.target().span().join(assign.op().span()).unwrap(),
             ),
             Self::InvalidCombAssign { assign } => ErrorInfo::new(
                 "cannot assign to register in combinatoric context",
-                assign.target().span().join(assign.op().span()),
+                assign.target().span().join(assign.op().span()).unwrap(),
             ),
             Self::InvalidPortKind {
                 port_span,

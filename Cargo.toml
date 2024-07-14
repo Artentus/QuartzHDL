@@ -11,7 +11,7 @@ name = "quartz"
 path = "src/main.rs"
 
 [dependencies]
-langbox = "0.5"
+langbox = "0.6"
 phf = "0.11"
 phf_macros = "0.11"
 termcolor = "1.1"

@@ -74,11 +74,10 @@ fn punct<const N: usize>(punct: impl Into<[PunctKind; N]>) -> impl QuartzParser<
         }) = input.peek()
             && punct.iter().any(|&p| p == found_punct)
         {
-            ParseResult::Match(ParsedValue {
+            ParseResult::Match {
                 value: Punct::new(found_punct, span),
-                span,
                 remaining: input.advance(),
-            })
+            }
         } else {
             ParseResult::NoMatch
         }
@@ -105,11 +104,10 @@ fn ident() -> impl QuartzParser<Ident> {
                         span,
                     })
                 } else {
-                    ParseResult::Match(ParsedValue {
+                    ParseResult::Match {
                         value: Ident::new(name, span),
-                        span,
                         remaining: input.advance(),
-                    })
+                    }
                 }
             }
             _ => ParseResult::NoMatch,
@@ -125,11 +123,10 @@ fn kw(kw: KeywordKind) -> impl QuartzParser<Keyword> {
         }) = input.peek()
             && Some(kw) == KEYWORDS.get(name).copied()
         {
-            ParseResult::Match(ParsedValue {
+            ParseResult::Match {
                 value: Keyword::new(kw, span),
-                span,
                 remaining: input.advance(),
-            })
+            }
         } else {
             ParseResult::NoMatch
         }
@@ -146,11 +143,10 @@ fn literal() -> impl QuartzParser<Literal> {
             | Some(&Token {
                 kind: QuartzToken::InvalidLiteral(value, _),
                 span,
-            }) => ParseResult::Match(ParsedValue {
+            }) => ParseResult::Match {
                 value: Literal::new(value, span),
-                span,
                 remaining: input.advance(),
-            }),
+            },
             _ => ParseResult::NoMatch,
         }
     })
@@ -161,19 +157,18 @@ fn string() -> impl QuartzParser<SharedString> {
         match input.peek() {
             Some(&Token {
                 kind: QuartzToken::String(ref value),
-                span,
+                ..
             })
             | Some(&Token {
                 kind:
                     QuartzToken::InvalidString {
                         string: ref value, ..
                     },
-                span,
-            }) => ParseResult::Match(ParsedValue {
+                ..
+            }) => ParseResult::Match {
                 value: SharedString::clone(value),
-                span,
                 remaining: input.advance(),
-            }),
+            },
             _ => ParseResult::NoMatch,
         }
     })
@@ -206,7 +201,7 @@ fn call_expr(simple: bool) -> impl QuartzParser<Expr> {
         {sequence!(
             ident(),
             punct(PunctKind::OpenParen),
-            sep_by(expr(simple), punct(PunctKind::Comma), true, true),
+            expr(simple).sep_by(punct(PunctKind::Comma), true, true),
             parser!({punct(PunctKind::CloseParen)}!![err!("expected `)`")])
         )}
         ->[|(func, open_paren, args, close_paren)| Expr::Call(
@@ -225,7 +220,7 @@ fn construct_expr() -> impl QuartzParser<Expr> {
         {sequence!(
             expr_named_ty(),
             punct(PunctKind::OpenCurl),
-            sep_by(field, punct(PunctKind::Comma), true, true),
+            field.sep_by(punct(PunctKind::Comma), true, true),
             parser!({punct(PunctKind::CloseCurl)}!![err!("expected `}`")])
         )}
         ->[|(ty, open_curl, fields, close_curl)| Expr::Construct(
@@ -292,7 +287,7 @@ fn match_expr() -> impl QuartzParser<Expr> {
 
     let branch = parser!(
         (
-            {sep_by(pattern, punct(PunctKind::Or), false, false)}
+            {pattern.sep_by(punct(PunctKind::Or), false, false)}
             <.> {punct(PunctKind::FatRightArrow)}!![err!("expected `=>`")]
             <.> body!![err!("expected expression or block")]
         )
@@ -304,7 +299,7 @@ fn match_expr() -> impl QuartzParser<Expr> {
             kw(KeywordKind::Match),
             parser!({expr(true)}!![err!("expected expression")]),
             parser!({punct(PunctKind::OpenCurl)}!![err!("expected `{`")]),
-            sep_by(branch, punct(PunctKind::Comma), true, true),
+            branch.sep_by(punct(PunctKind::Comma), true, true),
             parser!({punct(PunctKind::CloseCurl)}!![err!("expected `}`")]),
         )}
         ->[|(match_kw, value, open_curl, branches, close_curl)| Expr::Match(
@@ -314,21 +309,10 @@ fn match_expr() -> impl QuartzParser<Expr> {
 }
 
 fn bool_literal() -> impl QuartzParser<BoolLiteral> {
-    let keywords = parser!({kw(KeywordKind::False)}=>[false] <|> {kw(KeywordKind::True)}=>[true]);
-
-    parse_fn!(|input| {
-        let ParsedValue {
-            value,
-            span,
-            remaining,
-        } = keywords.run(input)?;
-
-        ParseResult::Match(ParsedValue {
-            value: BoolLiteral::new(value, span),
-            span,
-            remaining,
-        })
-    })
+    parser!(
+        {kw(KeywordKind::False)}->[|kw| BoolLiteral::new(false, kw.span())]
+        <|> {kw(KeywordKind::True)}->[|kw| BoolLiteral::new(true, kw.span())]
+    )
 }
 
 fn leaf_expr() -> impl QuartzParser<Expr> {
@@ -405,27 +389,18 @@ fn concat_unary_suffix_exprs(base: Expr, suffixes: Vec<SuffixOp>) -> Expr {
 
 fn unary_suffix_expr(simple: bool) -> impl QuartzParser<Expr> {
     parse_fn!(|input| {
-        let ParsedValue {
-            value: base,
-            span: s1,
-            remaining,
-        } = if simple {
+        let (base, remaining) = if simple {
             leaf_expr_simple().run(input)?
         } else {
             leaf_expr().run(input)?
         };
 
-        let ParsedValue {
-            value: suffixes,
-            span: s2,
-            remaining,
-        } = parser!(*{ suffix_op() }).run(remaining)?;
+        let (suffixes, remaining) = parser!(*{ suffix_op() }).run(remaining)?;
 
-        ParseResult::Match(ParsedValue {
+        ParseResult::Match {
             value: concat_unary_suffix_exprs(base, suffixes),
-            span: s1.join(s2),
             remaining,
-        })
+        }
     })
 }
 
@@ -465,23 +440,13 @@ fn cast_expr(simple: bool) -> impl QuartzParser<Expr> {
     let tail = parser!({kw(KeywordKind::As)} <.> {expr_ty()});
 
     parse_fn!(|input| {
-        let ParsedValue {
-            value,
-            span: s1,
-            remaining,
-        } = unary_prefix_expr(simple).run(input)?;
+        let (value, remaining) = unary_prefix_expr(simple).run(input)?;
+        let (targets, remaining) = parser!(*tail).run(remaining)?;
 
-        let ParsedValue {
-            value: targets,
-            span: s2,
-            remaining,
-        } = parser!(*tail).run(remaining)?;
-
-        ParseResult::Match(ParsedValue {
+        ParseResult::Match {
             value: concat_cast_exprs(value, targets),
-            span: s1.join(s2),
             remaining,
-        })
+        }
     })
 }
 
@@ -664,7 +629,7 @@ fn block() -> impl QuartzParser<Block> {
     parser!(
         {sequence!(
             punct(PunctKind::OpenCurl),
-            sep_by(statement(), parser!(*{punct(PunctKind::Semicolon)}), true, false),
+            statement().sep_by(parser!(*{punct(PunctKind::Semicolon)}), true, false),
             parser!(*{punct(PunctKind::Semicolon)}),
             parser!(?{expr(false)}),
             parser!({punct(PunctKind::CloseCurl)}!![err!("expected `}`")]),
@@ -698,7 +663,7 @@ fn named_ty() -> impl QuartzParser<NamedType> {
     let generic_args = parser!(
         {sequence!(
             punct(PunctKind::Lt),
-            parser!({sep_by(generic_arg, punct(PunctKind::Comma), false, true)}!![err!("expected generic arguments")]),
+            parser!({generic_arg.sep_by(punct(PunctKind::Comma), false, true)}!![err!("expected generic arguments")]),
             parser!({punct(PunctKind::Gt)}!![err!("expected `>`")]),
         )}
         ->[|(open_paren, exprs, close_paren)| GenericTypeArgs::new(None, open_paren, exprs, close_paren)]
@@ -751,7 +716,7 @@ fn expr_named_ty() -> impl QuartzParser<NamedType> {
         {sequence!(
             punct(PunctKind::DoubleColon),
             punct(PunctKind::Lt),
-            parser!({sep_by(generic_arg, punct(PunctKind::Comma), false, true)}!![err!("expected generic arguments")]),
+            parser!({generic_arg.sep_by(punct(PunctKind::Comma), false, true)}!![err!("expected generic arguments")]),
             parser!({punct(PunctKind::Gt)}!![err!("expected `>`")]),
         )}
         ->[|(turbofish, open_paren, exprs, close_paren)| GenericTypeArgs::new(Some(turbofish), open_paren, exprs, close_paren)]
@@ -793,7 +758,7 @@ fn generic_args() -> impl QuartzParser<GenericStructArgs> {
     parser!(
         (
             {punct(PunctKind::Lt)}
-            <.> {sep_by(ident(), punct(PunctKind::Comma), false, true)}!![err!("expected generic arguments")]
+            <.> {ident().sep_by(punct(PunctKind::Comma), false, true)}!![err!("expected generic arguments")]
             <.> {punct(PunctKind::Gt)}!![err!("expected `>`")]
         )
         ->[|((open_paren, args), close_paren)| GenericStructArgs::new(open_paren, args, close_paren)]
@@ -818,7 +783,7 @@ fn struct_def() -> impl QuartzParser<Struct> {
             parser!({ident()}!![err!("expected identifier")]),
             parser!(?{generic_args()}),
             parser!({punct(PunctKind::OpenCurl)}!![err!("expected `{`")]),
-            sep_by(field(), punct(PunctKind::Comma), true, true),
+            field().sep_by(punct(PunctKind::Comma), true, true),
             parser!({punct(PunctKind::CloseCurl)}!![err!("expected `}`")]),
         )}
         ->[|(struct_kw, name, generic_args, open_curl, fields, close_curl)| Struct::new(
@@ -852,7 +817,7 @@ fn enum_def() -> impl QuartzParser<Enum> {
             parser!({punct(PunctKind::Colon)}!![err!("expected `:`")]),
             parser!({ty()}!![err!("expected type")]),
             parser!({punct(PunctKind::OpenCurl)}!![err!("expected `{`")]),
-            sep_by(variant(), punct(PunctKind::Comma), true, true),
+            variant().sep_by(punct(PunctKind::Comma), true, true),
             parser!({punct(PunctKind::CloseCurl)}!![err!("expected  `}`")]),
         )}
         ->[|(enum_kw, name, ty_sep, base_ty, open_curl, variants, close_curl)| Enum::new(
@@ -898,7 +863,7 @@ fn attribute_list() -> impl QuartzParser<AttributeList> {
         {sequence!(
             punct(PunctKind::Hash),
             parser!({punct(PunctKind::OpenBracket)}!![err!("expected `[`")]),
-            sep_by(attribute(), punct(PunctKind::Comma), true, true),
+            attribute().sep_by(punct(PunctKind::Comma), true, true),
             parser!({punct(PunctKind::CloseBracket)}!![err!("expected `]`")]),
         )}
         ->[|(hash_kw, open_bracket, attributes, close_bracket)| {
@@ -969,7 +934,7 @@ fn member() -> impl QuartzParser<Member> {
     let proc = parser!(
         (
             {kw(KeywordKind::Proc)}
-            <.> {sep_by(sens, punct(PunctKind::Or), false, false)}!![err!("expected sensitivity list")]
+            <.> {sens.sep_by(punct(PunctKind::Or), false, false)}!![err!("expected sensitivity list")]
             <.> {block()}!![err!("expected block")]
         )
         ->[|((proc_kw, sens), body)| ProcMember::new(proc_kw, sens, body)]
@@ -997,7 +962,7 @@ fn module_def() -> impl QuartzParser<Module> {
             parser!({ident()}!![err!("expected identifier")]),
             parser!(?{generic_args()}),
             parser!({punct(PunctKind::OpenParen)}!![err!("expected `(`")]),
-            sep_by(port(), punct(PunctKind::Comma), true, true),
+            port().sep_by(punct(PunctKind::Comma), true, true),
             parser!({punct(PunctKind::CloseParen)}!![err!("expected `)`")]),
             parser!({punct(PunctKind::OpenCurl)}!![err!("expected `{`")]),
             parser!(*{member()}),
@@ -1016,7 +981,7 @@ fn extern_module_def() -> impl QuartzParser<ExternModule> {
             kw(KeywordKind::Mod),
             parser!({ident()}!![err!("expected identifier")]),
             parser!({punct(PunctKind::OpenParen)}!![err!("expected `(`")]),
-            sep_by(port(), punct(PunctKind::Comma), true, true),
+            port().sep_by(punct(PunctKind::Comma), true, true),
             parser!({punct(PunctKind::CloseParen)}!![err!("expected `)`")]),
             parser!({punct(PunctKind::Semicolon)}!![err!("expected `;`")]),
         )}
@@ -1032,7 +997,7 @@ fn fn_def() -> impl QuartzParser<Func> {
             kw(KeywordKind::Fn),
             parser!({ident()}!![err!("expected identifier")]),
             parser!({punct(PunctKind::OpenParen)}!![err!("expected `(`")]),
-            sep_by(ident(), punct(PunctKind::Comma), true, true),
+            ident().sep_by(punct(PunctKind::Comma), true, true),
             parser!({punct(PunctKind::CloseParen)}!![err!("expected `)`")]),
             parser!({block()}!![err!("expected block")]),
         )}
@@ -1058,7 +1023,7 @@ fn item() -> impl QuartzParser<Item> {
 
 pub fn parse(
     tokens: &[Token<QuartzToken>],
-) -> ParseResult<ParsedValue<QuartzToken, Vec<Item>>, QuartzParserError> {
+) -> ParseResult<QuartzToken, Vec<Item>, QuartzParserError> {
     let parser = parser!(*{ item() });
     let input = TokenStream::new(tokens);
     parser.run(input)

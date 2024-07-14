@@ -300,7 +300,7 @@ impl PathSegment {
 
 impl Spanned for PathSegment {
     fn span(&self) -> TextSpan {
-        self.sep.span().join(self.ident.span())
+        self.sep.span().join(self.ident.span()).unwrap()
     }
 }
 
@@ -352,7 +352,7 @@ impl Path {
 impl Spanned for Path {
     fn span(&self) -> TextSpan {
         if let Some(last) = self.tail.last() {
-            self.head.span().join(last.span())
+            self.head.span().join(last.span()).unwrap()
         } else {
             self.head.span()
         }
@@ -413,7 +413,10 @@ impl ParenExpr {
 
 impl Spanned for ParenExpr {
     fn span(&self) -> TextSpan {
-        self.open_paren.span().join(self.close_paren.span())
+        self.open_paren
+            .span()
+            .join(self.close_paren.span())
+            .unwrap()
     }
 }
 
@@ -473,7 +476,10 @@ impl CallExpr {
 
 impl Spanned for CallExpr {
     fn span(&self) -> TextSpan {
-        self.open_paren.span().join(self.close_paren.span())
+        self.open_paren
+            .span()
+            .join(self.close_paren.span())
+            .unwrap()
     }
 }
 
@@ -529,7 +535,7 @@ impl FieldAssign {
 
 impl Spanned for FieldAssign {
     fn span(&self) -> TextSpan {
-        self.field.span().join(self.value.span())
+        self.field.span().join(self.value.span()).unwrap()
     }
 }
 
@@ -612,7 +618,7 @@ impl ConstructExpr {
 
 impl Spanned for ConstructExpr {
     fn span(&self) -> TextSpan {
-        self.ty.span().join(self.close_curl.span())
+        self.ty.span().join(self.close_curl.span()).unwrap()
     }
 }
 
@@ -680,7 +686,7 @@ impl ElseIfBlock {
 
 impl Spanned for ElseIfBlock {
     fn span(&self) -> TextSpan {
-        self.else_kw.span().join(self.body.span())
+        self.else_kw.span().join(self.body.span()).unwrap()
     }
 }
 
@@ -732,7 +738,7 @@ impl ElseBlock {
 
 impl Spanned for ElseBlock {
     fn span(&self) -> TextSpan {
-        self.else_kw.span().join(self.body.span())
+        self.else_kw.span().join(self.body.span()).unwrap()
     }
 }
 
@@ -813,11 +819,11 @@ impl IfExpr {
 impl Spanned for IfExpr {
     fn span(&self) -> TextSpan {
         if let Some(else_block) = &self.else_block {
-            self.if_kw.span().join(else_block.span())
+            self.if_kw.span().join(else_block.span()).unwrap()
         } else if let Some(last_block) = self.else_if_blocks.last() {
-            self.if_kw.span().join(last_block.span())
+            self.if_kw.span().join(last_block.span()).unwrap()
         } else {
-            self.if_kw.span().join(self.body.span())
+            self.if_kw.span().join(self.body.span()).unwrap()
         }
     }
 }
@@ -858,8 +864,8 @@ impl Spanned for MatchPattern {
     fn span(&self) -> TextSpan {
         match self {
             Self::Literal(l) => l.span(),
-            Self::Range(s, e) => s.span().join(e.span()),
-            Self::RangeInclusive(s, e) => s.span().join(e.span()),
+            Self::Range(s, e) => s.span().join(e.span()).unwrap(),
+            Self::RangeInclusive(s, e) => s.span().join(e.span()).unwrap(),
             Self::Path(p) => p.span(),
         }
     }
@@ -953,7 +959,12 @@ impl MatchBranch {
 
 impl Spanned for MatchBranch {
     fn span(&self) -> TextSpan {
-        self.patterns.first().unwrap().span().join(self.body.span())
+        self.patterns
+            .first()
+            .unwrap()
+            .span()
+            .join(self.body.span())
+            .unwrap()
     }
 }
 
@@ -1036,7 +1047,7 @@ impl MatchExpr {
 
 impl Spanned for MatchExpr {
     fn span(&self) -> TextSpan {
-        self.match_kw.span().join(self.close_curl.span())
+        self.match_kw.span().join(self.close_curl.span()).unwrap()
     }
 }
 
@@ -1083,8 +1094,8 @@ impl Spanned for IndexKind {
     fn span(&self) -> TextSpan {
         match self {
             Self::Single(index) => index.span(),
-            Self::Range(start, end) => start.span().join(end.span()),
-            Self::RangeInclusive(start, end) => start.span().join(end.span()),
+            Self::Range(start, end) => start.span().join(end.span()).unwrap(),
+            Self::RangeInclusive(start, end) => start.span().join(end.span()).unwrap(),
         }
     }
 }
@@ -1141,7 +1152,10 @@ impl Indexer {
 
 impl Spanned for Indexer {
     fn span(&self) -> TextSpan {
-        self.open_paren.span().join(self.close_paren.span())
+        self.open_paren
+            .span()
+            .join(self.close_paren.span())
+            .unwrap()
     }
 }
 
@@ -1187,7 +1201,7 @@ impl IndexExpr {
 
 impl Spanned for IndexExpr {
     fn span(&self) -> TextSpan {
-        self.base.span().join(self.indexer.span())
+        self.base.span().join(self.indexer.span()).unwrap()
     }
 }
 
@@ -1224,7 +1238,7 @@ impl MemberAccess {
 
 impl Spanned for MemberAccess {
     fn span(&self) -> TextSpan {
-        self.op.span().join(self.member.span())
+        self.op.span().join(self.member.span()).unwrap()
     }
 }
 
@@ -1269,7 +1283,7 @@ impl MemberAccessExpr {
 
 impl Spanned for MemberAccessExpr {
     fn span(&self) -> TextSpan {
-        self.base.span().join(self.member.span())
+        self.base.span().join(self.member.span()).unwrap()
     }
 }
 
@@ -1314,7 +1328,7 @@ impl UnaryExpr {
 
 impl Spanned for UnaryExpr {
     fn span(&self) -> TextSpan {
-        self.op.span().join(self.inner.span())
+        self.op.span().join(self.inner.span()).unwrap()
     }
 }
 
@@ -1382,7 +1396,7 @@ impl CastExpr {
 
 impl Spanned for CastExpr {
     fn span(&self) -> TextSpan {
-        self.value.span().join(self.target_ty.span())
+        self.value.span().join(self.target_ty.span()).unwrap()
     }
 }
 
@@ -1435,7 +1449,7 @@ impl BinaryExpr {
 
 impl Spanned for BinaryExpr {
     fn span(&self) -> TextSpan {
-        self.lhs.span().join(self.rhs.span())
+        self.lhs.span().join(self.rhs.span()).unwrap()
     }
 }
 
@@ -1672,7 +1686,7 @@ impl Declaration {
 
 impl Spanned for Declaration {
     fn span(&self) -> TextSpan {
-        self.let_kw.span().join(self.value.span())
+        self.let_kw.span().join(self.value.span()).unwrap()
     }
 }
 
@@ -1740,7 +1754,7 @@ impl AssignTarget {
 impl Spanned for AssignTarget {
     fn span(&self) -> TextSpan {
         if let Some(last) = self.suffixes.last() {
-            self.path.span().join(last.span())
+            self.path.span().join(last.span()).unwrap()
         } else {
             self.path.span()
         }
@@ -1879,7 +1893,7 @@ impl Assignment {
 
 impl Spanned for Assignment {
     fn span(&self) -> TextSpan {
-        self.target.span().join(self.value.span())
+        self.target.span().join(self.value.span()).unwrap()
     }
 }
 
@@ -1926,7 +1940,7 @@ impl WhileLoop {
 
 impl Spanned for WhileLoop {
     fn span(&self) -> TextSpan {
-        self.while_kw.span().join(self.body.span())
+        self.while_kw.span().join(self.body.span()).unwrap()
     }
 }
 
@@ -2010,7 +2024,7 @@ impl ForLoop {
 
 impl Spanned for ForLoop {
     fn span(&self) -> TextSpan {
-        self.for_kw.span().join(self.body.span())
+        self.for_kw.span().join(self.body.span()).unwrap()
     }
 }
 
@@ -2141,7 +2155,7 @@ impl Block {
 
 impl Spanned for Block {
     fn span(&self) -> TextSpan {
-        self.open_curl.span().join(self.close_curl.span())
+        self.open_curl.span().join(self.close_curl.span()).unwrap()
     }
 }
 
@@ -2240,7 +2254,10 @@ impl GenericTypeArgs {
 
 impl Spanned for GenericTypeArgs {
     fn span(&self) -> TextSpan {
-        self.open_paren.span().join(self.close_paren.span())
+        self.open_paren
+            .span()
+            .join(self.close_paren.span())
+            .unwrap()
     }
 }
 
@@ -2296,7 +2313,7 @@ impl NamedType {
 impl Spanned for NamedType {
     fn span(&self) -> TextSpan {
         if let Some(generic_args) = &self.generic_args {
-            self.name.span().join(generic_args.span())
+            self.name.span().join(generic_args.span()).unwrap()
         } else {
             self.name.span()
         }
@@ -2370,7 +2387,10 @@ impl ArrayType {
 
 impl Spanned for ArrayType {
     fn span(&self) -> TextSpan {
-        self.open_bracket.span().join(self.close_bracket.span())
+        self.open_bracket
+            .span()
+            .join(self.close_bracket.span())
+            .unwrap()
     }
 }
 
@@ -2443,7 +2463,7 @@ impl Field {
 
 impl Spanned for Field {
     fn span(&self) -> TextSpan {
-        self.name.span().join(self.ty.span())
+        self.name.span().join(self.ty.span()).unwrap()
     }
 }
 
@@ -2490,7 +2510,10 @@ impl GenericStructArgs {
 
 impl Spanned for GenericStructArgs {
     fn span(&self) -> TextSpan {
-        self.open_paren.span().join(self.close_paren.span())
+        self.open_paren
+            .span()
+            .join(self.close_paren.span())
+            .unwrap()
     }
 }
 
@@ -2579,7 +2602,7 @@ impl Struct {
 
 impl Spanned for Struct {
     fn span(&self) -> TextSpan {
-        self.struct_kw.span().join(self.close_curl.span())
+        self.struct_kw.span().join(self.close_curl.span()).unwrap()
     }
 }
 
@@ -2633,7 +2656,7 @@ impl Variant {
 impl Spanned for Variant {
     fn span(&self) -> TextSpan {
         if let Some(value) = &self.value {
-            self.name.span().join(value.span())
+            self.name.span().join(value.span()).unwrap()
         } else {
             self.name.span()
         }
@@ -2723,7 +2746,7 @@ impl Enum {
 
 impl Spanned for Enum {
     fn span(&self) -> TextSpan {
-        self.enum_kw.span().join(self.close_curl.span())
+        self.enum_kw.span().join(self.close_curl.span()).unwrap()
     }
 }
 
@@ -2782,7 +2805,10 @@ impl AttributeValue {
 
 impl Spanned for AttributeValue {
     fn span(&self) -> TextSpan {
-        self.open_paren.span().join(self.close_paren.span())
+        self.open_paren
+            .span()
+            .join(self.close_paren.span())
+            .unwrap()
     }
 }
 
@@ -2820,7 +2846,7 @@ impl Attribute {
 impl Spanned for Attribute {
     fn span(&self) -> TextSpan {
         if let Some(value) = &self.value {
-            self.name.span().join(value.span())
+            self.name.span().join(value.span()).unwrap()
         } else {
             self.name.span()
         }
@@ -2886,7 +2912,7 @@ impl AttributeList {
 
 impl Spanned for AttributeList {
     fn span(&self) -> TextSpan {
-        self.hash.span().join(self.close_bracket.span())
+        self.hash.span().join(self.close_bracket.span()).unwrap()
     }
 }
 
@@ -3066,9 +3092,9 @@ impl Port {
 impl Spanned for Port {
     fn span(&self) -> TextSpan {
         if let Some(first) = self.attributes.first() {
-            first.span().join(self.ty.span())
+            first.span().join(self.ty.span()).unwrap()
         } else {
-            self.mode.span().join(self.ty.span())
+            self.mode.span().join(self.ty.span()).unwrap()
         }
     }
 }
@@ -3131,7 +3157,7 @@ impl Const {
 
 impl Spanned for Const {
     fn span(&self) -> TextSpan {
-        self.const_kw.span().join(self.value.span())
+        self.const_kw.span().join(self.value.span()).unwrap()
     }
 }
 
@@ -3235,7 +3261,7 @@ impl Sens {
 
 impl Spanned for Sens {
     fn span(&self) -> TextSpan {
-        self.edge.span().join(self.close_paren.span())
+        self.edge.span().join(self.close_paren.span()).unwrap()
     }
 }
 
@@ -3293,7 +3319,7 @@ impl LogicMember {
 
 impl Spanned for LogicMember {
     fn span(&self) -> TextSpan {
-        self.mode.span().join(self.ty.span())
+        self.mode.span().join(self.ty.span()).unwrap()
     }
 }
 
@@ -3345,7 +3371,7 @@ impl ProcMember {
 
 impl Spanned for ProcMember {
     fn span(&self) -> TextSpan {
-        self.proc_kw.span().join(self.body.span())
+        self.proc_kw.span().join(self.body.span()).unwrap()
     }
 }
 
@@ -3400,7 +3426,7 @@ impl CombMember {
 
 impl Spanned for CombMember {
     fn span(&self) -> TextSpan {
-        self.comb_kw.span().join(self.body.span())
+        self.comb_kw.span().join(self.body.span()).unwrap()
     }
 }
 
@@ -3486,7 +3512,7 @@ impl Member {
 impl Spanned for Member {
     fn span(&self) -> TextSpan {
         if let Some(first) = self.attributes.first() {
-            first.span().join(self.kind.span())
+            first.span().join(self.kind.span()).unwrap()
         } else {
             self.kind.span()
         }
@@ -3598,7 +3624,7 @@ impl Module {
 
 impl Spanned for Module {
     fn span(&self) -> TextSpan {
-        self.mod_kw.span().join(self.close_curl.span())
+        self.mod_kw.span().join(self.close_curl.span()).unwrap()
     }
 }
 
@@ -3694,7 +3720,7 @@ impl ExternModule {
 
 impl Spanned for ExternModule {
     fn span(&self) -> TextSpan {
-        self.extern_kw.span().join(self.close_paren.span())
+        self.extern_kw.span().join(self.close_paren.span()).unwrap()
     }
 }
 
@@ -3775,7 +3801,7 @@ impl Func {
 
 impl Spanned for Func {
     fn span(&self) -> TextSpan {
-        self.fn_kw.span().join(self.body.span())
+        self.fn_kw.span().join(self.body.span()).unwrap()
     }
 }
 
@@ -3868,7 +3894,7 @@ impl Item {
 impl Spanned for Item {
     fn span(&self) -> TextSpan {
         if let Some(first) = self.attributes.first() {
-            first.span().join(self.kind.span())
+            first.span().join(self.kind.span()).unwrap()
         } else {
             self.kind.span()
         }

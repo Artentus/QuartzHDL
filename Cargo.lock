@@ -163,9 +163,9 @@ checksum = "f8478577c03552c21db0e2724ffb8986a5ce7af88107e6be5d2ee6e158c12800"
 
 [[package]]
 name = "langbox"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc7e6e7585235ee1da8b5e71a18831a4d2221b1f5fd572ffebf2a16e84d7577d"
+checksum = "7047b8193ca1bcc574d4505a6e72151a70e2957ae590f27f04f44f3604634032"
 dependencies = [
  "ahash",
  "langbox_procmacro",
@@ -173,9 +173,9 @@ dependencies = [
 
 [[package]]
 name = "langbox_procmacro"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "60657a3359f669e7fd616af484963b7b3c2e539977c7098b76060f0ac7fa2f82"
+checksum = "16faec98b8656d6c25a7d493d6d58929658e030f5a9343fbcc8a44ab7dd5d349"
 dependencies = [
  "proc-macro-crate",
  "quote",

@@ -244,7 +244,7 @@ fn main() -> std::io::Result<()> {
     let mut design = Vec::new();
     for tokens in tokens.iter().flatten() {
         match parser::parse(tokens) {
-            ParseResult::Match(ParsedValue { value, .. }) => design.extend(value.into_iter()),
+            ParseResult::Match { value, .. } => design.extend(value.into_iter()),
             ParseResult::NoMatch => {}
             ParseResult::Err(err) => errors.push(err.into()),
         }
